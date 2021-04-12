@@ -5,6 +5,7 @@ from django.core.signing import Signer
 from django.utils.html import format_html
 from django.urls import reverse
 from django.conf import settings
+from django.template.base import Token, Parser, Node
 
 from .. import json
 from ..component import Component
@@ -16,11 +17,23 @@ CSRF_HEADER = settings.CSRF_HEADER_NAME[5:].replace('_', '-')
 
 @register.inclusion_tag('htmx/headers.html')
 def htmx_headers():
+    """Loads all the necessary scripts to make this work
+
+    Use this tag inside your `<header></header>`.
+    """
     return {}
 
 
 @register.simple_tag(takes_context=True)
 def htmx(context, _name, id=None, **state):
+    """Inserts an HTMX Component.
+
+    Pass the component name and the initial state:
+
+        ```html
+        {% htmx 'AmazinData' data=some_data %}
+        ```
+    """
     id = id or f'hx-{uuid4().hex}'
     component = Component._build(_name, context['request'], id, state)
     return component._render()
@@ -28,6 +41,17 @@ def htmx(context, _name, id=None, **state):
 
 @register.simple_tag(takes_context=True, name='hx-header')
 def hx_header(context):
+    """Adds initialziation data to your root component tag.
+
+    When your component starts, put it there:
+
+        ```html
+        {% load htmx %}
+        <div {% tag_header %}>
+          ...
+        </div>
+        ```
+    """
     component = context['this']
     headers = {
         CSRF_HEADER: str(context['csrf_token']),
@@ -48,6 +72,34 @@ def hx_header(context):
 
 @register.simple_tag(takes_context=True)
 def on(context, _trigger, _event_handler=None, **kwargs):
+    """Binds an event to a handler
+
+    If no trigger is provided, it assumes the default one by omission, in this
+    case `click`, for an input is `change`:
+
+        ```html
+        <button {% on 'inc' %}>+</button>
+        ```
+
+    You can pass it explicitly:
+
+        ```html
+        <button {% on 'click' 'inc' %}>+</button>
+        ```
+
+    You can also pass explicit arguments:
+
+        ```html
+        <button {% on 'inc' amount=2 %}>+2</button>
+        ```
+
+    Remember that together with the explicit arguments, all fields with a
+    `name` are passed as implicit arguments to your event handler.
+
+    If you wanna do more advanced stuff read:
+    [hx-trigger](https://htmx.org/attributes/hx-trigger/)
+
+    """
     if not _event_handler:
         _event_handler = _trigger
         _trigger = None
@@ -83,3 +135,51 @@ def event_url(component, event_handler):
             'event_handler': event_handler
         }
     )
+
+
+# Shortcuts and helpers
+
+@register.tag()
+def cond(parser: Parser, token: Token):
+    """Prints some text conditionally
+
+        ```html
+        {% cond {'works': True, 'does not work': 1 == 2} %}
+        ```
+    Will output 'works'.
+    """
+    dict_expression = token.contents[len('cond '):]
+    return CondNode(dict_expression)
+
+
+@register.tag(name='class')
+def class_cond(parser: Parser, token: Token):
+    """Prints classes conditionally
+
+    ```html
+    <div {% class {'btn': True, 'loading': loading, 'falsy': 0} %}></div>
+    ```
+
+    If `loading` is `True` will print:
+
+    ```html
+    <div class="btn loading"></div>
+    ```
+    """
+    dict_expression = token.contents[len('class '):]
+    return ClassNode(dict_expression)
+
+
+class CondNode(Node):
+    def __init__(self, dict_expression):
+        self.dict_expression = dict_expression
+
+    def render(self, context):
+        terms = eval(self.dict_expression, context.flatten())
+        return ' '.join(term for term, ok in terms.items() if ok)
+
+
+class ClassNode(CondNode):
+    def render(self, *args, **kwargs):
+        text = super().render(*args, **kwargs)
+        return f'class="{text}"'
