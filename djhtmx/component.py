@@ -39,10 +39,10 @@ class Component:
     @classmethod
     def _build(cls, _component_name, request, id, state):
         klass = cls._all[_component_name]
-        state = dict(klass._constructor_model.parse_obj(state))
-        return klass(request=request, id=id, **state)
+        state = dict(klass._constructor_model.parse_obj(state), id=id)
+        return klass(request=request, **state)
 
-    def __init__(self, request, id: str):
+    def __init__(self, request, id: str = None):
         self.request = request
         self.id = id
         self._destroyed = False
