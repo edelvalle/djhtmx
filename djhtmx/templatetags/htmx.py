@@ -39,15 +39,15 @@ def htmx(context, _name, id=None, **state):
     return component._render()
 
 
-@register.simple_tag(takes_context=True, name='hx-header')
-def hx_header(context):
+@register.simple_tag(takes_context=True, name='hx-tag')
+def hx_tag(context):
     """Adds initialziation data to your root component tag.
 
     When your component starts, put it there:
 
         ```html
         {% load htmx %}
-        <div {% hx-header %}>
+        <div {% hx-tag %}>
           ...
         </div>
         ```
