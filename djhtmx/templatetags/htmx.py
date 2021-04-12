@@ -35,7 +35,11 @@ def htmx(context, _name, id=None, **state):
         ```
     """
     id = id or f'hx-{uuid4().hex}'
-    component = Component._build(_name, context['request'], id, state)
+    component = Component._all[_name](
+        request=context['request'],
+        id=id,
+        **state
+    )
     return component._render()
 
 
@@ -110,11 +114,11 @@ def on(context, _trigger, _event_handler=None, **kwargs):
         f'{component._name}.{_event_handler} event handler not found'
 
     html = ' '.join(filter(None, [
-        'hx-post="{url}"'
-        'hx-target="#{id}"',
-        'hx-include="#{id} [name]"',
-        'hx-trigger="{trigger}"' if _trigger else None,
-        'hx-vals="{vals}"' if kwargs else None,
+        'hx-post="{url}" '
+        'hx-target="#{id}" ',
+        'hx-include="#{id} [name]" ',
+        'hx-trigger="{trigger}" ' if _trigger else None,
+        'hx-vals="{vals}" ' if kwargs else None,
     ]))
 
     return format_html(
@@ -131,7 +135,6 @@ def event_url(component, event_handler):
         'djhtmx.endpoint',
         kwargs={
             'component_name': component._name,
-            'id': component.id,
             'event_handler': event_handler
         }
     )

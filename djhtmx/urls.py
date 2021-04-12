@@ -1,16 +1,18 @@
 from django.core.signing import Signer
 from django.urls import path
 
-from . import json
 from .component import Component
 from .introspection import extract_data
 
 
-def endpoint(request, component_name, id, event_handler):
+def endpoint(request, component_name, event_handler):
+    ComponentClass = Component._all[component_name]
+    id = request.META.get('HTTP_HX_TARGET')
+
     state = request.META.get('HTTP_X_COMPONENT_STATE', '')
     state = Signer().unsign(state)
-    state = json.loads(state)
-    component = Component._build(component_name, request, id, state)
+    state = dict(ComponentClass._constructor_model.parse_raw(state), id=id)
+    component = ComponentClass(request=request, **state)
 
     handler_kwargs = extract_data(request)
     handler_kwargs = component._models[event_handler](**handler_kwargs).dict()
@@ -22,7 +24,7 @@ def endpoint(request, component_name, id, event_handler):
 
 urlpatterns = [
     path(
-        '<component_name>/<id>/<event_handler>',
+        '<component_name>/<event_handler>',
         endpoint,
         name='djhtmx.endpoint',
     )
