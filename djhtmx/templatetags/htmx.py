@@ -47,7 +47,7 @@ def hx_header(context):
 
         ```html
         {% load htmx %}
-        <div {% tag_header %}>
+        <div {% hx-header %}>
           ...
         </div>
         ```
