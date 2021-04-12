@@ -61,7 +61,7 @@ def hx_tag(context):
         'id="{id}" '
         'hx-post="{url}" '
         'hx-trigger="render" '
-        'hx-swap="outerHTML" '
+        'hx-swap="morphdom" '
         'hx-ext="morphdom-swap" '
         'hx-headers="{headers}"',
         id=context['id'],
