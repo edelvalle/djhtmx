@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from django.http import HttpResponse
 from django.shortcuts import resolve_url
 from django.contrib.auth.models import AnonymousUser
@@ -41,7 +43,7 @@ class Component:
         self.id = id
         self._destroyed = False
         self._headers = {}
-        self._triggers = {}
+        self._triggers = Triggers()
 
     @cached_property
     def user(self):
@@ -69,14 +71,16 @@ class Component:
         self._headers['HX-Push'] = resolve_url(url, **kwargs)
 
     def _send_event(self, target, event):
-        self._triggers.setdefault('hxSendEvent', []).append({
+        self._triggers.trigger('hxSendEvent', {
             'target': target,
             'event': event,
         })
 
+    def _focus(self, selector):
+        self._triggers.after_settle('hxFocus', selector)
+
     def render(self):
-        if self._triggers:
-            self._headers['HX-Trigger'] = json.dumps(self._triggers)
+        self._headers.update(self._triggers.headers)
         return HttpResponse(self._render(), headers=self._headers)
 
     def _render(self):
@@ -105,3 +109,28 @@ class Component:
             },
             this=self,
         )
+
+
+class Triggers:
+    def __init__(self):
+        self._triggers = defaultdict(list)
+        self._after_swap = defaultdict(list)
+        self._after_settle = defaultdict(list)
+
+    def trigger(self, name, what=None):
+        self._triggers[name].append(what)
+
+    def after_swap(self, name, what=None):
+        self._after_swap[name].append(what)
+
+    def after_settle(self, name, what=None):
+        self._after_settle[name].append(what)
+
+    @property
+    def headers(self):
+        headers = [
+            ('HX-Trigger', self._triggers),
+            ('HX-Trigger-After-Swap', self._after_swap),
+            ('HX-Trigger-After-Settle', self._after_settle),
+        ]
+        return {header: json.dumps(value) for header, value in headers if value}
