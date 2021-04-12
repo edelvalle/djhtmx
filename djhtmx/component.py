@@ -1,5 +1,3 @@
-from uuid import uuid4
-
 from django.http import HttpResponse
 from django.shortcuts import resolve_url
 from django.contrib.auth.models import AnonymousUser
