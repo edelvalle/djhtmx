@@ -15,7 +15,7 @@ register = template.Library()
 CSRF_HEADER = settings.CSRF_HEADER_NAME[5:].replace('_', '-')
 
 
-@register.inclusion_tag('htmx/headers.html', name='htmx-header')
+@register.inclusion_tag('htmx/headers.html', name='htmx-headers')
 def htmx_headers():
     """Loads all the necessary scripts to make this work
 
