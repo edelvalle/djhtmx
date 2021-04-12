@@ -13,12 +13,12 @@ htmx.defineExtension('morphdom-swap', {
               return false;
             }
             const tagName= fromEl.tagName;
-            const shouldPacth = (
+            const shouldPatch = (
               fromEl === document.activeElement &&
               (tagName === 'INPUT' || tagName === 'SELECT' || tagName === 'TEXTAREA') &&
               !fromEl.hasAttribute(':override')
             )
-            if (shouldPacth) {
+            if (shouldPatch) {
               toEl.getAttributeNames().forEach((name) =>
                 fromEl.setAttribute(name, toEl.getAttribute(name))
               );
