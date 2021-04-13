@@ -26,7 +26,16 @@ htmx.defineExtension('morphdom-swap', {
               return false;
             }
             return true;
-          }
+          },
+          onElUpdated: (el) => {
+            code = typeof el.getAttribute === "function" ? el.getAttribute('hx-updated') : void 0;
+            if (code) (() => { eval(code) }).bind(el)();
+          },
+
+          onNodeAdded: (el) => {
+            code = typeof el.getAttribute === "function" ? el.getAttribute('hx-updated') : void 0;
+            if (code) (() => { eval(code) }).bind(el)();
+          },
         }
       );
       return [target];
