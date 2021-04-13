@@ -80,8 +80,10 @@ class Component:
         self._triggers.after_settle('hxFocus', selector)
 
     def render(self):
-        self._headers.update(self._triggers.headers)
-        return HttpResponse(self._render(), headers=self._headers)
+        response = HttpResponse(self._render())
+        for key, value in (self._headers | self._triggers.headers).items():
+            response[key] = value
+        return response
 
     def _render(self):
         if self._destroyed:
