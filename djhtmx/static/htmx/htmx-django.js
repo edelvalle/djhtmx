@@ -28,6 +28,11 @@ const INTERACTIVE_MORHDOM_OPTIONS = Object.assign({}, DEFAULT_MORPHDOM_OPTIONS, 
       fromEl.readOnly = toEl.readOnly;
       return false;
     }
+
+    if (fromEl.__x && window.Alpine !== undefined) {
+      window.Alpine.clone(fromEl.__x, toEl);
+    }
+
     return true;
   },
 });
