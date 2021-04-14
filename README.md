@@ -16,6 +16,18 @@ urlpatterns = [
 ]
 ```
 
+In your base template you need to load the necesary scripts to make this work
+
+```html
+{% load htmx %}
+<!doctype html>
+<html>
+    <head>
+        {% htmx-headers %}
+    </head>
+</html>
+```
+
 ## Getting started
 
 This app will look for `live.py` files in your app, to register all your components, but if make the module where you have components gets loaded when Django boots up that alsoworks.
@@ -45,3 +57,27 @@ The `template.html` would be:
 </div>
 ```
 
+## What batteries are included
+
+This project mixes htmx with morphdom for a more smooth rendering a find control of the focus when this one is on an input.
+
+If you wanna use `hx-boost` go ahead and enable it with
+
+```
+...
+<body hx-boost="true" hx-ext="morphdom-swap" hx-swap="morphdom">
+   ...
+</body>
+...
+```
+
+## Python APIs
+
+TODO
+
+## Exntended behavors in the front-end
+
+- **hx-disabled**: Do not longer update a component after the first render.
+- **hx-override**: The default behavor is that ff a swap happens while the user is focused on an input, that input does not get the `value` updated. Use this attribute to tag that input if you want the swap to also update the it's value, it will also lose the focus.
+- **hx-added**: Add JavaScript here if you want it to be executed when the element is added.
+- **hx-updated**: Add JavaScript here if you want it to be executed when the element is updated.
