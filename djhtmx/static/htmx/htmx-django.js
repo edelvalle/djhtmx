@@ -7,7 +7,7 @@ const DEFAULT_MORPHDOM_OPTIONS = {
 
   onNodeAdded: (el) => {
     // Executes JS hooks
-    code = typeof el.getAttribute === "function" ? el.getAttribute('hx-updated') : void 0;
+    code = typeof el.getAttribute === "function" ? el.getAttribute('hx-added') : void 0;
     if (code) (() => { eval(code) }).bind(el)();
   },
 };
