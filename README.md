@@ -22,9 +22,9 @@ In your base template you need to load the necesary scripts to make this work
 {% load htmx %}
 <!doctype html>
 <html>
-    <head>
-        {% htmx-headers %}
-    </head>
+  <head>
+    {% htmx-headers %}
+  </head>
 </html>
 ```
 
@@ -75,7 +75,11 @@ If you wanna use `hx-boost` go ahead and enable it with
 
 TODO
 
-## Exntended behavors in the front-end
+## Template tags
+
+TODO
+
+## Exntended htmx attributes
 
 - **hx-disabled**: Do not longer update a component after the first render.
 - **hx-override**: The default behavor is that ff a swap happens while the user is focused on an input, that input does not get the `value` updated. Use this attribute to tag that input if you want the swap to also update the it's value, it will also lose the focus.
