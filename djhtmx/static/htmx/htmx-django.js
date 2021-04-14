@@ -15,11 +15,15 @@ const DEFAULT_MORPHDOM_OPTIONS = {
 const INTERACTIVE_MORHDOM_OPTIONS = Object.assign({}, DEFAULT_MORPHDOM_OPTIONS, {
    onBeforeElUpdated: (fromEl, toEl) => {
     // Keeps the focus on an input if it was focused before replacement
+    if (fromEl.hasAttribute && fromEl.hasAttribute('hx-disabled')) {
+      return false;
+    }
+
     const tagName= fromEl.tagName;
     const shouldPatch = (
       fromEl === document.activeElement &&
       (tagName === 'INPUT' || tagName === 'SELECT' || tagName === 'TEXTAREA') &&
-      !fromEl.hasAttribute(':override')
+      !fromEl.hasAttribute('hx-override')
     )
     if (shouldPatch) {
       toEl.getAttributeNames().forEach((name) =>
@@ -27,10 +31,6 @@ const INTERACTIVE_MORHDOM_OPTIONS = Object.assign({}, DEFAULT_MORPHDOM_OPTIONS, 
       );
       fromEl.readOnly = toEl.readOnly;
       return false;
-    }
-
-    if (fromEl.__x && window.Alpine !== undefined) {
-      window.Alpine.clone(fromEl.__x, toEl);
     }
 
     return true;
