@@ -71,13 +71,13 @@ class Component:
         self._headers['HX-Push'] = resolve_url(url, **kwargs)
 
     def _send_event(self, target, event):
-        self._triggers.trigger('hxSendEvent', {
+        self._triggers.after_swap('hxSendEvent', {
             'target': target,
             'event': event,
         })
 
     def _focus(self, selector):
-        self._triggers.after_settle('hxFocus', selector)
+        self._triggers.after_swap('hxFocus', selector)
 
     def render(self):
         response = HttpResponse(self._render())
