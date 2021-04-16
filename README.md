@@ -59,17 +59,22 @@ The `template.html` would be:
 
 ## What batteries are included
 
-This project mixes htmx with morphdom for a more smooth rendering a find control of the focus when this one is on an input.
-
 If you wanna use `hx-boost` go ahead and enable it with
 
 ```
 ...
-<body hx-boost="true" hx-ext="morphdom-swap" hx-swap="morphdom">
+<body {% hx_boost %}>
    ...
 </body>
 ...
 ```
+
+By default, djhtmx uses
+[morphdom](https://github.com/patrick-steele-idem/morphdom) to make the
+swapping.  You can use the argument `disable_morphdom` in the tags `hx-boost`
+and `hx-tag` to selectively disable it; or use the setting
+`DJHTMX_DISABLE_MORPHDOM` to False to disallow it completely.
+
 
 ## Python APIs
 
@@ -79,7 +84,9 @@ TODO
 
 TODO
 
-## Exntended htmx attributes
+## Extended htmx attributes
+
+These extensions are only available when using morphdom (this is the default).
 
 - **hx-disabled**: Do not longer update a component after the first render.
 - **hx-override**: The default behavor is that ff a swap happens while the user is focused on an input, that input does not get the `value` updated. Use this attribute to tag that input if you want the swap to also update the it's value, it will also lose the focus.

@@ -16,12 +16,15 @@ CSRF_HEADER = settings.CSRF_HEADER_NAME[5:].replace('_', '-')
 
 
 @register.inclusion_tag('htmx/headers.html', name='htmx-headers')
-def htmx_headers():
-    """Loads all the necessary scripts to make this work
+def htmx_headers(disable_morphdom=None):
+    """Loads all the necessary scripts to make this work.
 
     Use this tag inside your `<header></header>`.
+
     """
-    return {}
+    if disable_morphdom is None:
+        disable_morphdom = getattr(settings, 'DJHTMX_DISABLE_MORPHDOM', False)
+    return {'disable_morphdom': disable_morphdom}
 
 
 @register.simple_tag(takes_context=True)
@@ -44,7 +47,7 @@ def htmx(context, _name, id=None, **state):
 
 
 @register.simple_tag(takes_context=True, name='hx-tag')
-def hx_tag(context):
+def hx_tag(context, disable_morphdom=None):
     """Adds initialziation data to your root component tag.
 
     When your component starts, put it there:
@@ -61,17 +64,34 @@ def hx_tag(context):
         CSRF_HEADER: str(context['csrf_token']),
         'X-Component-State': Signer().sign(component._state_json),
     }
+    if disable_morphdom is None:
+        disable_morphdom = getattr(settings, 'DJHTMX_DISABLE_MORPHDOM', False)
+    if disable_morphdom:
+        morphdom_attrs = ''
+    else:
+        morphdom_attrs = (
+            'hx-swap="morphdom" '
+            'hx-ext="morphdom-swap" '
+        )
     return format_html(
         'id="{id}" '
         'hx-post="{url}" '
         'hx-trigger="render" '
-        'hx-swap="morphdom" '
-        'hx-ext="morphdom-swap" '
+        f'{morphdom_attrs}'
         'hx-headers="{headers}"',
         id=context['id'],
         url=event_url(component, 'render'),
         headers=json.dumps(headers),
     )
+
+@register.simple_tag(name='hx-boost')
+def hx_boost(disable_morphdom=None):
+    if disable_morphdom is None:
+        disable_morphdom = getattr(settings, 'DJHTMX_DISABLE_MORPHDOM', False)
+    if disable_morphdom:
+        return ' hx_boost="true" '
+    else:
+        return ' hx_boost="true" hx-ext="morphdom-swap" hx-swap="morphdom" '
 
 
 @register.simple_tag(takes_context=True)
