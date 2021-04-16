@@ -37,11 +37,11 @@ from djhtmx.componet import Component
 
 class Counter(Component):
    template_name = 'counter.html'
-   
+
    def __init__(self, counter: int = 0, **kwargs):
        super().__init__(**kwargs)
        self.counter = counter
-   
+
    def inc(self, amount: int):
        self.counter += amount
 ```
