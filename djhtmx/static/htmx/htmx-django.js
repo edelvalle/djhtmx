@@ -52,6 +52,14 @@ htmx.defineExtension('morphdom-swap', {
       return [target];
     }
   },
+document.body.addEventListener('htmx:configRequest', (event) => {
+  const csrf_header = document
+    .querySelector('meta[name=djang-csrf-header-name]')
+    .getAttribute('content');
+  const csrf_token = document
+    .querySelector('meta[name=djang-csrf-token]')
+    .getAttribute('content');
+  event.detail.headers[csrf_header] = csrf_token;
 });
 
 

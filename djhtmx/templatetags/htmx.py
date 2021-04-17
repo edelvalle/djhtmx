@@ -13,16 +13,23 @@ from ..component import Component
 
 register = template.Library()
 
-CSRF_HEADER = settings.CSRF_HEADER_NAME[5:].replace('_', '-')
+CSRF_HEADER_NAME = settings.CSRF_HEADER_NAME[5:].replace('_', '-')
 
 
-@register.inclusion_tag('htmx/headers.html', name='htmx-headers')
-def htmx_headers():
+@register.inclusion_tag(
+    'htmx/headers.html',
+    takes_context=True,
+    name='htmx-headers',
+)
+def htmx_headers(context):
     """Loads all the necessary scripts to make this work
 
     Use this tag inside your `<header></header>`.
     """
-    return {}
+    return {
+        'csrf_header_name': CSRF_HEADER_NAME,
+        'csrf_token': context.get('csrf_token'),
+    }
 
 
 @register.simple_tag(takes_context=True)
@@ -70,15 +77,13 @@ def hx_tag(context):
         html.append('hx-swap="outerHTML"')
 
     component = context['this']
-    headers = {
-        CSRF_HEADER: str(context['csrf_token']),
-        'X-Component-State': Signer().sign(component._state_json),
-    }
     return format_html(
         ' '.join(html),
         id=context['id'],
         url=event_url(component, 'render'),
-        headers=json.dumps(headers),
+        headers=json.dumps({
+            'X-Component-State': Signer().sign(component._state_json),
+        }),
     )
 
 

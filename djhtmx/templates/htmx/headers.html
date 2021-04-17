@@ -1,4 +1,5 @@
 {% load static %}
-<script defer src="{% static 'htmx/morphdom-umd-2.6.1.min.js' %}"></script>
+<meta name="djang-csrf-header-name" content="{{ csrf_header_name }}">
+<meta name="djang-csrf-token" content="{{ csrf_token }}">
 <script defer src="{% static 'htmx/htmx-1.3.3.min.js' %}"></script>
 <script defer src="{% static 'htmx/htmx-django.js' %}"></script>
