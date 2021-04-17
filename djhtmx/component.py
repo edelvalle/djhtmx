@@ -1,4 +1,5 @@
 from collections import defaultdict
+from itertools import chain
 
 from django.http import HttpResponse
 from django.shortcuts import resolve_url
@@ -77,7 +78,7 @@ class Component:
         })
 
     def _focus(self, selector):
-        self._triggers.after_swap('hxFocus', selector)
+        self._triggers.after_settle('hxFocus', selector)
 
     def render(self):
         response = HttpResponse(self._render())
