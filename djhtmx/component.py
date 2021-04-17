@@ -5,7 +5,6 @@ from django.shortcuts import resolve_url
 from django.contrib.auth.models import AnonymousUser
 from django.template.loader import get_template, select_template
 from django.utils.functional import cached_property
-from django.utils.safestring import mark_safe
 
 from . import json
 from .introspection import get_model
@@ -44,6 +43,7 @@ class Component:
         self._destroyed = False
         self._headers = {}
         self._triggers = Triggers()
+        self._oob = []
 
     @cached_property
     def user(self):
@@ -85,14 +85,27 @@ class Component:
             response[key] = value
         return response
 
-    def _render(self):
+    def _render(self, hx_swap_oob=False):
         if self._destroyed:
             html = ''
         else:
             template = self._get_template()
-            html = template.render(self._get_context(), request=self.request)
+            html = template.render(
+                self._get_context(hx_swap_oob),
+                request=self.request
+            )
             html = html.strip()
-        return mark_safe(html)
+
+        if self._oob:
+            html = '\n'.join(chain(
+                [html],
+                [c._render(hx_swap_oob=True) for c in self._oob]
+            ))
+
+        return html
+
+    def _also_render(self, component, **kwargs):
+        self._oob.append(component(request=self.request, **kwargs))
 
     def _get_template(self):
         if not self.template:
@@ -102,7 +115,7 @@ class Component:
                 self.template = get_template(self.template_name)
         return self.template
 
-    def _get_context(self):
+    def _get_context(self, hx_swap_oob):
         return dict(
             {
                 attr: getattr(self, attr)
@@ -110,6 +123,7 @@ class Component:
                 if not attr.startswith('_')
             },
             this=self,
+            hx_swap_oob=hx_swap_oob,
         )
 
 

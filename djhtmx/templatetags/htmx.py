@@ -3,6 +3,7 @@ from uuid import uuid4
 from django import template
 from django.core.signing import Signer
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from django.urls import reverse
 from django.conf import settings
 from django.template.base import Token, Parser, Node
@@ -40,7 +41,7 @@ def htmx(context, _name, id=None, **state):
         id=id,
         **state
     )
-    return component._render()
+    return mark_safe(component._render())
 
 
 @register.simple_tag(takes_context=True, name='hx-tag')
@@ -56,18 +57,25 @@ def hx_tag(context):
         </div>
         ```
     """
+    html = [
+        'id="{id}"',
+        'hx-post="{url}"',
+        'hx-trigger="render"',
+        'hx-headers="{headers}"',
+    ]
+
+    if context.get('hx_swap_oob'):
+        html.append('hx-swap-oob="true"')
+    else:
+        html.append('hx-swap="outerHTML"')
+
     component = context['this']
     headers = {
         CSRF_HEADER: str(context['csrf_token']),
         'X-Component-State': Signer().sign(component._state_json),
     }
     return format_html(
-        'id="{id}" '
-        'hx-post="{url}" '
-        'hx-trigger="render" '
-        'hx-swap="morphdom" '
-        'hx-ext="morphdom-swap" '
-        'hx-headers="{headers}"',
+        ' '.join(html),
         id=context['id'],
         url=event_url(component, 'render'),
         headers=json.dumps(headers),
