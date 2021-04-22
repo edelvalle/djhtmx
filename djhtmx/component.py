@@ -1,14 +1,14 @@
 from collections import defaultdict
 from itertools import chain
+from pydantic import validate_arguments
 
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpRequest
 from django.shortcuts import resolve_url
 from django.contrib.auth.models import AnonymousUser
 from django.template.loader import get_template, select_template
 from django.utils.functional import cached_property
 
 from . import json
-from .introspection import get_model
 
 
 class Component:
@@ -18,27 +18,33 @@ class Component:
     _urls = {}
     _name = ...
 
+    _pydantic_config = {'arbitrary_types_allowed': True}
+
     def __init_subclass__(cls, name=None, public=True):
         if public:
             name = name or cls.__name__
             cls._all[name] = cls
             cls._name = name
 
-        cls._models = {}
-        for attr_name in dir(cls):
+        for attr_name in vars(cls):
             attr = getattr(cls, attr_name)
-            if (not attr_name.startswith('_')
+            if (attr_name == '__init__' or
+                    not attr_name.startswith('_')
                     and attr_name.islower()
                     and callable(attr)):
-                cls._models[attr_name] = get_model(attr, ignore=['self'])
+                setattr(
+                    cls,
+                    attr_name,
+                    validate_arguments(config=cls._pydantic_config)(attr)
+                )
 
-        cls._constructor_model = get_model(cls, ignore=['request'])
-        cls._constructor_params = set(
-            cls._constructor_model.schema()['properties']
-        )
         return super().__init_subclass__()
 
-    def __init__(self, request, id: str = None):
+    @classmethod
+    def _build(cls, _component_name, request, id, state):
+        return cls._all[_component_name](**dict(state, id=id, request=request))
+
+    def __init__(self, request: HttpRequest, id: str = None):
         self.request = request
         self.id = id
         self._destroyed = False
@@ -51,15 +57,15 @@ class Component:
         return getattr(self.request, 'user', AnonymousUser())
 
     @property
-    def _state_json(self):
+    def _state_json(self) -> str:
         return json.dumps(self._state)
 
     @property
-    def _state(self):
+    def _state(self) -> dict:
         return {
-            name: value
-            for name, value in vars(self).items()
-            if name in self._constructor_params
+            name: getattr(self, name)
+            for name in self.__init__.model.__fields__
+            if hasattr(self, name)
         }
 
     def destroy(self):

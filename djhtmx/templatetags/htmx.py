@@ -43,11 +43,7 @@ def htmx(context, _name, id=None, **state):
         ```
     """
     id = id or f'hx-{uuid4().hex}'
-    component = Component._all[_name](
-        request=context['request'],
-        id=id,
-        **state
-    )
+    component = Component._build(_name, context['request'], id, state)
     return mark_safe(component._render())
 
 

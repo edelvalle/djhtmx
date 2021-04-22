@@ -1,37 +1,24 @@
 import inspect
-import typing
-
-import pydantic
 
 
-def get_model(f, ignore=()):
-    params = list(inspect.signature(f).parameters.values())
-    fields = {}
-    for param in params:
-        if param.name in ignore:
-            continue
-        if param.kind is not inspect.Parameter.VAR_KEYWORD:
-            default = param.default
-            if default is inspect._empty:
-                default = ...
-            annotation = param.annotation
-            if annotation is inspect._empty:
-                if default is ...:
-                    field = (typing.Any, ...)
-                else:
-                    field = default
-            else:
-                field = (annotation, default)
-
-            if field is None:
-                continue
-            fields[param.name] = field
-    return pydantic.create_model(f.__name__, **fields)
+def filter_parameters(f, kwargs):
+    has_kwargs = any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in inspect.signature(f).parameters.values()
+    )
+    if has_kwargs:
+        return kwargs
+    else:
+        return {
+            param: value
+            for param, value
+            in kwargs.items() if param in f.model.__fields__
+        }
 
 
 # Decoder for client requests
 
-def extract_data(request):
+def parse_request_data(request):
     data = getattr(request, request.method)
     output = {}
     for key in set(data):
