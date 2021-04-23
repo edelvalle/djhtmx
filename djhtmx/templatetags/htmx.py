@@ -29,6 +29,7 @@ def htmx_headers(context):
     return {
         'csrf_header_name': CSRF_HEADER_NAME,
         'csrf_token': context.get('csrf_token'),
+        'DEBUG': settings.DEBUG,
     }
 
 
