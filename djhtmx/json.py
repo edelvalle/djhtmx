@@ -1,3 +1,4 @@
+import enum
 import json
 import dataclasses
 from typing import Generator
@@ -27,6 +28,9 @@ class HtmxEncoder(DjangoJSONEncoder):
 
         if dataclasses.is_dataclass(o):
             return dataclasses.asdict(o)
+
+        if isinstance(o, enum.Enum):
+            return o.value
 
         return super().default(o)
 
