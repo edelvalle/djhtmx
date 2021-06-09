@@ -4,7 +4,7 @@ profile = "black"
 [tool.black]
 skip-string-normalization=true
 line-length = 80
-target-version = ['py39']
+target-version = ['py36', 'py37', 'py38', 'py39']
 include = '\.pyi?$'
 exclude = '''
     /(
