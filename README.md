@@ -62,11 +62,11 @@ The `template.html` would be:
 
 This project mixes htmx with morphdom for a more smooth rendering a find control of the focus when this one is on an input.
 
-If you wanna use `hx-boost` go ahead and enable it with
+If you wanna use `hx-boost` go ahead and enable it with:
 
 ```
 ...
-<body hx-boost="true" hx-ext="morphdom-swap" hx-swap="morphdom">
+<body hx-boost="true">
    ...
 </body>
 ...
