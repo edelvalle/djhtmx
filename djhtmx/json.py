@@ -1,12 +1,11 @@
+import dataclasses
 import enum
 import json
-import dataclasses
 from typing import Generator
-
-from pydantic import BaseModel
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
+from pydantic import BaseModel
 
 
 class HtmxEncoder(DjangoJSONEncoder):

@@ -1,12 +1,12 @@
 from collections import defaultdict
 from itertools import chain
-from pydantic import validate_arguments
 
-from django.http import HttpResponse, HttpRequest
-from django.shortcuts import resolve_url
 from django.contrib.auth.models import AnonymousUser
+from django.http import HttpRequest, HttpResponse
+from django.shortcuts import resolve_url
 from django.template.loader import get_template, select_template
 from django.utils.functional import cached_property
+from pydantic import validate_arguments
 
 from . import json
 
@@ -28,14 +28,16 @@ class Component:
 
         for attr_name in vars(cls):
             attr = getattr(cls, attr_name)
-            if (attr_name == '__init__' or
-                    not attr_name.startswith('_')
-                    and attr_name.islower()
-                    and callable(attr)):
+            if (
+                attr_name == '__init__'
+                or not attr_name.startswith('_')
+                and attr_name.islower()
+                and callable(attr)
+            ):
                 setattr(
                     cls,
                     attr_name,
-                    validate_arguments(config=cls._pydantic_config)(attr)
+                    validate_arguments(config=cls._pydantic_config)(attr),
                 )
 
         return super().__init_subclass__()
@@ -78,10 +80,13 @@ class Component:
         self._headers['HX-Push'] = resolve_url(url, **kwargs)
 
     def _send_event(self, target, event):
-        self._triggers.after_swap('hxSendEvent', {
-            'target': target,
-            'event': event,
-        })
+        self._triggers.after_swap(
+            'hxSendEvent',
+            {
+                'target': target,
+                'event': event,
+            },
+        )
 
     def _focus(self, selector):
         self._triggers.after_settle('hxFocus', selector)
@@ -99,15 +104,14 @@ class Component:
             template = self._get_template()
             html = template.render(
                 self._get_context(hx_swap_oob),
-                request=self.request
+                request=self.request,
             )
             html = html.strip()
 
         if self._oob:
-            html = '\n'.join(chain(
-                [html],
-                [c._render(hx_swap_oob=True) for c in self._oob]
-            ))
+            html = '\n'.join(
+                chain([html], [c._render(hx_swap_oob=True) for c in self._oob])
+            )
 
         return html
 
