@@ -1,12 +1,12 @@
 from uuid import uuid4
 
 from django import template
+from django.conf import settings
 from django.core.signing import Signer
+from django.template.base import Node, Parser, Token
+from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from django.urls import reverse
-from django.conf import settings
-from django.template.base import Token, Parser, Node
 
 from .. import json
 from ..component import Component
@@ -78,9 +78,11 @@ def hx_tag(context):
         ' '.join(html),
         id=context['id'],
         url=event_url(component, 'render'),
-        headers=json.dumps({
-            'X-Component-State': Signer().sign(component._state_json),
-        }),
+        headers=json.dumps(
+            {
+                'X-Component-State': Signer().sign(component._state_json),
+            }
+        ),
     )
 
 
@@ -120,16 +122,21 @@ def on(context, _trigger, _event_handler=None, **kwargs):
 
     component = context['this']
 
-    assert callable(getattr(component, _event_handler, None)), \
-        f'{component._name}.{_event_handler} event handler not found'
+    assert callable(
+        getattr(component, _event_handler, None)
+    ), f'{component._name}.{_event_handler} event handler not found'
 
-    html = ' '.join(filter(None, [
-        'hx-post="{url}" '
-        'hx-target="#{id}" ',
-        'hx-include="#{id} [name]" ',
-        'hx-trigger="{trigger}" ' if _trigger else None,
-        'hx-vals="{vals}" ' if kwargs else None,
-    ]))
+    html = ' '.join(
+        filter(
+            None,
+            [
+                'hx-post="{url}" ' 'hx-target="#{id}" ',
+                'hx-include="#{id} [name]" ',
+                'hx-trigger="{trigger}" ' if _trigger else None,
+                'hx-vals="{vals}" ' if kwargs else None,
+            ],
+        )
+    )
 
     return format_html(
         html,
@@ -145,12 +152,13 @@ def event_url(component, event_handler):
         'djhtmx.endpoint',
         kwargs={
             'component_name': component._name,
-            'event_handler': event_handler
-        }
+            'event_handler': event_handler,
+        },
     )
 
 
 # Shortcuts and helpers
+
 
 @register.tag()
 def cond(parser: Parser, token: Token):
@@ -161,7 +169,7 @@ def cond(parser: Parser, token: Token):
         ```
     Will output 'works'.
     """
-    dict_expression = token.contents[len('cond '):]
+    dict_expression = token.contents[len('cond ') :]
     return CondNode(dict_expression)
 
 
@@ -179,7 +187,7 @@ def class_cond(parser: Parser, token: Token):
     <div class="btn loading"></div>
     ```
     """
-    dict_expression = token.contents[len('class '):]
+    dict_expression = token.contents[len('class ') :]
     return ClassNode(dict_expression)
 
 

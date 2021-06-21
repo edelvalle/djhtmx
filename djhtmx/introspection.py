@@ -11,12 +11,13 @@ def filter_parameters(f, kwargs):
     else:
         return {
             param: value
-            for param, value
-            in kwargs.items() if param in f.model.__fields__
+            for param, value in kwargs.items()
+            if param in f.model.__fields__
         }
 
 
 # Decoder for client requests
+
 
 def parse_request_data(request):
     data = getattr(request, request.method)
@@ -54,8 +55,8 @@ def _get_default_value(fragment):
         default = []
         index = None
     if fragment.endswith(']'):
-        index = int(fragment[fragment.index('[') + 1:-1])
-        fragment = fragment[:fragment.index('[')]
+        index = int(fragment[fragment.index('[') + 1 : -1])
+        fragment = fragment[: fragment.index('[')]
         default = []
     else:
         default = {}

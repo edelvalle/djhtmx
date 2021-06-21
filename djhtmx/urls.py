@@ -1,9 +1,9 @@
 from django.core.signing import Signer
 from django.urls import path
 
-from .component import Component
-from .introspection import parse_request_data, filter_parameters
 from . import json
+from .component import Component
+from .introspection import filter_parameters, parse_request_data
 
 
 def endpoint(request, component_name, event_handler):
