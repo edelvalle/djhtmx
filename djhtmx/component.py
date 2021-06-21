@@ -74,10 +74,16 @@ class Component:
         self._destroyed = True
 
     def redirect(self, url, **kwargs):
-        self._headers['HX-Redirect'] = resolve_url(url, **kwargs)
+        self.redirect_raw_url(resolve_url(url, **kwargs))
+
+    def redirect_raw_url(self, url):
+        self._headers["HX-Redirect"] = url
 
     def push_url(self, url, **kwargs):
-        self._headers['HX-Push'] = resolve_url(url, **kwargs)
+        self.push_raw_url(resolve_url(url, **kwargs))
+
+    def push_raw_url(self, url):
+        self._headers["HX-Push"] = url
 
     def _send_event(self, target, event):
         self._triggers.after_swap(
