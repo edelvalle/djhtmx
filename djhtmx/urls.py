@@ -1,37 +1,14 @@
-import contextlib
-
 from django.core.signing import Signer
 from django.urls import path
 
 from . import json
 from .component import Component
 from .introspection import filter_parameters, parse_request_data
-
-try:
-    from sentry_sdk import configure_scope
-
-    @contextlib.contextmanager
-    def sentry_transaction(request, component_name, event_handler):
-        transaction = f"HTMX {request.method} {component_name}.{event_handler}"
-        with configure_scope() as scope:
-            # XXX: The docs says we should scope.transaction, but when I do
-            # that, the transaction keeps the old name (URL).
-            try:
-                scope.transaction.name = transaction
-            except Exception:
-                scope.transaction = transaction
-            yield
-
-
-except ImportError:
-
-    @contextlib.contextmanager
-    def sentry_transaction(request, component_name, event_handler):
-        yield
+from .tracing import sentry_request_transaction
 
 
 def endpoint(request, component_name, event_handler):
-    with sentry_transaction(request, component_name, event_handler):
+    with sentry_request_transaction(request, component_name, event_handler):
         id = request.META.get('HTTP_HX_TARGET')
         state = request.META.get('HTTP_X_COMPONENT_STATE', '')
         state = Signer().unsign(state)

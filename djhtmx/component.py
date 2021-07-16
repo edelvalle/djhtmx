@@ -9,6 +9,7 @@ from django.utils.functional import cached_property
 from pydantic import validate_arguments
 
 from . import json
+from .tracing import sentry_span
 
 
 class Component:
@@ -104,22 +105,24 @@ class Component:
         return response
 
     def _render(self, hx_swap_oob=False):
-        if self._destroyed:
-            html = ''
-        else:
-            template = self._get_template()
-            html = template.render(
-                self._get_context(hx_swap_oob),
-                request=self.request,
-            )
-            html = html.strip()
-
-        if self._oob:
-            html = '\n'.join(
-                chain([html], [c._render(hx_swap_oob=True) for c in self._oob])
-            )
-
-        return html
+        with sentry_span(f"{self._fqn}._render"):
+            if self._destroyed:
+                html = ''
+            else:
+                template = self._get_template()
+                html = template.render(
+                    self._get_context(hx_swap_oob),
+                    request=self.request,
+                )
+                html = html.strip()
+            if self._oob:
+                html = '\n'.join(
+                    chain(
+                        [html],
+                        [c._render(hx_swap_oob=True) for c in self._oob],
+                    )
+                )
+            return html
 
     def _also_render(self, component, **kwargs):
         self._oob.append(component(request=self.request, **kwargs))
@@ -133,15 +136,27 @@ class Component:
         return self.template
 
     def _get_context(self, hx_swap_oob):
-        return dict(
-            {
-                attr: getattr(self, attr)
-                for attr in dir(self)
-                if not attr.startswith('_')
-            },
-            this=self,
-            hx_swap_oob=hx_swap_oob,
-        )
+        with sentry_span(f"{self._fqn}._get_context"):
+            return dict(
+                {
+                    attr: getattr(self, attr)
+                    for attr in dir(self)
+                    if not attr.startswith('_')
+                },
+                this=self,
+                hx_swap_oob=hx_swap_oob,
+            )
+
+    @property
+    def _fqn(self) -> str:
+        "Fully Qualified Name"
+        cls = type(self)
+        try:
+            mod = cls.__module__
+        except AttributeError:
+            mod = ""
+        name = cls.__name__
+        return f"{mod}.{name}" if mod else name
 
 
 class Triggers:
