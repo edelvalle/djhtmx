@@ -28,6 +28,14 @@ In your base template you need to load the necessary scripts to make this work
 </html>
 ```
 
+Now use your component in one of your templates:
+
+```html
+{% load htmx %}
+
+{% htmx 'Counter' amount=10 %}
+
+
 ## Getting started
 
 This app will look for `live.py` files in your app and registers all components found there, but if you load any module where you have components manually when Django boots up, that also works.
