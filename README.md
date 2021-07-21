@@ -43,7 +43,7 @@ class Counter(Component):
         super().__init__(**kwargs)
         self.counter = counter
 
-    def inc(self, amount: int):
+    def inc(self, amount: int = 1):
         self.counter += amount
 ```
 
