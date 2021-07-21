@@ -92,6 +92,6 @@ TODO
 
 TODO
 
-## Exntended htmx attributes
+## Extended htmx attributes
 
 - **hx-after-swap**: Add JavaScript here if you want it to be executed when the element is updated.
