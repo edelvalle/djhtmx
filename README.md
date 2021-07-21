@@ -16,7 +16,7 @@ urlpatterns = [
 ]
 ```
 
-In your base template you need to load the necesary scripts to make this work
+In your base template you need to load the necessary scripts to make this work
 
 ```html
 {% load htmx %}
@@ -33,7 +33,7 @@ In your base template you need to load the necesary scripts to make this work
 This app will look for `live.py` files in your app and registers all components found there, but if you load any module where you have components manually when Django boots up, that also works.
 
 ```python
-from djhtmx.componet import Component
+from djhtmx.component import Component
 
 
 class Counter(Component):
