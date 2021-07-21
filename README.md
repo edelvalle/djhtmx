@@ -47,7 +47,7 @@ class Counter(Component):
         self.counter += amount
 ```
 
-The `template.html` would be:
+The `counter.html` would be:
 
 ```html
 {% load htmx %}
