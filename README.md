@@ -16,7 +16,7 @@ urlpatterns = [
 ]
 ```
 
-In your base template you need to load the necesary scripts to make this work
+In your base template you need to load the necessary scripts to make this work
 
 ```html
 {% load htmx %}
@@ -30,10 +30,10 @@ In your base template you need to load the necesary scripts to make this work
 
 ## Getting started
 
-This app will look for `live.py` files in your app, to register all your components, but if make the module where you have components gets loaded when Django boots up that also works.
+This app will look for `live.py` files in your app and registers all components found there, but if you load any module where you have components manually when Django boots up, that also works.
 
 ```python
-from djhtmx.componet import Component
+from djhtmx.component import Component
 
 
 class Counter(Component):
@@ -43,11 +43,11 @@ class Counter(Component):
         super().__init__(**kwargs)
         self.counter = counter
 
-    def inc(self, amount: int):
+    def inc(self, amount: int = 1):
         self.counter += amount
 ```
 
-The `template.html` would be:
+The `counter.html` would be:
 
 ```html
 {% load htmx %}
@@ -56,6 +56,18 @@ The `template.html` would be:
   <button {% on 'inc' %}>+</button>
   <button {% on 'inc' amount=2 %}>+2</button>
 </div>
+```
+
+Now use the component in any of your html templates:
+
+```html
+{% load htmx %}
+
+Counter: <br/>
+{% htmx 'Counter' %}
+
+Counter with init value 3:<br/>
+{% htmx 'Counter' amount=3 %}
 ```
 
 ## What batteries are included
