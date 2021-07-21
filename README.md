@@ -33,7 +33,7 @@ In your base template you need to load the necesary scripts to make this work
 This app will look for `live.py` files in your app, to register all your components, but if make the module where you have components gets loaded when Django boots up that also works.
 
 ```python
-from djhtmx.componet import Component
+from djhtmx.component import Component
 
 
 class Counter(Component):
