@@ -16,7 +16,7 @@ urlpatterns = [
 ]
 ```
 
-In your base template you need to load the necesary scripts to make this work
+In your base template you need to load the necessary scripts to make this work
 
 ```html
 {% load htmx %}
