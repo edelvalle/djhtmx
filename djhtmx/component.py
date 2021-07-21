@@ -11,8 +11,10 @@ from pydantic import validate_arguments
 from . import json
 from .tracing import sentry_span
 
+
 class ComponentNotFound(LookupError):
     pass
+
 
 class Component:
     template_name = ''
@@ -48,7 +50,9 @@ class Component:
     @classmethod
     def _build(cls, _component_name, request, id, state):
         if not _component_name in cls._all:
-            raise ComponentNotFound(f"Could not find requested component '{_component_name}'. Did you load the component?")
+            raise ComponentNotFound(
+                f"Could not find requested component '{_component_name}'. Did you load the component?"
+            )
         return cls._all[_component_name](**dict(state, id=id, request=request))
 
     def __init__(self, request: HttpRequest, id: str = None):
