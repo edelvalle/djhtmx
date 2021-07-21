@@ -58,6 +58,18 @@ The `counter.html` would be:
 </div>
 ```
 
+Now use the component in any of your html templates:
+
+```html
+{% load htmx %}
+
+Counter: <br/>
+{% htmx 'Counter' %}
+
+Counter with init value 3:<br/>
+{% htmx 'Counter' amount=3 %}
+```
+
 ## What batteries are included
 
 This project mixes htmx with morphdom for a more smooth rendering a find control of the focus when this one is on an input.
