@@ -1,8 +1,7 @@
 import contextlib
 
 try:
-    from sentry_sdk import configure_scope
-    from sentry_sdk import Hub
+    from sentry_sdk import Hub, configure_scope
 
     @contextlib.contextmanager
     def sentry_transaction_name(transaction_name):
