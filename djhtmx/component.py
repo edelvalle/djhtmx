@@ -49,7 +49,7 @@ class Component:
 
     @classmethod
     def _build(cls, _component_name, request, id, state):
-        if not _component_name in cls._all:
+        if _component_name not in cls._all:
             raise ComponentNotFound(
                 f"Could not find requested component '{_component_name}'. Did you load the component?"
             )
