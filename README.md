@@ -67,7 +67,7 @@ Counter: <br/>
 {% htmx 'Counter' %}
 
 Counter with init value 3:<br/>
-{% htmx 'Counter' amount=3 %}
+{% htmx 'Counter' counter=3 %}
 ```
 
 ## What batteries are included
