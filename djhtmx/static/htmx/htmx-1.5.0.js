@@ -41,7 +41,7 @@ return (function () {
                 refreshOnHistoryMiss:false,
                 defaultSwapStyle:'innerHTML',
                 defaultSwapDelay:0,
-                defaultSettleDelay:100,
+                defaultSettleDelay:20,
                 includeIndicatorStyles:true,
                 indicatorClass:'htmx-indicator',
                 requestClass:'htmx-request',
@@ -49,8 +49,12 @@ return (function () {
                 swappingClass:'htmx-swapping',
                 allowEval:true,
                 attributesToSettle:["class", "style", "width", "height"],
+                withCredentials:false,
+                timeout:0,
                 wsReconnectDelay: 'full-jitter',
                 disableSelector: "[hx-disable], [data-hx-disable]",
+                useTemplateFragments: false,
+                scrollBehavior: 'smooth',
             },
             parseInterval:parseInterval,
             _:internalEval,
@@ -59,7 +63,8 @@ return (function () {
             },
             createWebSocket: function(url){
                 return new WebSocket(url, []);
-            }
+            },
+            version: "1.5.0"
         };
 
         var VERBS = ['get', 'post', 'put', 'delete', 'patch'];
@@ -157,25 +162,30 @@ return (function () {
         }
 
         function makeFragment(resp) {
-            var startTag = getStartTag(resp);
-            switch (startTag) {
-                case "thead":
-                case "tbody":
-                case "tfoot":
-                case "colgroup":
-                case "caption":
-                    return parseHTML("<table>" + resp + "</table>", 1);
-                case "col":
-                    return parseHTML("<table><colgroup>" + resp + "</colgroup></table>", 2);
-                case "tr":
-                    return parseHTML("<table><tbody>" + resp + "</tbody></table>", 2);
-                case "td":
-                case "th":
-                    return parseHTML("<table><tbody><tr>" + resp + "</tr></tbody></table>", 3);
-                case "script":
-                    return parseHTML("<div>" + resp + "</div>", 1);
-                default:
-                    return parseHTML(resp, 0);
+            if (htmx.config.useTemplateFragments) {
+                var documentFragment = parseHTML("<body><template>" + resp + "</template></body>", 0);
+                return documentFragment.querySelector('template').content;
+            } else {
+                var startTag = getStartTag(resp);
+                switch (startTag) {
+                    case "thead":
+                    case "tbody":
+                    case "tfoot":
+                    case "colgroup":
+                    case "caption":
+                        return parseHTML("<table>" + resp + "</table>", 1);
+                    case "col":
+                        return parseHTML("<table><colgroup>" + resp + "</colgroup></table>", 2);
+                    case "tr":
+                        return parseHTML("<table><tbody>" + resp + "</tbody></table>", 2);
+                    case "td":
+                    case "th":
+                        return parseHTML("<table><tbody><tr>" + resp + "</tr></tbody></table>", 3);
+                    case "script":
+                        return parseHTML("<div>" + resp + "</div>", 1);
+                    default:
+                        return parseHTML(resp, 0);
+                }
             }
         }
 
@@ -357,6 +367,8 @@ return (function () {
                 return [closest(elt, selector.substr(8))];
             } else if (selector.indexOf("find ") === 0) {
                 return [find(elt, selector.substr(5))];
+            } else if (selector === 'document') {
+                return [document];
             } else {
                 return getDocument().querySelectorAll(selector);
             }
@@ -691,9 +703,13 @@ return (function () {
 
         var TITLE_FINDER = /<title>([\s\S]+?)<\/title>/im;
         function findTitle(content) {
-            var result = TITLE_FINDER.exec(content);
-            if (result) {
-                return result[1];
+            if(content.indexOf('<title>') > -1 &&
+                (content.indexOf('<svg>') == -1 ||
+                    content.indexOf('<title>') < content.indexOf('<svg>'))) {
+                var result = TITLE_FINDER.exec(content);
+                if (result) {
+                    return result[1];
+                }
             }
         }
 
@@ -842,7 +858,12 @@ return (function () {
                         if (trigger === "every") {
                             var every = {trigger: 'every'};
                             consumeUntil(tokens, NOT_WHITESPACE);
-                            every.pollInterval = parseInterval(consumeUntil(tokens, WHITESPACE));
+                            every.pollInterval = parseInterval(consumeUntil(tokens, /[,\[\s]/));
+                            consumeUntil(tokens, NOT_WHITESPACE);
+                            var eventFilter = maybeGenerateConditional(elt, tokens, "event");
+                            if (eventFilter) {
+                                every.eventFilter = eventFilter;
+                            }
                             triggerSpecs.push(every);
                         } else if (trigger.indexOf("sse:") === 0) {
                             triggerSpecs.push({trigger: 'sse', sseEvent: trigger.substr(4)});
@@ -873,6 +894,12 @@ return (function () {
                                 } else if (token === "throttle" && tokens[0] === ":") {
                                     tokens.shift();
                                     triggerSpec.throttle = parseInterval(consumeUntil(tokens, WHITESPACE_OR_COMMA));
+                                } else if (token === "queue" && tokens[0] === ":") {
+                                    tokens.shift();
+                                    triggerSpec.queue = consumeUntil(tokens, WHITESPACE_OR_COMMA);
+                                } else if ((token === "root" || token === "threshold") && tokens[0] === ":") {
+                                    tokens.shift();
+                                    triggerSpec[token] = consumeUntil(tokens, WHITESPACE_OR_COMMA);
                                 } else {
                                     triggerErrorEvent(elt, "htmx:syntax:error", {token:tokens.shift()});
                                 }
@@ -902,14 +929,16 @@ return (function () {
             getInternalData(elt).cancelled = true;
         }
 
-        function processPolling(elt, verb, path, interval) {
+        function processPolling(elt, verb, path, spec) {
             var nodeData = getInternalData(elt);
             nodeData.timeout = setTimeout(function () {
                 if (bodyContains(elt) && nodeData.cancelled !== true) {
-                    issueAjaxRequest(verb, path, elt);
-                    processPolling(elt, verb, getAttributeValue(elt, "hx-" + verb), interval);
+                    if (!maybeFilterEvent(spec, makeEvent('hx:poll:trigger', {triggerSpec:spec}))) {
+                        issueAjaxRequest(verb, path, elt);
+                    }
+                    processPolling(elt, verb, getAttributeValue(elt, "hx-" + verb), spec);
                 }
-            }, interval);
+            }, spec.pollInterval);
         }
 
         function isLocalLink(elt) {
@@ -925,9 +954,13 @@ return (function () {
                 if (elt.tagName === "A") {
                     verb = "get";
                     path = getRawAttribute(elt, 'href');
+                    nodeData.pushURL = true;
                 } else {
                     var rawAttribute = getRawAttribute(elt, "method");
                     verb = rawAttribute ? rawAttribute.toLowerCase() : "get";
+                    if (verb === "get") {
+                        nodeData.pushURL = true;
+                    }
                     path = getRawAttribute(elt, 'action');
                 }
                 triggerSpecs.forEach(function(triggerSpec) {
@@ -944,7 +977,7 @@ return (function () {
         }
 
         function ignoreBoostedAnchorCtrlClick(elt, evt) {
-            return getInternalData(elt).boosted && elt.tagName === "A" && evt.type === "click" && evt.ctrlKey;
+            return getInternalData(elt).boosted && elt.tagName === "A" && evt.type === "click" && (evt.ctrlKey || evt.metaKey);
         }
 
         function maybeFilterEvent(triggerSpec, evt) {
@@ -961,83 +994,90 @@ return (function () {
         }
 
         function addEventListener(elt, verb, path, nodeData, triggerSpec, explicitCancel) {
-            var eltToListenOn = elt;
+            var eltsToListenOn;
             if (triggerSpec.from) {
-                eltToListenOn = find(triggerSpec.from);
+                eltsToListenOn = querySelectorAllExt(elt, triggerSpec.from);
+            } else {
+                eltsToListenOn = [elt];
             }
-            var eventListener = function (evt) {
-                if (!bodyContains(elt)) {
-                    eltToListenOn.removeEventListener(triggerSpec.trigger, eventListener);
-                    return;
-                }
-                if (ignoreBoostedAnchorCtrlClick(elt, evt)) {
-                    return;
-                }
-                if(explicitCancel || shouldCancel(elt)){
-                    evt.preventDefault();
-                }
-                if (maybeFilterEvent(triggerSpec, evt)) {
-                    return;
-                }
-                var eventData = getInternalData(evt);
-                if (eventData.handledFor == null) {
-                    eventData.handledFor = [];
-                }
-                var elementData = getInternalData(elt);
-                if (eventData.handledFor.indexOf(elt) < 0) {
-                    eventData.handledFor.push(elt);
-                    if (triggerSpec.consume) {
-                        evt.stopPropagation();
-                    }
-                    if (triggerSpec.target && evt.target) {
-                        if (!matches(evt.target, triggerSpec.target)) {
-                            return;
-                        }
-                    }
-                    if (triggerSpec.once) {
-                        if (elementData.triggeredOnce) {
-                            return;
-                        } else {
-                            elementData.triggeredOnce = true;
-                        }
-                    }
-                    if (triggerSpec.changed) {
-                        if (elementData.lastValue === elt.value) {
-                            return;
-                        } else {
-                            elementData.lastValue = elt.value;
-                        }
-                    }
-                    if (elementData.delayed) {
-                        clearTimeout(elementData.delayed);
-                    }
-                    if (elementData.throttle) {
+            forEach(eltsToListenOn, function (eltToListenOn) {
+                var eventListener = function (evt) {
+                    if (!bodyContains(elt)) {
+                        eltToListenOn.removeEventListener(triggerSpec.trigger, eventListener);
                         return;
                     }
-
-                    if (triggerSpec.throttle) {
-                        elementData.throttle = setTimeout(function(){
-                            issueAjaxRequest(verb, path, elt, evt);
-                            elementData.throttle = null;
-                        }, triggerSpec.throttle);
-                    } else if (triggerSpec.delay) {
-                        elementData.delayed = setTimeout(function(){
-                            issueAjaxRequest(verb, path, elt, evt);
-                        }, triggerSpec.delay);
-                    } else {
-                        issueAjaxRequest(verb, path, elt, evt);
+                    if (ignoreBoostedAnchorCtrlClick(elt, evt)) {
+                        return;
                     }
+                    if (explicitCancel || shouldCancel(elt)) {
+                        evt.preventDefault();
+                    }
+                    if (maybeFilterEvent(triggerSpec, evt)) {
+                        return;
+                    }
+                    var eventData = getInternalData(evt);
+                    eventData.triggerSpec = triggerSpec;
+                    if (eventData.handledFor == null) {
+                        eventData.handledFor = [];
+                    }
+                    var elementData = getInternalData(elt);
+                    if (eventData.handledFor.indexOf(elt) < 0) {
+                        eventData.handledFor.push(elt);
+                        if (triggerSpec.consume) {
+                            evt.stopPropagation();
+                        }
+                        if (triggerSpec.target && evt.target) {
+                            if (!matches(evt.target, triggerSpec.target)) {
+                                return;
+                            }
+                        }
+                        if (triggerSpec.once) {
+                            if (elementData.triggeredOnce) {
+                                return;
+                            } else {
+                                elementData.triggeredOnce = true;
+                            }
+                        }
+                        if (triggerSpec.changed) {
+                            if (elementData.lastValue === elt.value) {
+                                return;
+                            } else {
+                                elementData.lastValue = elt.value;
+                            }
+                        }
+                        if (elementData.delayed) {
+                            clearTimeout(elementData.delayed);
+                        }
+                        if (elementData.throttle) {
+                            return;
+                        }
+
+                        if (triggerSpec.throttle) {
+                            if (!elementData.throttle) {
+                                issueAjaxRequest(verb, path, elt, evt);
+                                elementData.throttle = setTimeout(function () {
+                                    elementData.throttle = null;
+                                }, triggerSpec.throttle);
+                            }
+                        } else if (triggerSpec.delay) {
+                            elementData.delayed = setTimeout(function () {
+                                issueAjaxRequest(verb, path, elt, evt);
+                            }, triggerSpec.delay);
+                        } else {
+                            issueAjaxRequest(verb, path, elt, evt);
+                        }
+                    }
+                };
+                if (nodeData.listenerInfos == null) {
+                    nodeData.listenerInfos = [];
                 }
-            };
-            if (nodeData.listenerInfos == null) {
-                nodeData.listenerInfos = [];
-            }
-            nodeData.listenerInfos.push({
-                trigger: triggerSpec.trigger,
-                listener: eventListener,
-                on: eltToListenOn
+                nodeData.listenerInfos.push({
+                    trigger: triggerSpec.trigger,
+                    listener: eventListener,
+                    on: eltToListenOn
+                })
+                eltToListenOn.addEventListener(triggerSpec.trigger, eventListener);
             })
-            eltToListenOn.addEventListener(triggerSpec.trigger, eventListener);
         }
 
         var windowIsScrolling = false // used by initScrollHandler
@@ -1063,7 +1103,15 @@ return (function () {
             var nodeData = getInternalData(elt);
             if (!nodeData.revealed && isScrolledIntoView(elt)) {
                 nodeData.revealed = true;
-                issueAjaxRequest(nodeData.verb, nodeData.path, elt);
+                if (nodeData.initialized) {
+                    issueAjaxRequest(nodeData.verb, nodeData.path, elt);
+                } else {
+                    // if the node isn't initialized, wait for it before triggering the request
+                    elt.addEventListener("htmx:afterProcessNode",
+                        function () {
+                            issueAjaxRequest(nodeData.verb, nodeData.path, elt);
+                        }, {once: true});
+                }
             }
         }
 
@@ -1100,7 +1148,7 @@ return (function () {
             };
 
             socket.onclose = function (e) {
-                if ([1006, 1012, 1013].includes(e.code)) {  // Abnormal Closure/Service Restart/Try Again Later
+                if ([1006, 1012, 1013].indexOf(e.code) >= 0) {  // Abnormal Closure/Service Restart/Try Again Later
                     var delay = getWebSocketReconnectDelay(retryCount);
                     setTimeout(function() {
                         ensureWebSocket(elt, wssSource, retryCount+1);  // creates a websocket with a new timeout
@@ -1305,11 +1353,30 @@ return (function () {
                         } else if (triggerSpec.trigger === "revealed") {
                             initScrollHandler();
                             maybeReveal(elt);
+                        } else if (triggerSpec.trigger === "intersect") {
+                            var observerOptions = {};
+                            if (triggerSpec.root) {
+                                observerOptions.root = querySelectorExt(triggerSpec.root)
+                            }
+                            if (triggerSpec.threshold) {
+                                observerOptions.threshold = parseFloat(triggerSpec.threshold);
+                            }
+                            var observer = new IntersectionObserver(function (entries) {
+                                for (var i = 0; i < entries.length; i++) {
+                                    var entry = entries[i];
+                                    if (entry.isIntersecting) {
+                                        triggerEvent(elt, "intersect");
+                                        break;
+                                    }
+                                }
+                            }, observerOptions);
+                            observer.observe(elt);
+                            addEventListener(elt, verb, path, nodeData, triggerSpec);
                         } else if (triggerSpec.trigger === "load") {
                             loadImmediately(elt, verb, path, nodeData, triggerSpec.delay);
                         } else if (triggerSpec.pollInterval) {
                             nodeData.polling = true;
-                            processPolling(elt, verb, path, triggerSpec.pollInterval);
+                            processPolling(elt, verb, path, triggerSpec);
                         } else {
                             addEventListener(elt, verb, path, nodeData, triggerSpec);
                         }
@@ -1323,7 +1390,8 @@ return (function () {
             if (script.type === "text/javascript" || script.type === "") {
                 try {
                     maybeEval(script, function () {
-                        Function(script.innerText)()
+                        // wtf - https://stackoverflow.com/questions/9107240/1-evalthis-vs-evalthis-in-javascript
+                        (1, eval)(script.innerText);
                     });
                 } catch (e) {
                     logError(e);
@@ -1355,6 +1423,26 @@ return (function () {
             }
         }
 
+        function initButtonTracking(form){
+            var maybeSetLastButtonClicked = function(evt){
+                if (matches(evt.target, "button, input[type='submit']")) {
+                    var internalData = getInternalData(form);
+                    internalData.lastButtonClicked = evt.target;
+                }
+            };
+
+            // need to handle both click and focus in:
+            //   focusin - in case someone tabs in to a button and hits the space bar
+            //   click - on OSX buttons do not focus on click see https://bugs.webkit.org/show_bug.cgi?id=13724
+
+            form.addEventListener('click', maybeSetLastButtonClicked)
+            form.addEventListener('focusin', maybeSetLastButtonClicked)
+            form.addEventListener('focusout', function(evt){
+                var internalData = getInternalData(form);
+                internalData.lastButtonClicked = null;
+            })
+        }
+
         function initNode(elt) {
             if (elt.closest && elt.closest(htmx.config.disableSelector)) {
                 return;
@@ -1373,6 +1461,10 @@ return (function () {
 
                 if (!explicitAction && getClosestAttributeValue(elt, "hx-boost") === "true") {
                     boostElement(elt, nodeData, triggerSpecs);
+                }
+
+                if (elt.tagName === "FORM") {
+                    initButtonTracking(elt);
                 }
 
                 var sseInfo = getAttributeValue(elt, 'hx-sse');
@@ -1586,7 +1678,7 @@ return (function () {
         function shouldPush(elt) {
             var pushUrl = getClosestAttributeValue(elt, "hx-push-url");
             return (pushUrl && pushUrl !== "false") ||
-                (elt.tagName === "A" && getInternalData(elt).boosted);
+                (getInternalData(elt).boosted && getInternalData(elt).pushURL);
         }
 
         function getPushUrl(elt) {
@@ -1717,6 +1809,15 @@ return (function () {
 
             // include the element itself
             processInputValue(processed, values, errors, elt, validate);
+
+            // if a button or submit was clicked last, include its value
+            var internalData = getInternalData(elt);
+            if (internalData.lastButtonClicked) {
+                var name = getRawAttribute(internalData.lastButtonClicked,"name");
+                if (name) {
+                    values[name] = internalData.lastButtonClicked.value;
+                }
+            }
 
             // include any explicit includes
             var includes = getClosestAttributeValue(elt, "hx-include");
@@ -1853,10 +1954,20 @@ return (function () {
                             swapSpec["settleDelay"] = parseInterval(modifier.substr(7));
                         }
                         if (modifier.indexOf("scroll:") === 0) {
-                            swapSpec["scroll"] = modifier.substr(7);
+                            var scrollSpec = modifier.substr(7);
+                            var splitSpec = scrollSpec.split(":");
+                            var scrollVal = splitSpec.pop();
+                            var selectorVal = splitSpec.length > 0 ? splitSpec.join(":") : null;
+                            swapSpec["scroll"] = scrollVal;
+                            swapSpec["scrollTarget"] = selectorVal;
                         }
                         if (modifier.indexOf("show:") === 0) {
-                            swapSpec["show"] = modifier.substr(5);
+                            var showSpec = modifier.substr(5);
+                            var splitSpec = showSpec.split(":");
+                            var showVal = splitSpec.pop();
+                            var selectorVal = splitSpec.length > 0 ? splitSpec.join(":") : null;
+                            swapSpec["show"] = showVal;
+                            swapSpec["showTarget"] = selectorVal;
                         }
                     }
                 }
@@ -1890,19 +2001,35 @@ return (function () {
             var first = content[0];
             var last = content[content.length - 1];
             if (swapSpec.scroll) {
-                if (swapSpec.scroll === "top" && first) {
-                    first.scrollTop = 0;
+                var target = null;
+                if (swapSpec.scrollTarget) {
+                    target = querySelectorExt(first, swapSpec.scrollTarget);
                 }
-                if (swapSpec.scroll === "bottom" && last) {
-                    last.scrollTop = last.scrollHeight;
+                if (swapSpec.scroll === "top" && (first || target)) {
+                    target = target || first;
+                    target.scrollTop = 0;
+                }
+                if (swapSpec.scroll === "bottom" && (last || target)) {
+                    target = target || last;
+                    target.scrollTop = target.scrollHeight;
                 }
             }
             if (swapSpec.show) {
-                if (swapSpec.show === "top" && first) {
-                    first.scrollIntoView(true);
+                var target = null;
+                if (swapSpec.showTarget) {
+                    var targetStr = swapSpec.showTarget;
+                    if (swapSpec.showTarget === "window") {
+                        targetStr = "body";
+                    }
+                    target = querySelectorExt(first, targetStr);
                 }
-                if (swapSpec.show === "bottom" && last) {
-                    last.scrollIntoView(false);
+                if (swapSpec.show === "top" && (first || target)) {
+                    target = target || first;
+                    target.scrollIntoView({block:'start', behavior: htmx.config.scrollBehavior});
+                }
+                if (swapSpec.show === "bottom" && (last || target)) {
+                    target = target || last;
+                    target.scrollIntoView({block:'end', behavior: htmx.config.scrollBehavior});
                 }
             }
         }
@@ -1920,6 +2047,9 @@ return (function () {
                 var evaluateValue = evalAsDefault;
                 if (str.indexOf("javascript:") === 0) {
                     str = str.substr(11);
+                    evaluateValue = true;
+                } else if (str.indexOf("js:") === 0) {
+                    str = str.substr(3);
                     evaluateValue = true;
                 }
                 if (str.indexOf('{') !== 0) {
@@ -2011,6 +2141,15 @@ return (function () {
             }
         }
 
+        function hierarchyForElt(elt) {
+            var arr = [];
+            while (elt) {
+                arr.push(elt);
+                elt = elt.parentElement;
+            }
+            return arr;
+        }
+
         function issueAjaxRequest(verb, path, elt, event, etc) {
             var resolve = null;
             var reject = null;
@@ -2036,18 +2175,39 @@ return (function () {
             }
             var eltData = getInternalData(elt);
             if (eltData.requestInFlight) {
-                eltData.queuedRequest = function(){
-                    issueAjaxRequest(verb, path, elt, event)
-                };
+                var queueStrategy = 'last';
+                if (event) {
+                    var eventData = getInternalData(event);
+                    if (eventData && eventData.triggerSpec && eventData.triggerSpec.queue) {
+                        queueStrategy = eventData.triggerSpec.queue;
+                    }
+                }
+                if (eltData.queuedRequests == null) {
+                    eltData.queuedRequests = [];
+                }
+                if (queueStrategy === "first" && eltData.queuedRequests.length === 0) {
+                    eltData.queuedRequests.push(function () {
+                        issueAjaxRequest(verb, path, elt, event)
+                    });
+                } else if (queueStrategy === "all") {
+                    eltData.queuedRequests.push(function () {
+                        issueAjaxRequest(verb, path, elt, event)
+                    });
+                } else if (queueStrategy === "last") {
+                    eltData.queuedRequests = []; // dump existing queue
+                    eltData.queuedRequests.push(function () {
+                        issueAjaxRequest(verb, path, elt, event)
+                    });
+                }
                 return;
             } else {
                 eltData.requestInFlight = true;
             }
             var endRequestLock = function(){
                 eltData.requestInFlight = false
-                var queuedRequest = eltData.queuedRequest;
-                eltData.queuedRequest = null;
-                if (queuedRequest) {
+                if (eltData.queuedRequests != null &&
+                    eltData.queuedRequests.length > 0) {
+                    var queuedRequest = eltData.queuedRequests.shift();
                     queuedRequest();
                 }
             }
@@ -2056,10 +2216,11 @@ return (function () {
                 var promptResponse = prompt(promptQuestion);
                 // prompt returns null if cancelled and empty string if accepted with no entry
                 if (promptResponse === null ||
-                    !triggerEvent(elt, 'htmx:prompt', {prompt: promptResponse, target:target}))
+                    !triggerEvent(elt, 'htmx:prompt', {prompt: promptResponse, target:target})) {
                     maybeCall(resolve);
                     endRequestLock();
                     return promise;
+                }
             }
 
             var confirmQuestion = getClosestAttributeValue(elt, "hx-confirm");
@@ -2075,7 +2236,7 @@ return (function () {
 
             var headers = getHeaders(elt, target, promptResponse);
             if (etc.headers) {
-                headers = mergeObjects(headers, etc.values);
+                headers = mergeObjects(headers, etc.headers);
             }
             var results = getInputValues(elt, verb);
             var errors = results.errors;
@@ -2096,6 +2257,8 @@ return (function () {
                 path = getDocument().location.href;
             }
 
+            var requestAttrValues = getValuesForElement(elt, 'hx-request');
+
             var requestConfig = {
                 parameters: filteredParameters,
                 unfilteredParameters: allParameters,
@@ -2103,11 +2266,18 @@ return (function () {
                 target:target,
                 verb:verb,
                 errors:errors,
+                withCredentials: etc.credentials || requestAttrValues.credentials || htmx.config.withCredentials,
+                timeout:  etc.timeout || requestAttrValues.timeout || htmx.config.timeout,
                 path:path,
                 triggeringEvent:event
             };
 
-            if(!triggerEvent(elt, 'htmx:configRequest', requestConfig)) return endRequestLock();
+            if(!triggerEvent(elt, 'htmx:configRequest', requestConfig)){
+                maybeCall(resolve);
+                endRequestLock();
+                return promise;
+            }
+
             // copy out in case the object was overwritten
             path = requestConfig.path;
             verb = requestConfig.verb;
@@ -2145,12 +2315,18 @@ return (function () {
             }
 
             xhr.overrideMimeType("text/html");
+            xhr.withCredentials = requestConfig.withCredentials;
+            xhr.timeout = requestConfig.timeout;
 
             // request headers
-            for (var header in headers) {
-                if (headers.hasOwnProperty(header)) {
-                    var headerValue = headers[header];
-                    safelySetHeaderValue(xhr, header, headerValue);
+            if (requestAttrValues.noHeaders) {
+                // ignore all headers
+            } else {
+                for (var header in headers) {
+                    if (headers.hasOwnProperty(header)) {
+                        var headerValue = headers[header];
+                        safelySetHeaderValue(xhr, header, headerValue);
+                    }
                 }
             }
 
@@ -2158,43 +2334,54 @@ return (function () {
                   path:path, finalPath:finalPathForGet, anchor:anchor
                 }
             };
+
             xhr.onload = function () {
                 try {
+                    var hierarchy = hierarchyForElt(elt);
                     responseHandler(elt, responseInfo);
+                    removeRequestIndicatorClasses(indicators);
+                    triggerEvent(elt, 'htmx:afterRequest', responseInfo);
+                    triggerEvent(elt, 'htmx:afterOnLoad', responseInfo);
+                    // if the body no longer contains the element, trigger the even on the closest parent
+                    // remaining in the DOM
+                    if (!bodyContains(elt)) {
+                        var secondaryTriggerElt = null;
+                        while (hierarchy.length > 0 && secondaryTriggerElt == null) {
+                            var parentEltInHierarchy = hierarchy.shift();
+                            if (bodyContains(parentEltInHierarchy)) {
+                                secondaryTriggerElt = parentEltInHierarchy;
+                            }
+                        }
+                        if (secondaryTriggerElt) {
+                            triggerEvent(secondaryTriggerElt, 'htmx:afterRequest', responseInfo);
+                            triggerEvent(secondaryTriggerElt, 'htmx:afterOnLoad', responseInfo);
+                        }
+                    }
+                    maybeCall(resolve);
+                    endRequestLock();
                 } catch (e) {
                     triggerErrorEvent(elt, 'htmx:onLoadError', mergeObjects({error:e}, responseInfo));
                     throw e;
-                } finally {
-                    removeRequestIndicatorClasses(indicators);
-                    var finalElt = elt;
-                    if (!bodyContains(elt)) {
-                        finalElt = getInternalData(target).replacedWith || target;
-                    }
-                    triggerEvent(finalElt, 'htmx:afterRequest', responseInfo);
-                    triggerEvent(finalElt, 'htmx:afterOnLoad', responseInfo);
-                    maybeCall(resolve);
-                    endRequestLock();
                 }
             }
             xhr.onerror = function () {
                 removeRequestIndicatorClasses(indicators);
-                var finalElt = elt;
-                if (!bodyContains(elt)) {
-                    finalElt = getInternalData(target).replacedWith || target;
-                }
-                triggerErrorEvent(finalElt, 'htmx:afterRequest', responseInfo);
-                triggerErrorEvent(finalElt, 'htmx:sendError', responseInfo);
+                triggerErrorEvent(elt, 'htmx:afterRequest', responseInfo);
+                triggerErrorEvent(elt, 'htmx:sendError', responseInfo);
                 maybeCall(reject);
                 endRequestLock();
             }
             xhr.onabort = function() {
                 removeRequestIndicatorClasses(indicators);
-                var finalElt = elt;
-                if (!bodyContains(elt)) {
-                    finalElt = getInternalData(target).replacedWith || target;
-                }
-                triggerErrorEvent(finalElt, 'htmx:afterRequest', responseInfo);
-                triggerErrorEvent(finalElt, 'htmx:sendAbort', responseInfo);
+                triggerErrorEvent(elt, 'htmx:afterRequest', responseInfo);
+                triggerErrorEvent(elt, 'htmx:sendAbort', responseInfo);
+                maybeCall(reject);
+                endRequestLock();
+            }
+            xhr.ontimeout = function() {
+                removeRequestIndicatorClasses(indicators);
+                triggerErrorEvent(elt, 'htmx:afterRequest', responseInfo);
+                triggerErrorEvent(elt, 'htmx:timeout', responseInfo);
                 maybeCall(reject);
                 endRequestLock();
             }
@@ -2274,11 +2461,16 @@ return (function () {
                         try {
 
                             var activeElt = document.activeElement;
-                            var selectionInfo = {
-                                elt: activeElt,
-                                start: activeElt ? activeElt.selectionStart : null,
-                                end: activeElt ? activeElt.selectionEnd : null
-                            };
+                            var selectionInfo = {};
+                            try {
+                                selectionInfo = {
+                                    elt: activeElt,
+                                    start: activeElt ? activeElt.selectionStart : null,
+                                    end: activeElt ? activeElt.selectionEnd : null
+                                };
+                            } catch (e) {
+                                 // safari issue - see https://github.com/microsoft/playwright/issues/5894
+                            }
 
                             var settleInfo = makeSettleInfo(target);
                             selectAndSwap(swapSpec.swapStyle, target, elt, serverResponse, settleInfo);
