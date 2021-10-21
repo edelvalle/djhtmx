@@ -1,41 +1,63 @@
+import json
+import typing as t
 from collections import defaultdict
 from itertools import chain
 
 from django.contrib.auth.models import AnonymousUser
-from django.http import HttpRequest, HttpResponse
+from django.db import models
+from django.http import HttpResponse
 from django.shortcuts import resolve_url
 from django.template.loader import get_template, select_template
 from django.utils.functional import cached_property
-from pydantic import validate_arguments
+from pydantic import BaseModel, validate_arguments
 
-from . import json
+from .errors import ComponentNotFound
 from .tracing import sentry_span
 
 
-class ComponentNotFound(LookupError):
-    pass
+class ComponentMeta:
+    def __init__(self, request):
+        self.request = request
+        self.template = None
+        self.headers = {}
+        self.triggers = Triggers()
+        self.oob = []
+        self.destroyed = False
+
+    @cached_property
+    def user(self):
+        return getattr(self.request, 'user', AnonymousUser())
+
+    @property
+    def all_headers(self):
+        return self.headers | self.triggers.headers
 
 
-class Component:
-    template_name = ''
-    template = None
-    _all = {}
-    _urls = {}
-    _name = ...
-
+class HTMXComponent(BaseModel):
+    _all: t.ClassVar[dict[str, t.Type['HTMXComponent']]] = {}
     _pydantic_config = {'arbitrary_types_allowed': True}
 
-    def __init_subclass__(cls, name=None, public=True):
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            ComponentMeta: lambda x: None,
+            models.Model: lambda x: x.pk,
+            models.QuerySet: lambda qs: qs.values_list('pk', flat=True),
+        }
+
+    def __init_subclass__(cls, name=None, public=True, template_name=None):
         if public:
             name = name or cls.__name__
             cls._all[name] = cls
             cls._name = name
 
+        if template_name is not None:
+            cls._template_name = template_name
+
         for attr_name in vars(cls):
             attr = getattr(cls, attr_name)
             if (
-                attr_name == '__init__'
-                or not attr_name.startswith('_')
+                not attr_name.startswith('_')
                 and attr_name.islower()
                 and callable(attr)
             ):
@@ -51,51 +73,41 @@ class Component:
     def _build(cls, _component_name, request, id, state):
         if _component_name not in cls._all:
             raise ComponentNotFound(
-                f"Could not find requested component '{_component_name}'. Did you load the component?"
+                f"Could not find requested component '{_component_name}'. "
+                "Did you load the component?"
             )
-        return cls._all[_component_name](**dict(state, id=id, request=request))
+        instance = cls._all[_component_name](**dict(state, id=id))
+        instance.__post_init__(request)
+        return instance
 
-    def __init__(self, request: HttpRequest, id: str = None):
-        self.request = request
-        self.id = id
-        self._destroyed = False
-        self._headers = {}
-        self._triggers = Triggers()
-        self._oob = []
+    # Instance attributes
+    id: str
 
-    @cached_property
+    def __post_init__(self, request):
+        self.__dict__['_meta'] = ComponentMeta(request)
+        self.mounted()
+
+    @property
     def user(self):
-        return getattr(self.request, 'user', AnonymousUser())
-
-    @property
-    def _state_json(self) -> str:
-        return json.dumps(self._state)
-
-    @property
-    def _state(self) -> dict:
-        return {
-            name: getattr(self, name)
-            for name in self.__init__.model.__fields__
-            if hasattr(self, name)
-        }
+        return self._meta.user
 
     def destroy(self):
-        self._destroyed = True
+        self._meta.destroyed = True
 
     def redirect(self, url, **kwargs):
         self.redirect_raw_url(resolve_url(url, **kwargs))
 
     def redirect_raw_url(self, url):
-        self._headers["HX-Redirect"] = url
+        self._meta.headers["HX-Redirect"] = url
 
     def push_url(self, url, **kwargs):
         self.push_raw_url(resolve_url(url, **kwargs))
 
     def push_raw_url(self, url):
-        self._headers["HX-Push"] = url
+        self._meta.headers["HX-Push"] = url
 
     def _send_event(self, target, event):
-        self._triggers.after_swap(
+        self._meta.triggers.after_swap(
             'hxSendEvent',
             {
                 'target': target,
@@ -104,13 +116,22 @@ class Component:
         )
 
     def _focus(self, selector):
-        self._triggers.after_settle('hxFocus', selector)
+        self._meta.triggers.after_settle('hxFocus', selector)
 
     def render(self):
         response = HttpResponse(self._render())
-        for key, value in (self._headers | self._triggers.headers).items():
+        for key, value in self._meta.all_headers.items():
             response[key] = value
         return response
+
+    def mounted(self):
+        """Called just after the component is instantiated and it `_meta` property
+        have been set.
+
+        Sub-classes SHOULD override this method to initialize the component.
+
+        """
+        pass
 
     def before_render(self) -> None:
         """Hook called before rendering the template.
@@ -128,34 +149,36 @@ class Component:
         with sentry_span(f"{self._fqn}._render"):
             with sentry_span(f"{self._fqn}.before_render"):
                 self.before_render()
-            if self._destroyed:
+            if self._meta.destroyed:
                 html = ''
             else:
                 template = self._get_template()
                 html = template.render(
                     self._get_context(hx_swap_oob),
-                    request=self.request,
+                    request=self._meta.request,
                 )
                 html = html.strip()
-            if self._oob:
+            if self._meta.oob:
                 html = '\n'.join(
                     chain(
                         [html],
-                        [c._render(hx_swap_oob=True) for c in self._oob],
+                        [c._render(hx_swap_oob=True) for c in self._meta.oob],
                     )
                 )
             return html
 
     def _also_render(self, component, **kwargs):
-        self._oob.append(component(request=self.request, **kwargs))
+        instance = component(**kwargs)
+        instance.post_init(self._meta.request)
+        self._meta.oob.append(instance)
 
     def _get_template(self):
-        if not self.template:
-            if isinstance(self.template_name, (list, tuple)):
-                self.template = select_template(self.template_name)
+        if not self._meta.template:
+            if isinstance(self._template_name, (list, tuple)):
+                self._meta.template = select_template(self._template_name)
             else:
-                self.template = get_template(self.template_name)
-        return self.template
+                self._meta.template = get_template(self._template_name)
+        return self._meta.template
 
     def _get_context(self, hx_swap_oob):
         with sentry_span(f"{self._fqn}._get_context"):

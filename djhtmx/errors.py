@@ -1,0 +1,2 @@
+class ComponentNotFound(LookupError):
+    pass

@@ -1,6 +1,6 @@
 {% load static %}
-<meta name="djang-csrf-header-name" content="{{ csrf_header_name }}">
-<meta name="djang-csrf-token" content="{{ csrf_token }}">
+<meta name="django-htmx-csrf-header-name" content="{{ csrf_header_name }}">
+<meta name="django-htmx-csrf-token" content="{{ csrf_token }}">
 {% if DEBUG %}
   <script defer src="{% static 'htmx/htmx-1.5.0.js' %}"></script>
 {% else %}
