@@ -112,8 +112,22 @@ class Component:
             response[key] = value
         return response
 
+    def before_render(self) -> None:
+        """Hook called before rendering the template.
+
+        This allows to leave the `__init__` mostly empty, and push some
+        computations after initialization just before rendering.  Which plays
+        nicer with caching.
+
+        This is your last chance to destroy the component if needed.
+
+        """
+        pass
+
     def _render(self, hx_swap_oob=False):
         with sentry_span(f"{self._fqn}._render"):
+            with sentry_span(f"{self._fqn}.before_render"):
+                self.before_render()
             if self._destroyed:
                 html = ''
             else:
