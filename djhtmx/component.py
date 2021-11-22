@@ -11,6 +11,7 @@ from django.template.loader import get_template, select_template
 from django.utils.functional import cached_property
 from pydantic import BaseModel, validate_arguments
 
+from .cache import CacheMixin
 from .errors import ComponentNotFound
 from .tracing import sentry_span
 
@@ -33,8 +34,8 @@ class ComponentMeta:
         return self.headers | self.triggers.headers
 
 
-class HTMXComponent(BaseModel):
-    _all: t.ClassVar[dict[str, t.Type['HTMXComponent']]] = {}
+class BaseHTMXComponent(BaseModel):
+    _all: t.ClassVar[dict[str, t.Type['BaseHTMXComponent']]] = {}
     _pydantic_config = {'arbitrary_types_allowed': True}
 
     class Config:
@@ -202,6 +203,17 @@ class HTMXComponent(BaseModel):
             mod = ""
         name = cls.__name__
         return f"{mod}.{name}" if mod else name
+
+
+class HTMXComponent(BaseHTMXComponent):
+    pass
+
+
+class CachedHTMXComponent(BaseHTMXComponent, CacheMixin, public=False):
+    cache_name: t.ClassVar[str] = 'htmx'
+
+    def _render(self, hx_swap_oob=False):
+        return self._with_cache(super()._render, hx_swap_oob=hx_swap_oob)
 
 
 class Triggers:
