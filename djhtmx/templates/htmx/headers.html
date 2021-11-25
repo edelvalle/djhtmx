@@ -2,18 +2,10 @@
 
 <meta name="djang-csrf-header-name" content="{{ csrf_header_name }}">
 <meta name="djang-csrf-token" content="{{ csrf_token }}">
-{% if DEBUG %}
-  <script defer src="{% static 'htmx/1.6.1/htmx.js' %}"></script>
-{% else %}
-  <script defer src="{% static 'htmx/1.6.1/htmx.min.js' %}"></script>
-{% endif %}
 
-{% for ext in htmx_extensions %}
-  {% with file=ext|strformatted:'htmx/1.6.1/ext/%s.js' %}
-    {% if file %}
-      <script defer src="{% static file  %}"></script>
-    {% endif %}
-  {% endwith %}
+{% for script in htmx_core_scripts %}
+  <script defer src="{{script}}"></script>
 {% endfor %}
-
-<script defer src="{% static 'htmx/htmx-django.js' %}"></script>
+{% for script in htmx_extension_scripts %}
+  <script defer src="{{script}}"></script>
+{% endfor %}
