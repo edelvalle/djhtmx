@@ -1,8 +1,6 @@
 from django.apps import AppConfig
 from django.utils.module_loading import autodiscover_modules
 
-from .component import HTMXComponent
-
 default_app_config = 'djhtmx.App'
 
 
@@ -16,7 +14,6 @@ class App(AppConfig):
 
 
 __all__ = (
-    'HTMXComponent',
     'App',
     'default_app_config',
 )
