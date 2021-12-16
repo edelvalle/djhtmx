@@ -3,3 +3,4 @@ __pycache__/
 .log/
 .tern-port
 .tox/
+.vscode/

@@ -71,13 +71,13 @@ class BaseHTMXComponent(BaseModel):
         return super().__init_subclass__()
 
     @classmethod
-    def _build(cls, _component_name, request, id, state):
+    def _build(cls, _component_name, request, state):
         if _component_name not in cls._all:
             raise ComponentNotFound(
                 f"Could not find requested component '{_component_name}'. "
                 "Did you load the component?"
             )
-        instance = cls._all[_component_name](**dict(state, id=id))
+        instance = cls._all[_component_name](**state)
         instance.__post_init__(request)
         return instance
 
@@ -170,7 +170,7 @@ class BaseHTMXComponent(BaseModel):
 
     def _also_render(self, component, **kwargs):
         instance = component(**kwargs)
-        instance.post_init(self._meta.request)
+        instance.__post_init__(self._meta.request)
         self._meta.oob.append(instance)
 
     def _get_template(self):

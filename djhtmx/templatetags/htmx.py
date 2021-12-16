@@ -9,7 +9,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
-from ..component import Component
+from ..component import BaseHTMXComponent
 
 register = template.Library()
 
@@ -37,7 +37,7 @@ def htmx_headers(context):
 
 
 @register.simple_tag(takes_context=True)
-def htmx(context, _name, id=None, **state):
+def htmx(context, _name, **state):
     """Inserts an HTMX Component.
 
     Pass the component name and the initial state::
@@ -45,8 +45,9 @@ def htmx(context, _name, id=None, **state):
         {% htmx 'AmazingData' data=some_data %}
 
     """
-    id = id or f'hx-{uuid4().hex}'
-    component = Component._build(_name, context['request'], id, state)
+    state.setdefault('id', f'hx-{uuid4().hex}')
+    request = context.get('request') or context['this']._meta.request
+    component = BaseHTMXComponent._build(_name, request, state)
     return mark_safe(component._render())
 
 
@@ -81,7 +82,7 @@ def hx_tag(context):
         url=event_url(component, 'render'),
         headers=json.dumps(
             {
-                'X-Component-State': Signer().sign(component._state_json),
+                'X-Component-State': Signer().sign(component.json()),
             }
         ),
     )
@@ -113,23 +114,27 @@ def on(context, _trigger, _event_handler=None, **kwargs):
        <https://htmx.org/attributes/hx-trigger/>`_.
 
     """
-    if not _event_handler:
-        _event_handler = _trigger
-        _trigger = None
+    if _event_handler:
+        trigger = _trigger
+        event_handler = _event_handler
+    else:
+        trigger = None
+        event_handler = _trigger
 
     component = context['this']
 
     assert callable(
-        getattr(component, _event_handler, None)
-    ), f'{component._name}.{_event_handler} event handler not found'
+        getattr(component, event_handler, None)
+    ), f'{component._name}.{event_handler} event handler not found'
 
     html = ' '.join(
         filter(
             None,
             [
-                'hx-post="{url}" ' 'hx-target="#{id}" ',
+                'hx-post="{url}" ',
+                'hx-target="#{id}" ',
                 'hx-include="#{id} [name]" ',
-                'hx-trigger="{trigger}" ' if _trigger else None,
+                'hx-trigger="{trigger}" ' if trigger else None,
                 'hx-vals="{vals}" ' if kwargs else None,
             ],
         )
@@ -137,8 +142,8 @@ def on(context, _trigger, _event_handler=None, **kwargs):
 
     return format_html(
         html,
-        trigger=_trigger,
-        url=event_url(component, _event_handler),
+        trigger=trigger,
+        url=event_url(component, event_handler),
         id=context['id'],
         vals=json.dumps(kwargs) if kwargs else None,
     )
