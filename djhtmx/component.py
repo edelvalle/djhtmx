@@ -55,7 +55,7 @@ class Component:
             )
         return cls._all[_component_name](**dict(state, id=id, request=request))
 
-    def __init__(self, request: HttpRequest, id: str = None):
+    def __init__(self, request: HttpRequest, id: str | None = None):
         self.request = request
         self.id = id
         self._destroyed = False
