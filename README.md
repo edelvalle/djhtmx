@@ -4,7 +4,7 @@ Interactive UI Components for Django using [htmx](https://htmx.org)
 
 ## Install
 
-Add `djhtmx` to your `INSTALLED_APPS` and add it to your `urls.py` as you whish, you can use any path.
+Add `djhtmx` to your `INSTALLED_APPS` and add it to your `urls.py` as you wish, you can use any path.
 
 ```python
 from django.urls import path, include
