@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 
 from django import template
@@ -9,11 +10,12 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
-from .. import json
-from ..component import Component
+from ..component import BaseHTMXComponent
 
 register = template.Library()
 
+# The name of the header without the 'HTTP_' prefix and replacing '_' with
+# '-'.
 CSRF_HEADER_NAME = settings.CSRF_HEADER_NAME[5:].replace('_', '-')
 
 
@@ -25,7 +27,8 @@ CSRF_HEADER_NAME = settings.CSRF_HEADER_NAME[5:].replace('_', '-')
 def htmx_headers(context):
     """Loads all the necessary scripts to make this work
 
-    Use this tag inside your `<header></header>`.
+    Use this tag inside your ``<header></header>``.
+
     """
     cfg = HTMX_SCRIPTS_CFG()
     htmx_core_scripts = cfg[":core:"]
@@ -44,17 +47,17 @@ def htmx_headers(context):
 
 
 @register.simple_tag(takes_context=True)
-def htmx(context, _name, id=None, **state):
+def htmx(context, _name, **state):
     """Inserts an HTMX Component.
 
-    Pass the component name and the initial state:
+    Pass the component name and the initial state::
 
-        ```html
-        {% htmx 'AmazinData' data=some_data %}
-        ```
+        {% htmx 'AmazingData' data=some_data %}
+
     """
-    id = id or f'hx-{uuid4().hex}'
-    component = Component._build(_name, context['request'], id, state)
+    state.setdefault('id', f'hx-{uuid4().hex}')
+    request = context.get('request') or context['this']._meta.request
+    component = BaseHTMXComponent._build(_name, request, state)
     return mark_safe(component._render())
 
 
@@ -62,14 +65,13 @@ def htmx(context, _name, id=None, **state):
 def hx_tag(context, **options):
     """Adds initialziation data to your root component tag.
 
-    When your component starts, put it there:
+    When your component starts, put it there::
 
-        ```html
         {% load htmx %}
         <div {% hx-tag %}>
           ...
         </div>
-        ```
+
     """
     html = [
         'id="{id}"',
@@ -91,7 +93,7 @@ def hx_tag(context, **options):
         url=event_url(component, 'render'),
         headers=json.dumps(
             {
-                'X-Component-State': Signer().sign(component._state_json),
+                'X-Component-State': Signer().sign(component.json()),
             }
         ),
     )
@@ -102,48 +104,48 @@ def on(context, _trigger, _event_handler=None, **kwargs):
     """Binds an event to a handler
 
     If no trigger is provided, it assumes the default one by omission, in this
-    case `click`, for an input is `change`:
+    case ``click``, for an input is ``change``::
 
-        ```html
         <button {% on 'inc' %}>+</button>
-        ```
 
-    You can pass it explicitly:
+    You can pass it explicitly::
 
-        ```html
         <button {% on 'click' 'inc' %}>+</button>
-        ```
 
-    You can also pass explicit arguments:
+    You can also pass explicit arguments::
 
-        ```html
         <button {% on 'inc' amount=2 %}>+2</button>
-        ```
 
-    Remember that together with the explicit arguments, all fields with a
-    `name` are passed as implicit arguments to your event handler.
+    Together with the explicit arguments, all fields with a ``name`` are
+    passed as implicit arguments to your event handler.
 
-    If you wanna do more advanced stuff read:
-    [hx-trigger](https://htmx.org/attributes/hx-trigger/)
+    .. seealso::
+
+       If you wanna do more advanced stuff read `hx-trigger
+       <https://htmx.org/attributes/hx-trigger/>`_.
 
     """
-    if not _event_handler:
-        _event_handler = _trigger
-        _trigger = None
+    if _event_handler:
+        trigger = _trigger
+        event_handler = _event_handler
+    else:
+        trigger = None
+        event_handler = _trigger
 
     component = context['this']
 
     assert callable(
-        getattr(component, _event_handler, None)
-    ), f'{component._name}.{_event_handler} event handler not found'
+        getattr(component, event_handler, None)
+    ), f'{component._name}.{event_handler} event handler not found'
 
     html = ' '.join(
         filter(
             None,
             [
-                'hx-post="{url}" ' 'hx-target="#{id}" ',
+                'hx-post="{url}" ',
+                'hx-target="#{id}" ',
                 'hx-include="#{id} [name]" ',
-                'hx-trigger="{trigger}" ' if _trigger else None,
+                'hx-trigger="{trigger}" ' if trigger else None,
                 'hx-vals="{vals}" ' if kwargs else None,
             ],
         )
@@ -151,8 +153,8 @@ def on(context, _trigger, _event_handler=None, **kwargs):
 
     return format_html(
         html,
-        trigger=_trigger,
-        url=event_url(component, _event_handler),
+        trigger=trigger,
+        url=event_url(component, event_handler),
         id=context['id'],
         vals=json.dumps(kwargs) if kwargs else None,
     )
@@ -173,12 +175,13 @@ def event_url(component, event_handler):
 
 @register.tag()
 def cond(parser: Parser, token: Token):
-    """Prints some text conditionally
+    """Prints some text conditionally.
 
-        ```html
+    ::
+
         {% cond {'works': True, 'does not work': 1 == 2} %}
-        ```
-    Will output 'works'.
+
+    will output 'works'.
     """
     dict_expression = token.contents[len('cond ') :]
     return CondNode(dict_expression)
@@ -188,15 +191,13 @@ def cond(parser: Parser, token: Token):
 def class_cond(parser: Parser, token: Token):
     """Prints classes conditionally
 
-    ```html
-    <div {% class {'btn': True, 'loading': loading, 'falsy': 0} %}></div>
-    ```
+    ::
+       <div {% class {'btn': True, 'loading': loading, 'falsy': 0} %}></div>
 
-    If `loading` is `True` will print:
+    If `loading` is `True` will print::
 
-    ```html
-    <div class="btn loading"></div>
-    ```
+       <div class="btn loading"></div>
+
     """
     dict_expression = token.contents[len('class ') :]
     return ClassNode(dict_expression)

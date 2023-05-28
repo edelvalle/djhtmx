@@ -19,8 +19,7 @@ def filter_parameters(f, kwargs):
 # Decoder for client requests
 
 
-def parse_request_data(request):
-    data = getattr(request, request.method)
+def parse_request_data(data):
     output = {}
     for key in set(data):
         if key.endswith('[]'):
