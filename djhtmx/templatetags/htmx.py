@@ -5,6 +5,7 @@ from django import template
 from django.conf import settings
 from django.core.signing import Signer
 from django.template.base import Node, Parser, Token
+from django.templatetags.static import static
 from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
@@ -29,10 +30,19 @@ def htmx_headers(context):
     Use this tag inside your ``<header></header>``.
 
     """
+    cfg = HTMX_SCRIPTS_CFG()
+    htmx_core_scripts = cfg[":core:"]
+    htmx_extension_scripts = [
+        script
+        for extension in getattr(settings, 'HTMX_INSTALLED_EXTENSIONS', [])
+        for script in cfg[extension]
+    ]
     return {
         'csrf_header_name': CSRF_HEADER_NAME,
         'csrf_token': context.get('csrf_token'),
         'DEBUG': settings.DEBUG,
+        'htmx_core_scripts': htmx_core_scripts,
+        'htmx_extension_scripts': htmx_extension_scripts,
     }
 
 
@@ -52,7 +62,7 @@ def htmx(context, _name, **state):
 
 
 @register.simple_tag(takes_context=True, name='hx-tag')
-def hx_tag(context):
+def hx_tag(context, **options):
     """Adds initialziation data to your root component tag.
 
     When your component starts, put it there::
@@ -73,7 +83,8 @@ def hx_tag(context):
     if context.get('hx_swap_oob'):
         html.append('hx-swap-oob="true"')
     else:
-        html.append('hx-swap="outerHTML"')
+        swap = options.get('hx_swap', 'outerHTML')
+        html.append(f'hx-swap="{swap}"')
 
     component = context['this']
     return format_html(
@@ -205,3 +216,53 @@ class ClassNode(CondNode):
     def render(self, *args, **kwargs):
         text = super().render(*args, **kwargs)
         return f'class="{text}"'
+
+
+HTMX_VERSION = '1.6.1'
+
+
+# A map from a name (an extension or otherwise) to the list of statics that
+# make it up.
+#
+# Yet this is a method to avoid calling `static` too early.
+def HTMX_SCRIPTS_CFG():
+    if _HTMX_SCRIPTS_CFG:
+        return _HTMX_SCRIPTS_CFG
+    else:
+        res = {
+            ':core:': [
+                static(
+                    f'htmx/{HTMX_VERSION}/htmx.js'
+                    if getattr(settings, 'DEBUG', False)
+                    else f'htmx/{HTMX_VERSION}/htmx.min.js'
+                ),
+                static('htmx/htmx-django.js'),
+            ],
+            'morphdom-swap': [
+                static(
+                    'htmx/vendors/morphdom/morphdom-umd.js'
+                    if getattr(settings, 'DEBUG', False)
+                    else 'htmx/vendors/morphdom/morphdom-umd.min.js'
+                ),
+                static(f'htmx/{HTMX_VERSION}/ext/morphdom-swap.js'),
+            ],
+        }
+        for ext in _HTMX_BASIC_EXTENSIONS:
+            res[ext] = [static(f'htmx/{HTMX_VERSION}/ext/{ext}.js')]
+        _HTMX_SCRIPTS_CFG.update(res)
+        return res
+
+
+_HTMX_SCRIPTS_CFG = {}
+_HTMX_BASIC_EXTENSIONS = (
+    'debug',
+    'ajax-header',
+    'class-tools',
+    'event-header',
+    'include-vals',
+    'json-enc',
+    'method-override',
+    'path-deps',
+    'preload',
+    'remove-me',
+)

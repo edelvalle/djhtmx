@@ -1,2 +1,2 @@
 exclude tests
-recursive-include djhtmx/ *.html *.js *.css
+recursive-include djhtmx/ *.html *.js
