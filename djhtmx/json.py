@@ -23,7 +23,7 @@ class HtmxEncoder(DjangoJSONEncoder):
             return list(o)
 
         if BaseModel and isinstance(o, BaseModel):
-            return o.dict()
+            return o.model_dump()
 
         if dataclasses.is_dataclass(o):
             return dataclasses.asdict(o)

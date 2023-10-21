@@ -1,205 +1,251 @@
+from functools import cached_property
+import typing as t
 from collections import defaultdict
-from itertools import chain
+from urllib.parse import urlparse
+from uuid import uuid4
 
-from django.contrib.auth.models import AnonymousUser
-from django.http import HttpRequest, HttpResponse
+from django.conf import settings
+from django.db import models
+from django.http import HttpRequest, HttpResponse, QueryDict
 from django.shortcuts import resolve_url
-from django.template.loader import get_template, select_template
-from django.utils.functional import cached_property
-from pydantic import validate_arguments
+from django.template import loader
+from django.utils.safestring import SafeString, mark_safe
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    validate_arguments,
+)
 
-from . import json
+
 from .tracing import sentry_span
+from . import json
 
 
 class ComponentNotFound(LookupError):
     pass
 
 
-class Component:
-    template_name = ''
-    template = None
-    _all = {}
-    _urls = {}
-    _name = ...
+RenderFunction = t.Callable[[dict[str, t.Any]], SafeString]
 
-    _pydantic_config = {'arbitrary_types_allowed': True}
 
-    def __init_subclass__(cls, name=None, public=True):
-        if public:
-            name = name or cls.__name__
-            cls._all[name] = cls
-            cls._name = name
+def get_params(request: HttpRequest) -> QueryDict:
+    is_htmx_request = json.loads(request.META.get("HTTP_HX_REQUEST", "false"))
+    if is_htmx_request:
+        return QueryDict(
+            urlparse(request.META['HTTP_HX_CURRENT_URL']).query,
+            mutable=True,
+        )
+    else:
+        return request.GET.copy()
 
-        for attr_name in vars(cls):
-            attr = getattr(cls, attr_name)
-            if (
-                attr_name == '__init__'
-                or not attr_name.startswith('_')
-                and attr_name.islower()
-                and callable(attr)
-            ):
-                setattr(
-                    cls,
-                    attr_name,
-                    validate_arguments(config=cls._pydantic_config)(attr),
-                )
 
-        return super().__init_subclass__()
-
-    @classmethod
-    def _build(cls, _component_name, request, id, state):
-        if _component_name not in cls._all:
-            raise ComponentNotFound(
-                f"Could not find requested component '{_component_name}'. Did you load the component?"
-            )
-        return cls._all[_component_name](**dict(state, id=id, request=request))
-
-    def __init__(self, request: HttpRequest, id: str | None = None):
+class Repository:
+    def __init__(
+        self,
+        request: HttpRequest,
+        state_by_id: dict[str, dict[str, t.Any]] = None,
+    ):
         self.request = request
-        self.id = id
-        self._destroyed = False
-        self._headers = {}
-        self._triggers = Triggers()
-        self._oob = []
+        self.component_by_id: dict[str, "Component"] = {}
+        self.state_by_id = state_by_id or {}
+        self.params = get_params(request)
 
-    @cached_property
-    def user(self):
-        return getattr(self.request, 'user', AnonymousUser())
+    def build(self, component_name: str, state: dict[str, t.Any]):
+        if component_id := state.get("id"):
+            if component := self.component_by_id.get(component_id):
+                for key, value in state.items():
+                    setattr(component, key, value)
+                return component
+            elif stored_state := self.state_by_id.pop(component_id, None):
+                state = stored_state | state
 
-    @property
-    def _state_json(self) -> str:
-        return json.dumps(self._state)
+        component = Component._build(
+            component_name, self.request, self.params, state
+        )
+        return self.register_component(component)
 
-    @property
-    def _state(self) -> dict:
-        return {
-            name: getattr(self, name)
-            for name in self.__init__.model.__fields__
-            if hasattr(self, name)
-        }
+    def register_component(self, component: "Component") -> "Component":
+        self.component_by_id[component.id] = component
+        return component
+
+    def render(self, component: "Component"):
+        return component.controller.render(
+            component._get_template(),
+            component._get_context() | {"htmx_repo": self},
+        )
+
+    def render_html(self, component: "Component"):
+        return component.controller.render_html(
+            component._get_template(),
+            component._get_context() | {"htmx_repo": self},
+        )
+
+
+class Controller:
+    def __init__(self, request: HttpRequest, params: QueryDict):
+        self.request = request
+        self.params = params
+        self._destroyed: bool = False
+        self._headers: dict[str, str] = {}
 
     def destroy(self):
         self._destroyed = True
 
-    def redirect(self, url, **kwargs):
-        self.redirect_raw_url(resolve_url(url, **kwargs))
+    @cached_property
+    def triggers(self):
+        return Triggers()
 
-    def redirect_raw_url(self, url):
-        self._headers["HX-Redirect"] = url
+    def redirect_to(self, url, **kwargs):
+        self._headers["HX-Redirect"] = resolve_url(url, **kwargs)
 
-    def push_url(self, url, **kwargs):
-        self.push_raw_url(resolve_url(url, **kwargs))
+    def focus(self, selector):
+        self.triggers.after_settle('hxFocus', selector)
 
-    def push_raw_url(self, url):
-        self._headers["HX-Push"] = url
-
-    def _send_event(self, target, event):
-        self._triggers.after_swap(
-            'hxSendEvent',
+    def dispatch_event(self, target: str, event: str):
+        self.triggers.after_settle(
+            'hxDispatchEvent',
             {
                 'target': target,
                 'event': event,
             },
         )
 
-    def _focus(self, selector):
-        self._triggers.after_settle('hxFocus', selector)
-
-    def render(self):
-        response = HttpResponse(self._render())
-        for key, value in (self._headers | self._triggers.headers).items():
+    def render(self, render: RenderFunction, context: dict[str, t.Any]):
+        response = HttpResponse(self.render_html(render, context))
+        for key, value in (self._headers | self.triggers.headers).items():
             response[key] = value
         return response
 
-    def before_render(self) -> None:
-        """Hook called before rendering the template.
+    def render_html(self, render: RenderFunction, context: dict[str, t.Any]):
+        if self._destroyed:
+            html = ''
+        else:
+            html = render(context | {"request": self.request}).strip()
+        return mark_safe(html)
 
-        This allows to leave the `__init__` mostly empty, and push some
-        computations after initialization just before rendering.  Which plays
-        nicer with caching.
 
-        This is your last chance to destroy the component if needed.
+def Model(model: t.Type[models.Model]):
+    return t.Annotated[
+        model,
+        BeforeValidator(
+            lambda v: v
+            if isinstance(v, model)
+            else model.objects.filter(pk=v).first()
+        ),
+        PlainSerializer(
+            lambda v: v.pk,
+            int if (pk := model().pk) is None else type(pk),
+        ),
+    ]
 
-        """
-        pass
 
-    def _render(self, hx_swap_oob=False):
-        with sentry_span(f"{self._fqn}._render"):
-            with sentry_span(f"{self._fqn}.before_render"):
-                self.before_render()
-            if self._destroyed:
-                html = ''
-            else:
-                template = self._get_template()
-                html = template.render(
-                    self._get_context(hx_swap_oob),
-                    request=self.request,
+REGISTRY: dict[str, t.Type["Component"]] = {}
+FQN: dict[t.Type["Component"], str] = {}
+RENDER_FUNC: dict[str, RenderFunction] = {}
+
+
+class Component(BaseModel):
+    __name__: str
+    _template_name: str = ...  # type: ignore
+
+    # fields to exclude from component state during serialization
+    _exclude_fields = {"controller"}
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+    )
+
+    def __init_subclass__(cls, public=True):
+        FQN[cls] = cls.__name__
+        if public:
+            REGISTRY[cls.__name__] = cls
+
+        for name, annotation in list(cls.__annotations__.items()):
+            if issubclass(annotation, models.Model):
+                cls.__annotations__[name] = Model(annotation)
+
+        for attr_name in vars(cls):
+            attr = getattr(cls, attr_name)
+            if (
+                not (
+                    attr_name.startswith("_") or attr_name.startswith("model_")
                 )
-                html = html.strip()
-            if self._oob:
-                html = '\n'.join(
-                    chain(
-                        [html],
-                        [c._render(hx_swap_oob=True) for c in self._oob],
-                    )
+                and attr_name.islower()
+                and callable(attr)
+            ):
+                setattr(
+                    cls,
+                    attr_name,
+                    validate_arguments(
+                        config={"arbitrary_types_allowed": True}
+                    )(attr),
                 )
-            return html
 
-    def _also_render(self, component, **kwargs):
-        self._oob.append(component(request=self.request, **kwargs))
+        return super().__init_subclass__()
 
-    def _get_template(self):
-        if not self.template:
-            if isinstance(self.template_name, (list, tuple)):
-                self.template = select_template(self.template_name)
-            else:
-                self.template = get_template(self.template_name)
-        return self.template
-
-    def _get_context(self, hx_swap_oob):
-        with sentry_span(f"{self._fqn}._get_context"):
-            return dict(
-                {
-                    attr: getattr(self, attr)
-                    for attr in dir(self)
-                    if not attr.startswith('_')
-                },
-                this=self,
-                hx_swap_oob=hx_swap_oob,
+    @classmethod
+    def _build(
+        cls,
+        _component_name: str,
+        request: HttpRequest,
+        params: QueryDict,
+        state: dict[str, t.Any],
+    ):
+        if _component_name not in REGISTRY:
+            raise ComponentNotFound(
+                f"Could not find requested component '{_component_name}'. "
+                "Did you load the component?"
             )
 
-    @property
-    def _fqn(self) -> str:
-        "Fully Qualified Name"
-        cls = type(self)
-        try:
-            mod = cls.__module__
-        except AttributeError:
-            mod = ""
-        name = cls.__name__
-        return f"{mod}.{name}" if mod else name
+        return REGISTRY[_component_name](
+            **dict(state, controller=Controller(request, params))
+        )
+
+    def _get_template(self) -> t.Callable[..., SafeString]:
+        template = self._template_name
+        if settings.DEBUG:
+            return loader.get_template(template).render
+        else:
+            if (render := RENDER_FUNC.get(template)) is None:
+                render = loader.get_template(template).render
+                RENDER_FUNC[template] = render
+            return render
+
+    # State
+    id: str = Field(default_factory=lambda: f'hx-{uuid4().hex}')
+    controller: Controller
+
+    def _get_context(self):
+        with sentry_span(f"{FQN[type(self)]}._get_context"):
+            return {
+                attr: getattr(self, attr)
+                for attr in dir(self)
+                if not attr.startswith('_')
+            } | {"this": self}
 
 
 class Triggers:
     def __init__(self):
-        self._triggers = defaultdict(list)
+        self._trigger = defaultdict(list)
         self._after_swap = defaultdict(list)
         self._after_settle = defaultdict(list)
 
-    def trigger(self, name, what=None):
-        self._triggers[name].append(what)
+    def add(self, name, what: t.Any):
+        self._trigger[name].append(what)
 
-    def after_swap(self, name, what=None):
+    def after_swap(self, name, what: t.Any):
         self._after_swap[name].append(what)
 
-    def after_settle(self, name, what=None):
+    def after_settle(self, name, what: t.Any):
         self._after_settle[name].append(what)
 
     @property
     def headers(self):
         headers = [
-            ('HX-Trigger', self._triggers),
+            ('HX-Trigger', self._trigger),
             ('HX-Trigger-After-Swap', self._after_swap),
             ('HX-Trigger-After-Settle', self._after_settle),
         ]

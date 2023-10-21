@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from setuptools import setup, find_packages
-
+from setuptools import find_packages, setup
 
 HERE = Path(__file__).parent
 README = HERE.joinpath('README.md').open(encoding='utf-8').read()
@@ -20,10 +19,24 @@ setup(
     packages=find_packages(exclude=['tests']),
     include_package_data=True,
     zip_safe=False,
-    python_requires='>=3.6',
+    python_requires='>=3.11',
     install_requires=[
-        'pydantic>=1,<2',
+        'django>=4,<5',
+        'pydantic>=2,<3',
     ],
+    extras_require={
+        "dev": [
+            "black",
+            "django-stubs",
+            "django-stubs-ext",
+            "djlint",
+            "ipython",
+            "pyright",
+            "ruff",
+            "twine",
+            "whitenoise",
+        ]
+    },
     classifiers=[
         'Development Status :: 4 - Beta',
         'Environment :: Web Environment',

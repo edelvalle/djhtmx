@@ -1,10 +1,7 @@
-[tool.isort]
-profile = "black"
-
 [tool.black]
 skip-string-normalization=true
 line-length = 80
-target-version = ['py36', 'py37', 'py38', 'py39']
+target-version = ['py311']
 include = '\.pyi?$'
 exclude = '''
     /(
@@ -20,3 +17,30 @@ exclude = '''
   | docs
     )/
   '''
+
+[tool.pyright]
+strictParameterNoneValue = false
+reportMatchNotExhaustive = "error"
+exclude = [
+  "**/static",
+  "**/migrations",
+  "**/__pycache__",
+]
+
+# [tool.isort]
+# profile = "black"
+# line_length = 80
+# skip_gitignore = true
+
+[tool.djlint]
+# Here we ignore
+# H006: Img tag should have height and width attributes
+# H012: There should be no spaces around attribute =. (alpine js bindings)
+# H021: Inline styles.
+# H025: Tag seems to be an orphan. Cause djlint does not understand all the templatetags we use like {% class {} %}
+# H031: Metadata in html tag.
+ignore = "H021,H006,H025,H031,H012"
+indent = 2
+profile="django"
+blank_line_after_tag="load,extends,endblock"
+close_void_tags=true

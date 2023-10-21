@@ -1,5 +1,3 @@
-from uuid import uuid4
-
 from django import template
 from django.conf import settings
 from django.core.signing import Signer
@@ -7,10 +5,9 @@ from django.template.base import Node, Parser, Token
 from django.templatetags.static import static
 from django.urls import reverse
 from django.utils.html import format_html
-from django.utils.safestring import mark_safe
 
 from .. import json
-from ..component import Component
+from ..component import Component, Repository
 
 register = template.Library()
 
@@ -44,7 +41,7 @@ def htmx_headers(context):
 
 
 @register.simple_tag(takes_context=True)
-def htmx(context, _name, id=None, **state):
+def htmx(context, _name: str, **state):
     """Inserts an HTMX Component.
 
     Pass the component name and the initial state:
@@ -53,9 +50,9 @@ def htmx(context, _name, id=None, **state):
         {% htmx 'AmazinData' data=some_data %}
         ```
     """
-    id = id or f'hx-{uuid4().hex}'
-    component = Component._build(_name, context['request'], id, state)
-    return mark_safe(component._render())
+    repo = context.get("htmx_repo") or Repository(context['request'])
+    component = repo.build(_name, state)
+    return repo.render_html(component)
 
 
 @register.simple_tag(takes_context=True, name='hx-tag')
@@ -74,25 +71,22 @@ def hx_tag(context, **options):
     html = [
         'id="{id}"',
         'hx-post="{url}"',
+        'hx-include="#{id} [name]"',
         'hx-trigger="render"',
-        'hx-headers="{headers}"',
+        'hx-swap="outerHTML"',
+        'data-hx-state="{state}"',
     ]
 
     if context.get('hx_swap_oob'):
         html.append('hx-swap-oob="true"')
-    else:
-        swap = options.get('hx_swap', 'outerHTML')
-        html.append(f'hx-swap="{swap}"')
 
-    component = context['this']
+    component: Component = context['this']
     return format_html(
         ' '.join(html),
-        id=context['id'],
+        id=component.id,
         url=event_url(component, 'render'),
-        headers=json.dumps(
-            {
-                'X-Component-State': Signer().sign(component._state_json),
-            }
+        state=Signer().sign(
+            component.model_dump_json(exclude=component._exclude_fields)
         ),
     )
 
@@ -135,25 +129,25 @@ def on(context, _trigger, _event_handler=None, **kwargs):
 
     assert callable(
         getattr(component, _event_handler, None)
-    ), f'{component._name}.{_event_handler} event handler not found'
+    ), f'{type(component).__name__}.{_event_handler} event handler not found'
 
     html = ' '.join(
         filter(
             None,
             [
-                'hx-post="{url}" ' 'hx-target="#{id}" ',
-                'hx-include="#{id} [name]" ',
-                'hx-trigger="{trigger}" ' if _trigger else None,
-                'hx-vals="{vals}" ' if kwargs else None,
+                'hx-post="{url}"',
+                'hx-target="#{id}"',
+                'hx-trigger="{trigger}"' if _trigger else None,
+                'hx-vals="{vals}"' if kwargs else None,
             ],
         )
     )
 
     return format_html(
         html,
+        id=component.id,
         trigger=_trigger,
         url=event_url(component, _event_handler),
-        id=context['id'],
         vals=json.dumps(kwargs) if kwargs else None,
     )
 
@@ -162,13 +156,18 @@ def event_url(component, event_handler):
     return reverse(
         'djhtmx.endpoint',
         kwargs={
-            'component_name': component._name,
+            'component_name': type(component).__name__,
             'event_handler': event_handler,
         },
     )
 
 
 # Shortcuts and helpers
+
+
+@register.filter()
+def concat(prefix, suffix):
+    return f'{prefix}{suffix}'
 
 
 @register.tag()
@@ -217,7 +216,7 @@ class ClassNode(CondNode):
         return f'class="{text}"'
 
 
-HTMX_VERSION = '1.6.1'
+HTMX_VERSION = '1.9.6'
 
 
 # A map from a name (an extension or otherwise) to the list of statics that
