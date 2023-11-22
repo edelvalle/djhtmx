@@ -1,7 +1,8 @@
+import typing as t
 from collections import defaultdict
 from itertools import chain
 
-from django.contrib.auth.models import AnonymousUser
+from django.contrib.auth.models import AbstractUser, AnonymousUser
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import resolve_url
 from django.template.loader import get_template, select_template
@@ -64,8 +65,11 @@ class Component:
         self._oob = []
 
     @cached_property
-    def user(self):
-        return getattr(self.request, 'user', AnonymousUser())
+    def user(self) -> t.Optional[AbstractUser]:
+        user = getattr(self.request, 'user', None)
+        if user is None or not isinstance(user, AbstractUser):
+            return AnonymousUser()
+        return user
 
     @property
     def _state_json(self) -> str:
