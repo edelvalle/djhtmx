@@ -1,4 +1,3 @@
-import typing as t
 from collections import defaultdict
 from itertools import chain
 
@@ -65,7 +64,7 @@ class Component:
         self._oob = []
 
     @cached_property
-    def user(self) -> t.Optional[AbstractUser]:
+    def user(self) -> AbstractUser | AnonymousUser:
         user = getattr(self.request, 'user', None)
         if user is None or not isinstance(user, AbstractUser):
             return AnonymousUser()
