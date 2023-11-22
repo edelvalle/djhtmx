@@ -1,10 +1,43 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+
+[tool.poetry]
+name = "djhtmx"
+version = "0.0.0"
+description = "Brings LiveView from Phoenix framework into Django"
+authors = ["Eddy Ernesto del Valle Pino <eddy@edelvalle.me>"]
+readme="README.md"
+license="MIT"
+repository="https://github.com/edelvalle/djhtmx"
+classifiers=[
+    'Development Status :: 4 - Beta',
+    'Environment :: Web Environment',
+    'Framework :: Django',
+    'Intended Audience :: Developers',
+    'License :: OSI Approved :: MIT License',
+    'Operating System :: OS Independent',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Topic :: Internet :: WWW/HTTP',
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+django = ">=4.1"
+pydantic = ">=1,<2.5"
+
+
 [tool.isort]
 profile = "black"
 
 [tool.black]
 skip-string-normalization=true
 line-length = 80
-target-version = ['py36', 'py37', 'py38', 'py39']
+target-version = ['py310', 'py311']
 include = '\.pyi?$'
 exclude = '''
     /(
