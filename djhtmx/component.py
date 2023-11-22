@@ -77,11 +77,14 @@ class Component:
 
     @property
     def _state(self) -> dict:
-        return {
-            name: getattr(self, name)
-            for name in self.__init__.model.__fields__
-            if hasattr(self, name)
-        }
+        if model := getattr(self.__init__, "model", None):
+            return {
+                name: getattr(self, name)
+                for name in model.__fields__
+                if hasattr(self, name)
+            }
+        else:
+            return {}
 
     def destroy(self):
         self._destroyed = True
