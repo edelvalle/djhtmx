@@ -6,7 +6,14 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import resolve_url
 from django.template.loader import get_template, select_template
 from django.utils.functional import cached_property
-from pydantic import validate_arguments
+
+try:
+    from pydantic import validate_call, ConfigDict
+except ImportError:
+    from pydantic import validate_arguments as validate_call
+
+    ConfigDict = dict
+
 
 from . import json
 from .tracing import sentry_span
@@ -17,13 +24,17 @@ class ComponentNotFound(LookupError):
 
 
 class Component:
-    template_name = ''
+    template_name = ""
     template = None
     _all = {}
     _urls = {}
     _name = ...
 
-    _pydantic_config = {'arbitrary_types_allowed': True}
+    _pydantic_config = ConfigDict(
+        {
+            "arbitrary_types_allowed": True,
+        }
+    )
 
     def __init_subclass__(cls, name=None, public=True):
         if public:
@@ -34,15 +45,15 @@ class Component:
         for attr_name in vars(cls):
             attr = getattr(cls, attr_name)
             if (
-                attr_name == '__init__'
-                or not attr_name.startswith('_')
+                attr_name == "__init__"
+                or not attr_name.startswith("_")
                 and attr_name.islower()
                 and callable(attr)
             ):
                 setattr(
                     cls,
                     attr_name,
-                    validate_arguments(config=cls._pydantic_config)(attr),
+                    validate_call(config=cls._pydantic_config)(attr),  # type: ignore
                 )
 
         return super().__init_subclass__()
@@ -65,7 +76,7 @@ class Component:
 
     @cached_property
     def user(self) -> AbstractUser | AnonymousUser:
-        user = getattr(self.request, 'user', None)
+        user = getattr(self.request, "user", None)
         if user is None or not isinstance(user, AbstractUser):
             return AnonymousUser()
         return user
@@ -102,15 +113,15 @@ class Component:
 
     def _send_event(self, target, event):
         self._triggers.after_swap(
-            'hxSendEvent',
+            "hxSendEvent",
             {
-                'target': target,
-                'event': event,
+                "target": target,
+                "event": event,
             },
         )
 
     def _focus(self, selector):
-        self._triggers.after_settle('hxFocus', selector)
+        self._triggers.after_settle("hxFocus", selector)
 
     def render(self):
         response = HttpResponse(self._render())
@@ -135,7 +146,7 @@ class Component:
             with sentry_span(f"{self._fqn}.before_render"):
                 self.before_render()
             if self._destroyed:
-                html = ''
+                html = ""
             else:
                 template = self._get_template()
                 html = template.render(
@@ -144,7 +155,7 @@ class Component:
                 )
                 html = html.strip()
             if self._oob:
-                html = '\n'.join(
+                html = "\n".join(
                     chain(
                         [html],
                         [c._render(hx_swap_oob=True) for c in self._oob],
@@ -169,7 +180,7 @@ class Component:
                 {
                     attr: getattr(self, attr)
                     for attr in dir(self)
-                    if not attr.startswith('_')
+                    if not attr.startswith("_")
                 },
                 this=self,
                 hx_swap_oob=hx_swap_oob,
@@ -205,8 +216,8 @@ class Triggers:
     @property
     def headers(self):
         headers = [
-            ('HX-Trigger', self._triggers),
-            ('HX-Trigger-After-Swap', self._after_swap),
-            ('HX-Trigger-After-Settle', self._after_settle),
+            ("HX-Trigger", self._triggers),
+            ("HX-Trigger-After-Swap", self._after_swap),
+            ("HX-Trigger-After-Settle", self._after_settle),
         ]
         return {header: json.dumps(value) for header, value in headers if value}
