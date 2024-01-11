@@ -5,22 +5,28 @@ import uuid
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='Item',
+            name="Item",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('completed', models.BooleanField(default=False)),
-                ('text', models.CharField(max_length=256)),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                ("completed", models.BooleanField(default=False)),
+                ("text", models.CharField(max_length=256)),
             ],
             options={
-                'abstract': False,
+                "abstract": False,
             },
         ),
     ]

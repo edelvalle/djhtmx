@@ -1,6 +1,8 @@
-from djhtmx.component import Component, Model
-from .models import Item
 from enum import StrEnum
+
+from djhtmx.component import Component
+
+from .models import Item
 
 
 class Showing(StrEnum):
@@ -33,9 +35,6 @@ class TodoList(Component):
     def all_items_are_completed(self):
         return self.items.count() == self.items.completed().count()
 
-    def add(self, new_item: str):
-        Item.objects.create(text=new_item)
-
     def toggle_all(self, toggle_all: bool):
         self.items.update(completed=toggle_all)
 
@@ -45,6 +44,17 @@ class TodoList(Component):
 
     def clear_completed(self):
         self.items.completed().delete()
+
+
+class ListHeader(Component):
+    _template_name = "todo/list_header.html"
+
+    def add(self, new_item: str):
+        item = Item.objects.create(text=new_item)
+        todo_item = self.controller.build(
+            TodoItem, id=f"item-{item.id}", item=item
+        )
+        self.controller.append("#todo-list", todo_item)
 
 
 class TodoItem(Component):
@@ -71,3 +81,15 @@ class TodoItem(Component):
         self.item.text = text
         self.item.save()
         self.editing = False
+
+
+class TodoCounter(Component):
+    _template_name = "todo/counter.html"
+
+    @property
+    def subscriptions(self) -> set[str]:
+        return {"todo.item"}
+
+    @property
+    def items(self):
+        return Item.objects.active()

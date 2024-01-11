@@ -1,14 +1,16 @@
-from functools import cached_property
 import typing as t
 from collections import defaultdict
+from functools import cached_property
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from django.conf import settings
 from django.db import models
+from django.db.models.signals import post_save, pre_delete
 from django.http import HttpRequest, HttpResponse, QueryDict
 from django.shortcuts import resolve_url
 from django.template import loader
+from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import (
     BaseModel,
@@ -19,9 +21,9 @@ from pydantic import (
     validate_arguments,
 )
 
-
-from .tracing import sentry_span
 from . import json
+from .introspection import get_related_fields
+from .tracing import sentry_span
 
 
 class ComponentNotFound(LookupError):
@@ -35,7 +37,7 @@ def get_params(request: HttpRequest) -> QueryDict:
     is_htmx_request = json.loads(request.META.get("HTTP_HX_REQUEST", "false"))
     if is_htmx_request:
         return QueryDict(
-            urlparse(request.META['HTTP_HX_CURRENT_URL']).query,
+            urlparse(request.META["HTTP_HX_CURRENT_URL"]).query,
             mutable=True,
         )
     else:
@@ -47,11 +49,98 @@ class Repository:
         self,
         request: HttpRequest,
         state_by_id: dict[str, dict[str, t.Any]] = None,
+        subscriptions_by_id: dict[str, list[str]] = None,
     ):
         self.request = request
         self.component_by_id: dict[str, "Component"] = {}
         self.state_by_id = state_by_id or {}
+        self.subscriptions_by_id = subscriptions_by_id or {}
+
         self.params = get_params(request)
+        self.signals = set()
+
+        listen_to = {
+            ".".join(signal.split(".", 2)[:2])
+            for signals in self.subscriptions_by_id.values()
+            for signal in signals
+        }
+        for app_model_name in listen_to:
+            post_save.connect(
+                sender=app_model_name,
+                receiver=self._listen_to_post_save,
+            )
+            pre_delete.connect(
+                sender=app_model_name,
+                receiver=self._listen_to_pre_delete,
+            )
+
+    def _listen_to_post_save(
+        self,
+        sender: t.Type[models.Model],
+        instance: models.Model,
+        created: bool,
+        **kwargs,
+    ):
+        app = sender._meta.app_label
+        name = sender._meta.model_name
+        self.signals.update([f"{app}.{name}", f"{app}.{name}.{instance.pk}"])
+        if created:
+            self.signals.add(f"{app}.{name}.{instance.pk}.created")
+        else:
+            self.signals.add(f"{app}.{name}.{instance.pk}.updated")
+
+    def _listen_to_pre_delete(
+        self,
+        sender: t.Type[models.Model],
+        instance: models.Model,
+        **kwargs,
+    ):
+        app = sender._meta.app_label
+        name = sender._meta.model_name
+        self.signals.update(
+            [
+                f"{app}.{name}",
+                f"{app}.{name}.{instance.pk}",
+                f"{app}.{name}.{instance.pk}.deleted",
+            ]
+        )
+
+    def _listen_to_realted(
+        self,
+        sender: t.Type[models.Model],
+        instance: models.Model,
+        action: str,
+    ):
+        for field in get_related_fields(sender):
+            if field.is_m2m:
+                fk_ids = getattr(instance, field.name).values_list(
+                    "id", flat=True
+                )
+            else:
+                fk_ids = filter(None, [getattr(instance, field.name)])
+
+            for fk_id in fk_ids:
+                signal = (
+                    f"{field.related_model_name}.{fk_id}.{field.relation_name}"
+                )
+                self.signals.update(signal, f"{signal}.{action}")
+
+    def dispatch_signals(self):
+        for component_id, subscriptions in self.subscriptions_by_id.items():
+            if (
+                self.signals.intersection(subscriptions)
+                and (state := self.state_by_id.pop(component_id, None))
+                is not None
+            ):
+                component = self.register_component(
+                    build(state["hx_name"], self.request, self.params, state)
+                )
+                yield self.render_html(component, oob="true")
+
+    def render_oob(self):
+        for component in self.component_by_id.values():
+            for oob, component in component.controller._oob:
+                yield self.render_html(component, oob=oob)
 
     def build(self, component_name: str, state: dict[str, t.Any]):
         if component_id := state.get("id"):
@@ -62,9 +151,7 @@ class Repository:
             elif stored_state := self.state_by_id.pop(component_id, None):
                 state = stored_state | state
 
-        component = Component._build(
-            component_name, self.request, self.params, state
-        )
+        component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
     def register_component(self, component: "Component") -> "Component":
@@ -77,11 +164,22 @@ class Repository:
             component._get_context() | {"htmx_repo": self},
         )
 
-    def render_html(self, component: "Component"):
-        return component.controller.render_html(
-            component._get_template(),
-            component._get_context() | {"htmx_repo": self},
-        )
+    def render_html(
+        self, component: "Component", oob: str = None, target: str = None
+    ):
+        is_oob = oob not in ("true", None)
+        html = [
+            format_html('<div hx-swap-oob="{oob}">', oob=oob)
+            if is_oob
+            else None,
+            component.controller.render_html(
+                component._get_template(),
+                component._get_context()
+                | {"htmx_repo": self, "hx_oob": None if is_oob else oob},
+            ),
+            "</div>" if is_oob else None,
+        ]
+        return mark_safe("".join(filter(None, html)))
 
 
 class Controller:
@@ -90,9 +188,29 @@ class Controller:
         self.params = params
         self._destroyed: bool = False
         self._headers: dict[str, str] = {}
+        self._oob: list[tuple[str, "Component"]] = []
+
+    def build(self, component: t.Type["Component"], **state):
+        clone = type(self)(self.request, self.params)
+        return component(controller=clone, hx_name=component.__name__, **state)
 
     def destroy(self):
         self._destroyed = True
+
+    def append(self, target: str, component: "Component"):
+        self._oob.append((f"beforeend:{target}", component))
+
+    def prepend(self, target: str, component: "Component"):
+        self._oob.append((f"afterbegin:{target}", component))
+
+    def after(self, target: str, component: "Component"):
+        self._oob.append((f"afterend:{target}", component))
+
+    def before(self, target: str, component: "Component"):
+        self._oob.append((f"beforebegin:{target}", component))
+
+    def update(self, component: "Component"):
+        self._oob.append(("true", component))
 
     @cached_property
     def triggers(self):
@@ -102,14 +220,14 @@ class Controller:
         self._headers["HX-Redirect"] = resolve_url(url, **kwargs)
 
     def focus(self, selector):
-        self.triggers.after_settle('hxFocus', selector)
+        self.triggers.after_settle("hxFocus", selector)
 
     def dispatch_event(self, target: str, event: str):
         self.triggers.after_settle(
-            'hxDispatchEvent',
+            "hxDispatchEvent",
             {
-                'target': target,
-                'event': event,
+                "target": target,
+                "event": event,
             },
         )
 
@@ -121,7 +239,7 @@ class Controller:
 
     def render_html(self, render: RenderFunction, context: dict[str, t.Any]):
         if self._destroyed:
-            html = ''
+            html = ""
         else:
             html = render(context | {"request": self.request}).strip()
         return mark_safe(html)
@@ -147,13 +265,31 @@ FQN: dict[t.Type["Component"], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
+def build(
+    component_name: str,
+    request: HttpRequest,
+    params: QueryDict,
+    state: dict[str, t.Any],
+):
+    if component_name not in REGISTRY:
+        raise ComponentNotFound(
+            f"Could not find requested component '{component_name}'. "
+            "Did you load the component?"
+        )
+
+    return REGISTRY[component_name](
+        **dict(
+            state,
+            hx_name=component_name,
+            controller=Controller(request, params),
+        )
+    )
+
+
 class Component(BaseModel):
-    __name__: str
     _template_name: str = ...  # type: ignore
 
     # fields to exclude from component state during serialization
-    _exclude_fields = {"controller"}
-
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
     )
@@ -186,23 +322,18 @@ class Component(BaseModel):
 
         return super().__init_subclass__()
 
-    @classmethod
-    def _build(
-        cls,
-        _component_name: str,
-        request: HttpRequest,
-        params: QueryDict,
-        state: dict[str, t.Any],
-    ):
-        if _component_name not in REGISTRY:
-            raise ComponentNotFound(
-                f"Could not find requested component '{_component_name}'. "
-                "Did you load the component?"
-            )
+    # State
+    id: str = Field(default_factory=lambda: f"hx-{uuid4().hex}")
+    controller: Controller = Field(exclude=True)
+    hx_name: str
 
-        return REGISTRY[_component_name](
-            **dict(state, controller=Controller(request, params))
-        )
+    @classmethod
+    def _build(cls, controller: Controller, **state):
+        return cls(controller=controller, hx_name=cls.__name__, **state)
+
+    @property
+    def subscriptions(self) -> set[str]:
+        return set()
 
     def _get_template(self) -> t.Callable[..., SafeString]:
         template = self._template_name
@@ -214,16 +345,12 @@ class Component(BaseModel):
                 RENDER_FUNC[template] = render
             return render
 
-    # State
-    id: str = Field(default_factory=lambda: f'hx-{uuid4().hex}')
-    controller: Controller
-
     def _get_context(self):
         with sentry_span(f"{FQN[type(self)]}._get_context"):
             return {
                 attr: getattr(self, attr)
                 for attr in dir(self)
-                if not attr.startswith('_')
+                if not attr.startswith("_") and not attr.startswith("model_")
             } | {"this": self}
 
 
@@ -245,8 +372,8 @@ class Triggers:
     @property
     def headers(self):
         headers = [
-            ('HX-Trigger', self._trigger),
-            ('HX-Trigger-After-Swap', self._after_swap),
-            ('HX-Trigger-After-Settle', self._after_settle),
+            ("HX-Trigger", self._trigger),
+            ("HX-Trigger-After-Swap", self._after_swap),
+            ("HX-Trigger-After-Settle", self._after_settle),
         ]
         return {header: json.dumps(value) for header, value in headers if value}

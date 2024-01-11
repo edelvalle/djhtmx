@@ -19,6 +19,6 @@ from django.urls import include, path
 
 urlpatterns = [
     path("", include("fision.todo.urls")),
-    path('_htmx/', include('djhtmx.urls')),
+    path("_htmx/", include("djhtmx.urls")),
     path("admin/", admin.site.urls),
 ]

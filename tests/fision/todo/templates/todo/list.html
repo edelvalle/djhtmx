@@ -2,14 +2,7 @@
 
 <div {% hx-tag %}>
   <section class="todoapp">
-    <header class="header">
-      <h1>todos</h1>
-      <input class="new-todo"
-             placeholder="What needs to be done?"
-             name="new_item"
-             autofocus
-             {% on "keypress[key=='Enter']" "add" %} />
-    </header>
+    {% htmx 'ListHeader' %}
     <!-- This section should be hidden by default and shown when there are todos -->
     <section class="main">
       {% if this.items %}
@@ -26,7 +19,7 @@
     </section>
     {% if this.queryset %}
       <footer class="footer">
-        {# {% component 'XTodoCounter' id="counter" %} #}
+        {% htmx 'TodoCounter' id="counter" %}
         <!-- Remove this if you don't implement routing -->
         <ul class="filters">
           <li>

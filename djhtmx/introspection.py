@@ -1,8 +1,54 @@
+from dataclasses import dataclass
 import typing as t
+from django.db import models
 from collections import defaultdict
 from django.utils.datastructures import MultiValueDict
 
 import inspect
+
+# model
+
+
+@dataclass(slots=True)
+class ModelRelatedField:
+    is_m2m: bool
+    name: str
+    relation_name: str
+    related_model_name: str
+
+
+MODEL_RELATED_FIELDS: dict[
+    t.Type[models.Model], tuple[ModelRelatedField, ...]
+] = {}
+
+
+def get_related_fields(model):
+    related_fields = MODEL_RELATED_FIELDS.get(model)
+    if related_fields is None:
+        fields = []
+        for field in model._meta.get_fields():
+            if (
+                isinstance(field, (models.ForeignKey, models.ManyToManyField))
+                and (relation_name := field.related_query_name())
+                and relation_name != "+"
+            ):
+                is_m2m = isinstance(field, models.ManyToManyField)
+                rel_meta = field.related_model._meta  # type: ignore
+                fields.append(
+                    ModelRelatedField(
+                        is_m2m=is_m2m,
+                        name=field.attname,
+                        relation_name=relation_name,
+                        related_model_name=(
+                            f"{rel_meta.app_label}.{rel_meta.model_name}"
+                        ),
+                    )
+                )
+        related_fields = MODEL_RELATED_FIELDS[model] = tuple(fields)
+    return related_fields
+
+
+# filtering
 
 
 def filter_parameters(f, kwargs):

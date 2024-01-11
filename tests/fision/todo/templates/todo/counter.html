@@ -1,8 +1,8 @@
-{% load reactor %}
+{% load htmx %}
 
-<div {% tag_header %}>
+<div {% hx-tag %}>
   <!-- This should be `0 items left` by default -->
-  {% with amount=items.active.count %}
+  {% with amount=items.count %}
     <span class="todo-count"><strong>{{ amount }}</strong> item{{ amount|pluralize }} left</span>
   {% endwith %}
 </div>

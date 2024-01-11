@@ -1,22 +1,31 @@
-[tool.black]
-skip-string-normalization=true
+# [tool.black]
+# skip-string-normalization=true
+# line-length = 80
+# target-version = ['py311']
+# include = '\.pyi?$'
+# exclude = '''
+#     /(
+#     \.eggs
+#   | \.git
+#   | \.hg
+#   | \.mypy_cache
+#   | \.tox
+#   | \.venv
+#   | __pycache__
+#   | build
+#   | dist
+#   | docs
+#     )/
+#   '''
+
+[tool.ruff]
 line-length = 80
-target-version = ['py311']
-include = '\.pyi?$'
-exclude = '''
-    /(
-    \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | __pycache__
-  | build
-  | dist
-  | docs
-    )/
-  '''
+target-version = "py311"
+
+[too.isort]
+line-length = 80
+profile ="django"
+
 
 [tool.pyright]
 strictParameterNoneValue = false

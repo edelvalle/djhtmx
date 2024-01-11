@@ -13,12 +13,17 @@
     });
 
     document.body.addEventListener('htmx:beforeRequest', (event) => {
-        const target = event.detail.target;
-        let states = [target.dataset.hxState]
-        target.querySelectorAll("[data-hx-state]").forEach(element =>
+        let subscriptions = {};
+        let states = [];
+        document.querySelectorAll("[data-hx-state]").forEach(element => {
+            let hxSubscriptions = element.dataset.hxSubscriptions;
+            if (hxSubscriptions !== undefined) {
+                subscriptions[element.id] = element.dataset.hxSubscriptions;
+            }
             states.push(element.dataset.hxState)
-        );
-        event.detail.requestConfig.unfilteredParameters["__hx-states__"] = states
+        });
+        event.detail.requestConfig.unfilteredParameters["__hx-states__"] = states;
+        event.detail.requestConfig.unfilteredParameters["__hx-subscriptions__"] = subscriptions;
     });
 
     document.body.addEventListener('htmx:configRequest', (event) => {
