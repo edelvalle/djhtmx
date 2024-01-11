@@ -12,7 +12,7 @@ def filter_parameters(f, kwargs):
         return {
             param: value
             for param, value in kwargs.items()
-            if param in f.model.__fields__
+            if param in inspect.signature(f).parameters.keys()
         }
 
 
