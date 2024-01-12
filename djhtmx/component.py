@@ -87,7 +87,18 @@ class Component:
 
     @property
     def _state(self) -> dict:
-        if model := getattr(self.__init__, "model", None):
+        if schema := getattr(self.__init__, "__pydantic_core_schema__", None):
+            # This is Pydantic v2 which doesn't expose a model, but creates a
+            # direct validator.
+            call_args = schema["arguments_schema"]  # of type 'call'
+            fn_args = call_args["arguments_schema"]
+            return {
+                name: getattr(self, name)
+                for arg in fn_args
+                if (name := arg["name"]) != "self"
+                if hasattr(self, name)
+            }
+        elif model := getattr(self.__init__, "model", None):
             return {
                 name: getattr(self, name)
                 for name in model.__fields__
