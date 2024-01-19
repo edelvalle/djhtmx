@@ -8,9 +8,9 @@ from .tracing import sentry_request_transaction
 
 
 def endpoint(request, component_name, event_handler):
-    with sentry_request_transaction(request, component_name, event_handler):
-        id = request.META.get('HTTP_HX_TARGET')
-        state = request.META.get('HTTP_X_COMPONENT_STATE', '')
+    with sentry_request_transaction(component_name, event_handler):
+        id = request.META.get("HTTP_HX_TARGET")
+        state = request.META.get("HTTP_X_COMPONENT_STATE", "")
         state = Signer().unsign(state)
         state = json.loads(state)
         component = Component._build(component_name, request, id, state)
@@ -22,8 +22,8 @@ def endpoint(request, component_name, event_handler):
 
 urlpatterns = [
     path(
-        '<component_name>/<event_handler>',
+        "<component_name>/<event_handler>",
         endpoint,
-        name='djhtmx.endpoint',
+        name="djhtmx.endpoint",
     )
 ]

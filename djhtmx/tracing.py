@@ -16,7 +16,7 @@ try:
 
     def sentry_span(description, **tags):
         hub = Hub.current
-        span = hub.start_span(op="djhtmx", description=description)
+        span = hub.start_span(description=description)
         for tag, value in tags.items():
             span.set_tag(tag, value)
         return span
@@ -33,7 +33,5 @@ except ImportError:
         yield
 
 
-def sentry_request_transaction(request, component_name, event_handler):
-    return sentry_transaction_name(
-        f"HTMX {request.method} {component_name}.{event_handler}"
-    )
+def sentry_request_transaction(component_name, event_handler):
+    return sentry_transaction_name(f"{component_name}.{event_handler}")
