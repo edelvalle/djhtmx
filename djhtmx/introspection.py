@@ -1,10 +1,10 @@
-from dataclasses import dataclass
-import typing as t
-from django.db import models
-from collections import defaultdict
-from django.utils.datastructures import MultiValueDict
-
 import inspect
+import typing as t
+from collections import defaultdict
+from dataclasses import dataclass
+
+from django.db import models
+from django.utils.datastructures import MultiValueDict
 
 # model
 
@@ -62,7 +62,7 @@ def filter_parameters(f, kwargs):
         return {
             param: value
             for param, value in kwargs.items()
-            if param in f.model.__fields__
+            if param in inspect.signature(f).parameters.keys()
         }
 
 

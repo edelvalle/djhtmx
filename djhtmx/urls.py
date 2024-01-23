@@ -61,7 +61,7 @@ def endpoint(request, component_name, event_handler):
             state = json.loads(state)
             component = Component._build(component_name, request, id, state)
             handler = getattr(component, event_handler)
-            handler_kwargs = parse_request_data(request)
+            handler_kwargs = parse_request_data(request.POST)
             handler_kwargs = filter_parameters(handler, handler_kwargs)
             return handler(**handler_kwargs) or component.render()
 

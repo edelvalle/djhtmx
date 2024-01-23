@@ -100,6 +100,7 @@ def hx_tag(context, swap: str = "outerHTML"):
         html = [
             'id="{id}"',
             'hx-post="{url}"',
+            'hx-include="#{id} [name]"',
             'hx-trigger="render"',
             'hx-headers="{headers}"',
         ]
