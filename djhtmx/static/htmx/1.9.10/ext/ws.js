@@ -200,7 +200,7 @@ This extension adds support for WebSockets to htmx.  See /www/extensions/ws.md f
 				if (!this.socket) {
 					api.triggerErrorEvent()
 				}
-				if (sendElt && api.triggerEvent(sendElt, 'htmx:wsBeforeSend', {
+				if (!sendElt || api.triggerEvent(sendElt, 'htmx:wsBeforeSend', {
 					message: message,
 					socketWrapper: this.publicInterface
 				})) {
@@ -379,7 +379,7 @@ This extension adds support for WebSockets to htmx.  See /www/extensions/ws.md f
 
 				socketWrapper.send(body, elt);
 
-				if (api.shouldCancel(evt, elt)) {
+				if (evt && api.shouldCancel(evt, elt)) {
 					evt.preventDefault();
 				}
 			});
