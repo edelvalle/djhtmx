@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from djhtmx.component import Component
+from djhtmx.component import PydanticComponent
 
 from .models import Item
 
@@ -11,7 +11,7 @@ class Showing(StrEnum):
     ACTIVE = "active"
 
 
-class TodoList(Component):
+class TodoList(PydanticComponent):
     _template_name = "todo/list.html"
 
     showing: Showing = Showing.ALL
@@ -46,7 +46,7 @@ class TodoList(Component):
         self.items.completed().delete()
 
 
-class ListHeader(Component):
+class ListHeader(PydanticComponent):
     _template_name = "todo/list_header.html"
 
     def add(self, new_item: str):
@@ -57,7 +57,7 @@ class ListHeader(Component):
         self.controller.append("#todo-list", todo_item)
 
 
-class TodoItem(Component):
+class TodoItem(PydanticComponent):
     _template_name = "todo/item.html"
 
     item: Item
@@ -83,7 +83,7 @@ class TodoItem(Component):
         self.editing = False
 
 
-class TodoCounter(Component):
+class TodoCounter(PydanticComponent):
     _template_name = "todo/counter.html"
 
     @property

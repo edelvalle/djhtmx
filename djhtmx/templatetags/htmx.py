@@ -1,12 +1,14 @@
+from uuid import uuid4
+
 from django import template
 from django.core.signing import Signer
 from django.template.base import Node, Parser, Token
 from django.urls import reverse
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 
-from .. import json
-from ..component import Component, Repository
-from .. import settings
+from .. import json, settings
+from ..component import REGISTRY, Component, PydanticComponent, Repository
 
 register = template.Library()
 
@@ -39,8 +41,18 @@ def htmx(context, _name: str, **state):
         ```
     """
     repo = context.get("htmx_repo") or Repository(context["request"])
-    component = repo.build(_name, state)
-    return repo.render_html(component)
+    if _name in REGISTRY:
+        # PydanticComponent
+        component = repo.build(_name, state)
+        return repo.render_html(component)
+    else:
+        # Legacy Component
+        if "id" in state:
+            id = state.pop("id")
+        else:
+            id = f"hx-{uuid4().hex}"
+        component = Component._build(_name, context["request"], id, state)
+        return mark_safe(component._render())
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
@@ -56,33 +68,58 @@ def hx_tag(context, swap: str = "outerHTML"):
         </div>
         ```
     """
-    component: Component = context["this"]
-    oob = context.get("hx_oob")
+    component: Component | PydanticComponent = context["this"]
+    if isinstance(component, PydanticComponent):
+        oob = context.get("hx_oob")
 
-    html = [
-        'id="{id}"',
-        'hx-post="{url}"',
-        'hx-include="#{id} [name]"',
-        'hx-trigger="render"',
-        'hx-swap="{swap}"',
-        'data-hx-state="{state}"',
-        (
-            'data-hx-subscriptions="{subscriptions}"'
-            if component.subscriptions
-            else None
-        ),
-        'hx-swap-oob="{oob}"' if oob else None,
-    ]
+        html = [
+            'id="{id}"',
+            'hx-post="{url}"',
+            'hx-include="#{id} [name]"',
+            'hx-trigger="render"',
+            'hx-swap="{swap}"',
+            'data-hx-state="{state}"',
+            (
+                'data-hx-subscriptions="{subscriptions}"'
+                if component.subscriptions
+                else None
+            ),
+            'hx-swap-oob="{oob}"' if oob else None,
+        ]
 
-    return format_html(
-        " ".join(filter(None, html)),
-        id=component.id,
-        oob=oob,
-        swap=swap,
-        url=event_url(component, "render"),
-        state=Signer().sign(component.model_dump_json()),
-        subscriptions=",".join(component.subscriptions),
-    )
+        return format_html(
+            " ".join(filter(None, html)),
+            id=component.id,
+            oob=oob,
+            swap=swap,
+            url=event_url(component, "render"),
+            state=Signer().sign(component.model_dump_json()),
+            subscriptions=",".join(component.subscriptions),
+        )
+    else:
+        html = [
+            'id="{id}"',
+            'hx-post="{url}"',
+            'hx-trigger="render"',
+            'hx-headers="{headers}"',
+        ]
+
+        if context.get("hx_swap_oob"):
+            html.append('hx-swap-oob="true"')
+        else:
+            html.append(f'hx-swap="{swap}"')
+
+        component = context["this"]
+        return format_html(
+            " ".join(html),
+            id=context["id"],
+            url=event_url(component, "render"),
+            headers=json.dumps(
+                {
+                    "X-Component-State": Signer().sign(component._state_json),
+                }
+            ),
+        )
 
 
 @register.simple_tag(takes_context=True)
@@ -119,7 +156,7 @@ def on(context, _trigger, _event_handler=None, **kwargs):
         _event_handler = _trigger
         _trigger = None
 
-    component = context["this"]
+    component: Component | PydanticComponent = context["this"]
 
     assert callable(
         getattr(component, _event_handler, None)

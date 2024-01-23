@@ -7,4 +7,5 @@ class App(AppConfig):
     verbose_name = "Django HTMX"
 
     def ready(self):
+        autodiscover_modules("live")
         autodiscover_modules("htmx")

@@ -1,10 +1,12 @@
 import typing as t
 from collections import defaultdict
 from functools import cached_property
+from itertools import chain
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from django.conf import settings
+from django.contrib.auth.models import AbstractUser, AnonymousUser
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
 from django.http import HttpRequest, HttpResponse, QueryDict
@@ -19,6 +21,7 @@ from pydantic import (
     Field,
     PlainSerializer,
     validate_arguments,
+    validate_call,
 )
 
 from . import json
@@ -52,7 +55,7 @@ class Repository:
         subscriptions_by_id: dict[str, list[str]] = None,
     ):
         self.request = request
-        self.component_by_id: dict[str, "Component"] = {}
+        self.component_by_id: dict[str, "PydanticComponent"] = {}
         self.state_by_id = state_by_id or {}
         self.subscriptions_by_id = subscriptions_by_id or {}
 
@@ -154,18 +157,23 @@ class Repository:
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
-    def register_component(self, component: "Component") -> "Component":
+    def register_component(
+        self,
+        component: "PydanticComponent",
+    ) -> "PydanticComponent":
         self.component_by_id[component.id] = component
         return component
 
-    def render(self, component: "Component"):
+    def render(self, component: "PydanticComponent"):
         return component.controller.render(
             component._get_template(),
             component._get_context() | {"htmx_repo": self},
         )
 
     def render_html(
-        self, component: "Component", oob: str = None, target: str = None
+        self,
+        component: "PydanticComponent",
+        oob: str = None,
     ):
         is_oob = oob not in ("true", None)
         html = [
@@ -188,28 +196,28 @@ class Controller:
         self.params = params
         self._destroyed: bool = False
         self._headers: dict[str, str] = {}
-        self._oob: list[tuple[str, "Component"]] = []
+        self._oob: list[tuple[str, "PydanticComponent"]] = []
 
-    def build(self, component: t.Type["Component"], **state):
+    def build(self, component: t.Type["PydanticComponent"], **state):
         clone = type(self)(self.request, self.params)
         return component(controller=clone, hx_name=component.__name__, **state)
 
     def destroy(self):
         self._destroyed = True
 
-    def append(self, target: str, component: "Component"):
+    def append(self, target: str, component: "PydanticComponent"):
         self._oob.append((f"beforeend:{target}", component))
 
-    def prepend(self, target: str, component: "Component"):
+    def prepend(self, target: str, component: "PydanticComponent"):
         self._oob.append((f"afterbegin:{target}", component))
 
-    def after(self, target: str, component: "Component"):
+    def after(self, target: str, component: "PydanticComponent"):
         self._oob.append((f"afterend:{target}", component))
 
-    def before(self, target: str, component: "Component"):
+    def before(self, target: str, component: "PydanticComponent"):
         self._oob.append((f"beforebegin:{target}", component))
 
-    def update(self, component: "Component"):
+    def update(self, component: "PydanticComponent"):
         self._oob.append(("true", component))
 
     @cached_property
@@ -260,8 +268,8 @@ def Model(model: t.Type[models.Model]):
     ]
 
 
-REGISTRY: dict[str, t.Type["Component"]] = {}
-FQN: dict[t.Type["Component"], str] = {}
+REGISTRY: dict[str, t.Type["PydanticComponent"]] = {}
+FQN: dict[t.Type["PydanticComponent"], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
@@ -286,7 +294,7 @@ def build(
     )
 
 
-class Component(BaseModel):
+class PydanticComponent(BaseModel):
     _template_name: str = ...  # type: ignore
 
     # fields to exclude from component state during serialization
@@ -295,7 +303,8 @@ class Component(BaseModel):
     )
 
     def __init_subclass__(cls, public=True):
-        FQN[cls] = cls.__name__
+        FQN[cls] = f"{cls.__module__}.{cls.__name__}"
+
         if public:
             REGISTRY[cls.__name__] = cls
 
@@ -334,6 +343,13 @@ class Component(BaseModel):
     @property
     def subscriptions(self) -> set[str]:
         return set()
+
+    @cached_property
+    def user(self) -> AbstractUser | AnonymousUser:
+        user = getattr(self.controller.request, "user", None)
+        if user is None or not isinstance(user, AbstractUser):
+            return AnonymousUser()
+        return user
 
     def _get_template(self) -> t.Callable[..., SafeString]:
         template = self._template_name
@@ -377,3 +393,193 @@ class Triggers:
             ("HX-Trigger-After-Settle", self._after_settle),
         ]
         return {header: json.dumps(value) for header, value in headers if value}
+
+
+# Legacy Components
+
+
+class Component:
+    template_name = ""
+    template = None
+    _all = {}
+    _urls = {}
+    _name = ...
+
+    _pydantic_config = ConfigDict(
+        {
+            "arbitrary_types_allowed": True,
+        }
+    )
+
+    def __init_subclass__(cls, name=None, public=True):
+        if public:
+            name = name or cls.__name__
+            cls._all[name] = cls
+            cls._name = name
+
+        for attr_name in vars(cls):
+            attr = getattr(cls, attr_name)
+            if (
+                attr_name == "__init__"
+                or not attr_name.startswith("_")
+                and attr_name.islower()
+                and callable(attr)
+            ):
+                setattr(
+                    cls,
+                    attr_name,
+                    validate_call(config=cls._pydantic_config)(attr),  # type: ignore
+                )
+
+        return super().__init_subclass__()
+
+    @classmethod
+    def _build(cls, _component_name, request, id, state):
+        if _component_name not in cls._all:
+            raise ComponentNotFound(
+                f"Could not find requested component '{_component_name}'. Did you load the component?"
+            )
+        return cls._all[_component_name](**dict(state, id=id, request=request))
+
+    def __init__(self, request: HttpRequest, id: str | None = None):
+        self.request = request
+        self.id = id
+        self._destroyed = False
+        self._headers = {}
+        self._triggers = Triggers()
+        self._oob = []
+
+    @cached_property
+    def user(self) -> AbstractUser | AnonymousUser:
+        user = getattr(self.request, "user", None)
+        if user is None or not isinstance(user, AbstractUser):
+            return AnonymousUser()
+        return user
+
+    @property
+    def _state_json(self) -> str:
+        return json.dumps(self._state)
+
+    @property
+    def _state(self) -> dict:
+        if schema := getattr(self.__init__, "__pydantic_core_schema__", None):
+            # This is Pydantic v2 which doesn't expose a model, but creates a
+            # direct validator.
+            call_args = schema["arguments_schema"]  # of type 'call'
+            fn_args = call_args["arguments_schema"]
+            return {
+                name: getattr(self, name)
+                for arg in fn_args
+                if (name := arg["name"]) != "self"
+                if hasattr(self, name)
+            }
+        elif model := getattr(self.__init__, "model", None):
+            return {
+                name: getattr(self, name)
+                for name in model.__fields__
+                if hasattr(self, name)
+            }
+        else:
+            return {}
+
+    def destroy(self):
+        self._destroyed = True
+
+    def redirect(self, url, **kwargs):
+        self.redirect_raw_url(resolve_url(url, **kwargs))
+
+    def redirect_raw_url(self, url):
+        self._headers["HX-Redirect"] = url
+
+    def push_url(self, url, **kwargs):
+        self.push_raw_url(resolve_url(url, **kwargs))
+
+    def push_raw_url(self, url):
+        self._headers["HX-Push"] = url
+
+    def _send_event(self, target, event):
+        self._triggers.after_swap(
+            "hxSendEvent",
+            {
+                "target": target,
+                "event": event,
+            },
+        )
+
+    def _focus(self, selector):
+        self._triggers.after_settle("hxFocus", selector)
+
+    def render(self, template: str | None = None):
+        response = HttpResponse(self._render(template=template))
+        for key, value in (self._headers | self._triggers.headers).items():
+            response[key] = value
+        return response
+
+    def before_render(self) -> None:
+        """Hook called before rendering the template.
+
+        This allows to leave the `__init__` mostly empty, and push some
+        computations after initialization just before rendering.  Which plays
+        nicer with caching.
+
+        This is your last chance to destroy the component if needed.
+
+        """
+        pass
+
+    def _render(self, hx_swap_oob=False, template: str | None = None):
+        with sentry_span(f"{self._fqn}._render"):
+            with sentry_span(f"{self._fqn}.before_render"):
+                self.before_render()
+            if self._destroyed:
+                html = ""
+            else:
+                html = (
+                    self._get_template(template)
+                    .render(
+                        self._get_context(hx_swap_oob),
+                        request=self.request,
+                    )
+                    .strip()
+                )
+            if self._oob:
+                html = "\n".join(
+                    chain(
+                        [html],
+                        [c._render(hx_swap_oob=True) for c in self._oob],
+                    )
+                )
+            return html
+
+    def _also_render(self, component, **kwargs):
+        self._oob.append(component(request=self.request, **kwargs))
+
+    def _get_template(self, template: str | None = None):
+        if template:
+            return loader.get_template(template)
+        elif not self.template:
+            self.template = loader.get_template(self.template_name)
+        return self.template
+
+    def _get_context(self, hx_swap_oob):
+        with sentry_span(f"{self._fqn}._get_context"):
+            return dict(
+                {
+                    attr: getattr(self, attr)
+                    for attr in dir(self)
+                    if not attr.startswith("_")
+                },
+                this=self,
+                hx_swap_oob=hx_swap_oob,
+            )
+
+    @property
+    def _fqn(self) -> str:
+        "Fully Qualified Name"
+        cls = type(self)
+        try:
+            mod = cls.__module__
+        except AttributeError:
+            mod = ""
+        name = cls.__name__
+        return f"{mod}.{name}" if mod else name
