@@ -8,7 +8,7 @@ from django.template.loader import get_template, select_template
 from django.utils.functional import cached_property
 
 try:
-    from pydantic import validate_call, ConfigDict
+    from pydantic import ConfigDict, validate_call
 except ImportError:
     from pydantic import validate_arguments as validate_call
 
@@ -134,8 +134,8 @@ class Component:
     def _focus(self, selector):
         self._triggers.after_settle("hxFocus", selector)
 
-    def render(self):
-        response = HttpResponse(self._render())
+    def render(self, template: str | None = None):
+        response = HttpResponse(self._render(template=template))
         for key, value in (self._headers | self._triggers.headers).items():
             response[key] = value
         return response
@@ -152,19 +152,21 @@ class Component:
         """
         pass
 
-    def _render(self, hx_swap_oob=False):
+    def _render(self, hx_swap_oob=False, template: str | None = None):
         with sentry_span(f"{self._fqn}._render"):
             with sentry_span(f"{self._fqn}.before_render"):
                 self.before_render()
             if self._destroyed:
                 html = ""
             else:
-                template = self._get_template()
-                html = template.render(
-                    self._get_context(hx_swap_oob),
-                    request=self.request,
+                html = (
+                    self._get_template(template)
+                    .render(
+                        self._get_context(hx_swap_oob),
+                        request=self.request,
+                    )
+                    .strip()
                 )
-                html = html.strip()
             if self._oob:
                 html = "\n".join(
                     chain(
@@ -177,12 +179,11 @@ class Component:
     def _also_render(self, component, **kwargs):
         self._oob.append(component(request=self.request, **kwargs))
 
-    def _get_template(self):
-        if not self.template:
-            if isinstance(self.template_name, (list, tuple)):
-                self.template = select_template(self.template_name)
-            else:
-                self.template = get_template(self.template_name)
+    def _get_template(self, template: str | None = None):
+        if template:
+            return get_template(template)
+        elif not self.template:
+            self.template = get_template(self.template_name)
         return self.template
 
     def _get_context(self, hx_swap_oob):
