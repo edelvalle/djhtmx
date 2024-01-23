@@ -35,9 +35,8 @@ def endpoint(request, component_name, event_handler):
         handler = getattr(component, event_handler)
         handler_kwargs = parse_request_data(request.POST)
         handler_kwargs = filter_parameters(handler, handler_kwargs)
-        handler(**handler_kwargs)
 
-        response = repo.render(component)
+        response = handler(**handler_kwargs) or repo.render(component)
 
         for oob_render in chain.from_iterable(
             [repo.dispatch_signals(), repo.render_oob()]
