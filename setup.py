@@ -2,7 +2,7 @@ from pathlib import Path
 
 from setuptools import find_packages, setup
 
-HERE = Path(__file__) / ".."
+HERE = Path(__file__).parent
 README = (HERE / "README.md").open(encoding="utf-8").read()
 
 
