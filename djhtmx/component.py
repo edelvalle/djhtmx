@@ -309,7 +309,9 @@ class PydanticComponent(BaseModel):
             REGISTRY[cls.__name__] = cls
 
         for name, annotation in list(cls.__annotations__.items()):
-            if issubclass(annotation, models.Model):
+            if not name.startswith("_") and issubclass(
+                annotation, models.Model
+            ):
                 cls.__annotations__[name] = Model(annotation)
 
         for attr_name in vars(cls):
