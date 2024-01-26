@@ -309,10 +309,14 @@ class PydanticComponent(BaseModel):
             REGISTRY[cls.__name__] = cls
 
         for name, annotation in list(cls.__annotations__.items()):
-            if not name.startswith("_") and issubclass(
-                annotation, models.Model
-            ):
-                cls.__annotations__[name] = Model(annotation)
+            try:
+                if not name.startswith("_") and issubclass(
+                    annotation, models.Model
+                ):
+                    cls.__annotations__[name] = Model(annotation)
+            except TypeError:
+                # the annotation was not a class, pass...!
+                pass
 
         for attr_name in vars(cls):
             attr = getattr(cls, attr_name)
