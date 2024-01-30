@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser, AnonymousUser
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
@@ -31,6 +32,9 @@ from .tracing import sentry_span
 
 class ComponentNotFound(LookupError):
     pass
+
+
+User = get_user_model()
 
 
 RenderFunction = t.Callable[[dict[str, t.Any]], SafeString]
@@ -340,6 +344,7 @@ class PydanticComponent(BaseModel):
     # State
     id: str = Field(default_factory=lambda: f"hx-{uuid4().hex}")
     controller: Controller = Field(exclude=True)
+
     hx_name: str
 
     @classmethod
@@ -351,9 +356,9 @@ class PydanticComponent(BaseModel):
         return set()
 
     @cached_property
-    def user(self) -> AbstractUser | AnonymousUser:
+    def user(self) -> User | AnonymousUser:
         user = getattr(self.controller.request, "user", None)
-        if user is None or not isinstance(user, AbstractUser):
+        if user is None or not isinstance(user, User):
             return AnonymousUser()
         return user
 
