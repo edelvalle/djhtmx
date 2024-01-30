@@ -11,13 +11,12 @@ from .tracing import sentry_request_transaction
 signer = Signer()
 
 
-def endpoint(request, component_name, event_handler):
+def endpoint(request, component_name, component_id, event_handler):
     with sentry_request_transaction(request, component_name, event_handler):
         if component_name in REGISTRY:
             # PydanticComponent
             params = get_params(request)
 
-            component_id = request.META["HTTP_HX_TARGET"]
             states_by_id = {
                 state["id"]: state
                 for state in [
@@ -56,11 +55,11 @@ def endpoint(request, component_name, event_handler):
             return response
         else:
             # Legacy Component
-            id = request.META.get("HTTP_HX_TARGET")
+
             state = request.META.get("HTTP_X_COMPONENT_STATE", "")
             state = Signer().unsign(state)
             state = json.loads(state)
-            component = Component._build(component_name, request, id, state)
+            component = Component._build(component_name, request, component_id, state)
             handler = getattr(component, event_handler)
             handler_kwargs = parse_request_data(request.POST)
             handler_kwargs = filter_parameters(handler, handler_kwargs)
@@ -69,7 +68,7 @@ def endpoint(request, component_name, event_handler):
 
 urlpatterns = [
     path(
-        "<component_name>/<event_handler>",
+        "<component_name>/<component_id>/<event_handler>",
         endpoint,
         name="djhtmx.endpoint",
     )

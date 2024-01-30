@@ -187,6 +187,7 @@ def event_url(component, event_handler):
         "djhtmx.endpoint",
         kwargs={
             "component_name": type(component).__name__,
+            "component_id": component.id,
             "event_handler": event_handler,
         },
     )
