@@ -168,9 +168,9 @@ class Repository:
         self.component_by_id[component.id] = component
         return component
 
-    def render(self, component: "PydanticComponent"):
+    def render(self, component: "PydanticComponent", template: str | None = None):
         return component.controller.render(
-            component._get_template(),
+            component._get_template(template),
             component._get_context() | {"htmx_repo": self},
         )
 
@@ -362,8 +362,8 @@ class PydanticComponent(BaseModel):
             return AnonymousUser()
         return user
 
-    def _get_template(self) -> t.Callable[..., SafeString]:
-        template = self._template_name
+    def _get_template(self, template: str | None = None) -> t.Callable[..., SafeString]:
+        template = template or self._template_name
         if settings.DEBUG:
             return loader.get_template(template).render
         else:
