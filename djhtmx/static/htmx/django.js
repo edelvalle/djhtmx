@@ -1,4 +1,4 @@
-(function() {
+(function () {
     function _runHxAfterSwap(element) {
         const code = element.getAttribute('hx-after-swap');
         if (code) (() => eval(code)).bind(element)();
@@ -12,6 +12,19 @@
             .forEach(_runHxAfterSwap);
     });
 
+    document.body.addEventListener('htmx:beforeRequest', (event) => {
+        let subscriptions = {};
+        let states = [];
+        document.querySelectorAll("[data-hx-state]").forEach(element => {
+            let hxSubscriptions = element.dataset.hxSubscriptions;
+            if (hxSubscriptions !== undefined) {
+                subscriptions[element.id] = element.dataset.hxSubscriptions;
+            }
+            states.push(element.dataset.hxState)
+        });
+        event.detail.requestConfig.unfilteredParameters["__hx-states__"] = states;
+        event.detail.requestConfig.unfilteredParameters["__hx-subscriptions__"] = subscriptions;
+    });
 
     document.body.addEventListener('htmx:configRequest', (event) => {
         const csrf_header = document
@@ -23,7 +36,7 @@
         event.detail.headers[csrf_header] = csrf_token;
     });
 
-    document.addEventListener('hxSendEvent', (event) => {
+    document.addEventListener('hxDispatchEvent', (event) => {
         event.detail.value.map(({ event, target }) => {
             document.querySelector(target).dispatchEvent(new Event(event));
         });

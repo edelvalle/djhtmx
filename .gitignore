@@ -3,3 +3,5 @@ __pycache__/
 .log/
 .tern-port
 poetry.lock
+*.sublime-*
+*.sqlite3

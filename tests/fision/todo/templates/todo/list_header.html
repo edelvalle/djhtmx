@@ -1,0 +1,10 @@
+{% load htmx %}
+
+<header {% hx-tag %} class="header">
+  <h1>todos</h1>
+  <input class="new-todo"
+         placeholder="What needs to be done?"
+         name="new_item"
+         autofocus
+         {% on "keypress[key=='Enter']" "add" %} />
+</header>

@@ -20,7 +20,7 @@ In your base template you need to load the necessary scripts to make this work
 
 ```html
 {% load htmx %}
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
     {% htmx-headers %}
@@ -33,15 +33,12 @@ In your base template you need to load the necessary scripts to make this work
 This app will look for `live.py` files in your app and registers all components found there, but if you load any module where you have components manually when Django boots up, that also works.
 
 ```python
-from djhtmx.component import Component
+from djhtmx.component import PydanticComponent
 
 
-class Counter(Component):
+class Counter(PydanticComponent):
     template_name = 'counter.html'
-
-    def __init__(self, counter: int = 0, **kwargs):
-        super().__init__(**kwargs)
-        self.counter = counter
+    counter: int = 0
 
     def inc(self, amount: int = 1):
         self.counter += amount
@@ -61,12 +58,8 @@ The `counter.html` would be:
 Now use the component in any of your html templates:
 
 ```html
-{% load htmx %}
-
-Counter: <br/>
-{% htmx 'Counter' %}
-
-Counter with init value 3:<br/>
+{% load htmx %} Counter: <br />
+{% htmx 'Counter' %} Counter with init value 3:<br />
 {% htmx 'Counter' counter=3 %}
 ```
 

@@ -1,11 +1,5 @@
-{% load static htmx_utils %}
+{% load static %}
 
-<meta name="djang-csrf-header-name" content="{{ csrf_header_name }}">
-<meta name="djang-csrf-token" content="{{ csrf_token }}">
-
-{% for script in htmx_core_scripts %}
-  <script defer src="{{script}}"></script>
-{% endfor %}
-{% for script in htmx_extension_scripts %}
-  <script defer src="{{script}}"></script>
-{% endfor %}
+<meta name="djang-csrf-header-name" content="{{ CSRF_HEADER_NAME }}" />
+<meta name="djang-csrf-token" content="{{ csrf_token }}" />
+{% for script_url in SCRIPT_URLS %}<script defer src="{{ script_url }}"></script>{% endfor %}
