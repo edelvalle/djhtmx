@@ -122,7 +122,7 @@ def hx_tag(context, swap: str = "outerHTML"):
 
 
 @register.simple_tag(takes_context=True)
-def on(context, _trigger, _event_handler=None, **kwargs):
+def on(context, _trigger, _event_handler=None, hx_target=None, **kwargs):
     """Binds an event to a handler
 
     If no trigger is provided, it assumes the default one by omission, in this
@@ -166,7 +166,7 @@ def on(context, _trigger, _event_handler=None, **kwargs):
             None,
             [
                 'hx-post="{url}"',
-                'hx-target="#{id}"',
+                'hx-target="#{target}"',
                 'hx-trigger="{trigger}"' if _trigger else None,
                 'hx-vals="{vals}"' if kwargs else None,
             ],
@@ -175,7 +175,7 @@ def on(context, _trigger, _event_handler=None, **kwargs):
 
     return format_html(
         html,
-        id=component.id,
+        target=hx_target or component.id,
         trigger=_trigger,
         url=event_url(component, _event_handler),
         vals=json.dumps(kwargs) if kwargs else None,
