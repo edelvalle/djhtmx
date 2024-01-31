@@ -11,6 +11,7 @@ from .. import json, settings
 from ..component import REGISTRY, Component, PydanticComponent, Repository
 
 register = template.Library()
+signer = Signer()
 
 
 @register.inclusion_tag(
@@ -91,7 +92,7 @@ def hx_tag(context, swap: str = "outerHTML"):
             oob=oob,
             swap=swap,
             url=event_url(component, "render"),
-            state=Signer().sign(component.model_dump_json()),
+            state=signer.sign(component.model_dump_json()),
             subscriptions=",".join(component.subscriptions),
         )
     else:
@@ -115,7 +116,7 @@ def hx_tag(context, swap: str = "outerHTML"):
             url=event_url(component, "render"),
             headers=json.dumps(
                 {
-                    "X-Component-State": Signer().sign(component._state_json),
+                    "X-Component-State": signer.sign(component._state_json),
                 }
             ),
         )

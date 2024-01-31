@@ -41,6 +41,15 @@ def endpoint(request, component_name, component_id, event_handler):
             template = handler(**handler_kwargs)
             response = repo.render(component, template=template)
 
+            if isinstance(template, str):
+                # if there was a partial response, send the state for update
+                response["HX-State"] = json.dumps(
+                    {
+                        "component_id": component.id,
+                        "state": signer.sign(component.model_dump_json()),
+                    }
+                )
+
             for oob_render in chain.from_iterable(
                 [repo.dispatch_signals(), repo.render_oob()]
             ):
@@ -59,7 +68,9 @@ def endpoint(request, component_name, component_id, event_handler):
             state = request.META.get("HTTP_X_COMPONENT_STATE", "")
             state = Signer().unsign(state)
             state = json.loads(state)
-            component = Component._build(component_name, request, component_id, state)
+            component = Component._build(
+                component_name, request, component_id, state
+            )
             handler = getattr(component, event_handler)
             handler_kwargs = parse_request_data(request.POST)
             handler_kwargs = filter_parameters(handler, handler_kwargs)
