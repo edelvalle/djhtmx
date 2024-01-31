@@ -2,4 +2,6 @@
 
 <meta name="djang-csrf-header-name" content="{{ CSRF_HEADER_NAME }}" />
 <meta name="djang-csrf-token" content="{{ csrf_token }}" />
-{% for script_url in SCRIPT_URLS %}<script defer src="{{ script_url }}"></script>{% endfor %}
+{% for script_url in SCRIPT_URLS %}
+  <script defer src="{% static script_url %}"></script>
+{% endfor %}
