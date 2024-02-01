@@ -76,8 +76,8 @@ def parse_request_data(data: MultiValueDict[str, t.Any]):
 def _extract_data(data: MultiValueDict[str, t.Any]):
     for key in set(data):
         if key.endswith("[]"):
-            key = key.removesuffix("[]")
             value = data.getlist(key)
+            key = key.removesuffix("[]")
         else:
             value = data.get(key)
         yield key.split("."), value
