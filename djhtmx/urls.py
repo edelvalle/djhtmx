@@ -39,6 +39,10 @@ def endpoint(request, component_name, component_id, event_handler):
             handler_kwargs = filter_parameters(handler, handler_kwargs)
 
             template = handler(**handler_kwargs)
+            if isinstance(template, tuple):
+                target, template = template
+            else:
+                target = None
             response = repo.render(component, template=template)
 
             if isinstance(template, str):
@@ -49,6 +53,8 @@ def endpoint(request, component_name, component_id, event_handler):
                         "state": signer.sign(component.model_dump_json()),
                     }
                 )
+                if isinstance(target, str):
+                    response["HX-Retarget"] = target
 
             for oob_render in chain.from_iterable(
                 [repo.dispatch_signals(), repo.render_oob()]
