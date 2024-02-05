@@ -120,7 +120,7 @@ class Repository:
             self.signals.update((signal, f"{signal}.{action}"))
 
     def dispatch_signals(self):
-        if settings.DEBUG:
+        if settings.DEBUG and self.signals:
             print("LAUNCHED SIGNALS:")
             pprint(self.signals)
 
