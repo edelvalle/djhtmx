@@ -1,10 +1,12 @@
 import inspect
 import typing as t
+import types
 from collections import defaultdict
 from dataclasses import dataclass
 
 from django.db import models
 from django.utils.datastructures import MultiValueDict
+from pydantic import BeforeValidator, PlainSerializer
 
 # model
 
@@ -19,6 +21,52 @@ class ModelRelatedField:
 MODEL_RELATED_FIELDS: dict[
     t.Type[models.Model], tuple[ModelRelatedField, ...]
 ] = {}
+
+
+def Model(model: t.Type[models.Model]):
+    return t.Annotated[
+        model,
+        BeforeValidator(
+            lambda v: v
+            if isinstance(v, model)
+            else model.objects.filter(pk=v).first()
+        ),
+        PlainSerializer(
+            lambda v: v.pk,
+            int if (pk := model().pk) is None else type(pk),
+        ),
+    ]
+
+
+def annotate_model(annotation):
+    if issubclass_safe(annotation, models.Model):
+        return Model(annotation)
+    elif isinstance_safe(annotation, types.UnionType):
+        return t.Union[*(annotate_model(a) for a in annotation.__args__)]  # type:ignore
+    elif type(annotation).__name__ == "_TypedDictMeta":
+        return t.TypedDict(
+            annotation.__name__,  # type: ignore
+            {
+                k: annotate_model(v)  # type: ignore
+                for k, v in annotation.__annotations__.items()
+            },
+        )
+    else:
+        return annotation
+
+
+def isinstance_safe(o, types):
+    try:
+        return isinstance(o, types)
+    except TypeError:
+        return False
+
+def issubclass_safe(o, types):
+    try:
+        return issubclass(o, types)
+    except TypeError:
+        return False
+
 
 
 def get_related_fields(model):

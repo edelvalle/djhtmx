@@ -18,16 +18,14 @@ from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
-    PlainSerializer,
     validate_arguments,
     validate_call,
 )
 
 from . import json
-from .introspection import get_related_fields
+from .introspection import annotate_model, get_related_fields
 from .tracing import sentry_span
 
 
@@ -114,9 +112,7 @@ class Repository:
     ):
         for field in get_related_fields(sender):
             fk_id = getattr(instance, field.name)
-            signal = (
-                f"{field.related_model_name}.{fk_id}.{field.relation_name}"
-            )
+            signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"
             self.signals.update((signal, f"{signal}.{action}"))
 
     def dispatch_signals(self):
@@ -161,7 +157,9 @@ class Repository:
         self.component_by_id[component.id] = component
         return component
 
-    def render(self, component: "PydanticComponent", template: str | None = None):
+    def render(
+        self, component: "PydanticComponent", template: str | None = None
+    ):
         return component.controller.render(
             component._get_template(template),
             component._get_context() | {"htmx_repo": self},
@@ -250,21 +248,6 @@ class Controller:
         return mark_safe(html)
 
 
-def Model(model: t.Type[models.Model]):
-    return t.Annotated[
-        model,
-        BeforeValidator(
-            lambda v: v
-            if isinstance(v, model)
-            else model.objects.filter(pk=v).first()
-        ),
-        PlainSerializer(
-            lambda v: v.pk,
-            int if (pk := model().pk) is None else type(pk),
-        ),
-    ]
-
-
 REGISTRY: dict[str, t.Type["PydanticComponent"]] = {}
 FQN: dict[t.Type["PydanticComponent"], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
@@ -306,14 +289,8 @@ class PydanticComponent(BaseModel):
             REGISTRY[cls.__name__] = cls
 
         for name, annotation in list(cls.__annotations__.items()):
-            try:
-                if not name.startswith("_") and issubclass(
-                    annotation, models.Model
-                ):
-                    cls.__annotations__[name] = Model(annotation)
-            except TypeError:
-                # the annotation was not a class, pass...!
-                pass
+            if not name.startswith("_"):
+                cls.__annotations__[name] = annotate_model(annotation)
 
         for attr_name in vars(cls):
             attr = getattr(cls, attr_name)
@@ -327,7 +304,7 @@ class PydanticComponent(BaseModel):
                 setattr(
                     cls,
                     attr_name,
-                    validate_arguments(
+                    validate_arguments( # type: ignore
                         config={"arbitrary_types_allowed": True}
                     )(attr),
                 )
@@ -355,7 +332,9 @@ class PydanticComponent(BaseModel):
             return AnonymousUser()
         return user
 
-    def _get_template(self, template: str | None = None) -> t.Callable[..., SafeString]:
+    def _get_template(
+        self, template: str | None = None
+    ) -> t.Callable[..., SafeString]:
         template = template or self._template_name
         if settings.DEBUG:
             return loader.get_template(template).render
