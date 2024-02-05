@@ -11,7 +11,6 @@ from django.utils.datastructures import MultiValueDict
 
 @dataclass(slots=True)
 class ModelRelatedField:
-    is_m2m: bool
     name: str
     relation_name: str
     related_model_name: str
@@ -28,15 +27,13 @@ def get_related_fields(model):
         fields = []
         for field in model._meta.get_fields():
             if (
-                isinstance(field, (models.ForeignKey, models.ManyToManyField))
+                isinstance(field, models.ForeignKey)
                 and (relation_name := field.related_query_name())
                 and relation_name != "+"
             ):
-                is_m2m = isinstance(field, models.ManyToManyField)
                 rel_meta = field.related_model._meta  # type: ignore
                 fields.append(
                     ModelRelatedField(
-                        is_m2m=is_m2m,
                         name=field.attname,
                         relation_name=relation_name,
                         related_model_name=(

@@ -1,4 +1,5 @@
 import typing as t
+from pprint import pprint
 from collections import defaultdict
 from functools import cached_property
 from itertools import chain
@@ -66,18 +67,11 @@ class Repository:
         self.params = get_params(request)
         self.signals = set()
 
-        listen_to = {
-            ".".join(signal.split(".", 2)[:2])
-            for signals in self.subscriptions_by_id.values()
-            for signal in signals
-        }
-        for app_model_name in listen_to:
+        if self.subscriptions_by_id:
             post_save.connect(
-                sender=app_model_name,
                 receiver=self._listen_to_post_save,
             )
             pre_delete.connect(
-                sender=app_model_name,
                 receiver=self._listen_to_pre_delete,
             )
 
@@ -91,10 +85,9 @@ class Repository:
         app = sender._meta.app_label
         name = sender._meta.model_name
         self.signals.update([f"{app}.{name}", f"{app}.{name}.{instance.pk}"])
-        if created:
-            self.signals.add(f"{app}.{name}.{instance.pk}.created")
-        else:
-            self.signals.add(f"{app}.{name}.{instance.pk}.updated")
+        action = "created" if created else "updated"
+        self.signals.add(f"{app}.{name}.{instance.pk}.{action}")
+        self._listen_to_realted(sender, instance, action=action)
 
     def _listen_to_pre_delete(
         self,
@@ -111,6 +104,7 @@ class Repository:
                 f"{app}.{name}.{instance.pk}.deleted",
             ]
         )
+        self._listen_to_realted(sender, instance, action="deleted")
 
     def _listen_to_realted(
         self,
@@ -119,20 +113,17 @@ class Repository:
         action: str,
     ):
         for field in get_related_fields(sender):
-            if field.is_m2m:
-                fk_ids = getattr(instance, field.name).values_list(
-                    "id", flat=True
-                )
-            else:
-                fk_ids = filter(None, [getattr(instance, field.name)])
-
-            for fk_id in fk_ids:
-                signal = (
-                    f"{field.related_model_name}.{fk_id}.{field.relation_name}"
-                )
-                self.signals.update(signal, f"{signal}.{action}")
+            fk_id = getattr(instance, field.name)
+            signal = (
+                f"{field.related_model_name}.{fk_id}.{field.relation_name}"
+            )
+            self.signals.update((signal, f"{signal}.{action}"))
 
     def dispatch_signals(self):
+        if settings.DEBUG:
+            print("LAUNCHED SIGNALS:")
+            pprint(self.signals)
+
         for component_id, subscriptions in self.subscriptions_by_id.items():
             if (
                 self.signals.intersection(subscriptions)
@@ -142,6 +133,8 @@ class Repository:
                 component = self.register_component(
                     build(state["hx_name"], self.request, self.params, state)
                 )
+                if settings.DEBUG:
+                    print("> MATCHED: ", state["hx_name"], subscriptions)
                 yield self.render_html(component, oob="true")
 
     def render_oob(self):
