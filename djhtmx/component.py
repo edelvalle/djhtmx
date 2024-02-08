@@ -1,8 +1,8 @@
 import typing as t
-from pprint import pprint
 from collections import defaultdict
 from functools import cached_property
 from itertools import chain
+from pprint import pprint
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -253,6 +253,16 @@ FQN: dict[t.Type["PydanticComponent"], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
+def get_template(template: str) -> t.Callable[..., SafeString]:
+    if settings.DEBUG:
+        return loader.get_template(template).render
+    else:
+        if (render := RENDER_FUNC.get(template)) is None:
+            render = loader.get_template(template).render
+            RENDER_FUNC[template] = render
+        return render
+
+
 def build(
     component_name: str,
     request: HttpRequest,
@@ -304,7 +314,7 @@ class PydanticComponent(BaseModel):
                 setattr(
                     cls,
                     attr_name,
-                    validate_arguments( # type: ignore
+                    validate_arguments(  # type: ignore
                         config={"arbitrary_types_allowed": True}
                     )(attr),
                 )
@@ -335,14 +345,7 @@ class PydanticComponent(BaseModel):
     def _get_template(
         self, template: str | None = None
     ) -> t.Callable[..., SafeString]:
-        template = template or self._template_name
-        if settings.DEBUG:
-            return loader.get_template(template).render
-        else:
-            if (render := RENDER_FUNC.get(template)) is None:
-                render = loader.get_template(template).render
-                RENDER_FUNC[template] = render
-            return render
+        return get_template(template or self._template_name)
 
     def _get_context(self):
         with sentry_span(f"{FQN[type(self)]}._get_context"):
