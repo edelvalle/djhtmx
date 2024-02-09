@@ -20,7 +20,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    validate_arguments,
     validate_call,
 )
 
@@ -314,7 +313,7 @@ class PydanticComponent(BaseModel):
                 setattr(
                     cls,
                     attr_name,
-                    validate_arguments(  # type: ignore
+                    validate_call(
                         config={"arbitrary_types_allowed": True}
                     )(attr),
                 )
