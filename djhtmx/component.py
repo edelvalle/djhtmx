@@ -252,12 +252,24 @@ FQN: dict[t.Type["PydanticComponent"], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
+A = t.TypeVar("A")
+B = t.TypeVar("B")
+P = t.ParamSpec("P")
+
+
+def _compose(f: t.Callable[P, A], g: t.Callable[[A], B]) -> t.Callable[P, B]:
+    def result(*args: P.args, **kwargs: P.kwargs):
+        return g(f(*args, **kwargs))
+
+    return result
+
+
 def get_template(template: str) -> t.Callable[..., SafeString]:
     if settings.DEBUG:
-        return loader.get_template(template).render
+        return _compose(loader.get_template(template).render, mark_safe)
     else:
         if (render := RENDER_FUNC.get(template)) is None:
-            render = loader.get_template(template).render
+            render = _compose(loader.get_template(template).render, mark_safe)
             RENDER_FUNC[template] = render
         return render
 
