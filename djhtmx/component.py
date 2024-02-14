@@ -531,7 +531,7 @@ class Component:
             if self._destroyed:
                 html = ""
             else:
-                html = (
+                html = mark_safe(
                     self._get_template(template)
                     .render(
                         self._get_context(hx_swap_oob),
@@ -540,10 +540,12 @@ class Component:
                     .strip()
                 )
             if self._oob:
-                html = "\n".join(
-                    chain(
-                        [html],
-                        [c._render(hx_swap_oob=True) for c in self._oob],
+                html = mark_safe(
+                    "\n".join(
+                        chain(
+                            [html],
+                            [c._render(hx_swap_oob=True) for c in self._oob],
+                        )
                     )
                 )
             return html
