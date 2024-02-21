@@ -7,21 +7,15 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser, AnonymousUser
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
-from django.http import HttpRequest, HttpResponse, QueryDict
+from django.http import Http404, HttpRequest, HttpResponse, QueryDict
 from django.shortcuts import resolve_url
 from django.template import loader
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    validate_call,
-)
+from pydantic import BaseModel, ConfigDict, Field, validate_call
 
 from . import json
 from .introspection import annotate_model, get_related_fields
@@ -32,9 +26,7 @@ class ComponentNotFound(LookupError):
     pass
 
 
-User = get_user_model()
-
-
+TUser = t.TypeVar("TUser", bound=AbstractUser)
 RenderFunction = t.Callable[[dict[str, t.Any]], SafeString]
 
 
@@ -295,7 +287,7 @@ def build(
     )
 
 
-class PydanticComponent(BaseModel):
+class PydanticComponent(BaseModel, t.Generic[TUser]):
     _template_name: str = ...  # type: ignore
 
     # fields to exclude from component state during serialization
@@ -325,9 +317,9 @@ class PydanticComponent(BaseModel):
                 setattr(
                     cls,
                     attr_name,
-                    validate_call(
-                        config={"arbitrary_types_allowed": True}
-                    )(attr),
+                    validate_call(config={"arbitrary_types_allowed": True})(
+                        attr
+                    ),
                 )
 
         return super().__init_subclass__()
@@ -347,11 +339,19 @@ class PydanticComponent(BaseModel):
         return set()
 
     @cached_property
-    def user(self) -> User | AnonymousUser:
+    def user(self) -> TUser:
+        if isinstance(self.any_user, AnonymousUser):
+            raise Http404()
+        else:
+            return self.any_user
+
+    @cached_property
+    def any_user(self) -> TUser | AnonymousUser:
         user = getattr(self.controller.request, "user", None)
-        if user is None or not isinstance(user, User):
+        if user is None:
             return AnonymousUser()
-        return user
+        else:
+            return user
 
     def _get_template(
         self, template: str | None = None
