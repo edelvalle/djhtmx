@@ -43,6 +43,7 @@ twine = "^5.0.0"
 whitenoise = "^6.6.0"
 isort = "^5.13.2"
 poetry = "^1.7.1"
+ruff-lsp = "^0.0.52"
 
 [tool.ruff]
 line-length = 80
