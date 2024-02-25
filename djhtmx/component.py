@@ -76,7 +76,7 @@ class Repository:
         self.signals.update([f"{app}.{name}", f"{app}.{name}.{instance.pk}"])
         action = "created" if created else "updated"
         self.signals.add(f"{app}.{name}.{instance.pk}.{action}")
-        self._listen_to_realted(sender, instance, action=action)
+        self._listen_to_related(sender, instance, action=action)
 
     def _listen_to_pre_delete(
         self,
@@ -93,9 +93,9 @@ class Repository:
                 f"{app}.{name}.{instance.pk}.deleted",
             ]
         )
-        self._listen_to_realted(sender, instance, action="deleted")
+        self._listen_to_related(sender, instance, action="deleted")
 
-    def _listen_to_realted(
+    def _listen_to_related(
         self,
         sender: t.Type[models.Model],
         instance: models.Model,
