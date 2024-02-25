@@ -219,8 +219,10 @@ class Controller:
     def __del__(self):
         print("Dealocating controller")
 
-    def build(self, component: t.Type["PydanticComponent"], **state):
-        return self.request.djhtmx.build(component.__name__, state)
+    def build(self, component: t.Type["PydanticComponent"] | str, **state):
+        if isinstance(component, type):
+            component = component.__name__
+        return self.request.djhtmx.build(component, state)
 
     def destroy(self):
         self._destroyed = True
