@@ -32,7 +32,11 @@ def endpoint(request, component_name, component_id, event_handler):
                 ).items()
             }
 
-            repo = Repository(request, states_by_id, subscriptions_by_id)
+            repo = Repository.from_request(
+                request,
+                states_by_id,
+                subscriptions_by_id,
+            )
             component = repo.build(component_name, states_by_id[component_id])
             handler = getattr(component, event_handler)
             handler_kwargs = parse_request_data(request.POST)

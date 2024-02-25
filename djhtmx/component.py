@@ -41,10 +41,29 @@ def get_params(request: HttpRequest) -> QueryDict:
         return request.GET.copy()
 
 
+class RequestWithRepo(HttpRequest):
+    djhtmx: "Repository"
+
+
 class Repository:
+    @classmethod
+    def from_request(
+        cls,
+        request: RequestWithRepo,
+        state_by_id: dict[str, dict[str, t.Any]] = None,
+        subscriptions_by_id: dict[str, list[str]] = None,
+    ) -> "Repository":
+        if not hasattr(request, "djhtmx"):
+            request.djhtmx = cls(
+                request,
+                state_by_id=state_by_id,
+                subscriptions_by_id=subscriptions_by_id,
+            )
+        return request.djhtmx
+
     def __init__(
         self,
-        request: HttpRequest,
+        request: RequestWithRepo,
         state_by_id: dict[str, dict[str, t.Any]] = None,
         subscriptions_by_id: dict[str, list[str]] = None,
     ):
@@ -63,6 +82,19 @@ class Repository:
             pre_delete.connect(
                 receiver=self._listen_to_pre_delete,
             )
+
+    def __del__(self):
+        print("Dealocating repo")
+
+    def unlink(self):
+        """Remove circular references to ensure GC deallocates me"""
+        for component in self.component_by_id.values():
+            delattr(component.controller, "request")
+            delattr(component.controller, "params")
+            delattr(component, "controller")
+        delattr(self, "request")
+        delattr(self, "params")
+        delattr(self, "component_by_id")
 
     def _listen_to_post_save(
         self,
@@ -177,16 +209,18 @@ class Repository:
 
 
 class Controller:
-    def __init__(self, request: HttpRequest, params: QueryDict):
+    def __init__(self, request: RequestWithRepo, params: QueryDict):
         self.request = request
         self.params = params
         self._destroyed: bool = False
         self._headers: dict[str, str] = {}
         self._oob: list[tuple[str, "PydanticComponent"]] = []
 
+    def __del__(self):
+        print("Dealocating controller")
+
     def build(self, component: t.Type["PydanticComponent"], **state):
-        clone = type(self)(self.request, self.params)
-        return component(controller=clone, hx_name=component.__name__, **state)
+        return self.request.djhtmx.build(component.__name__, state)
 
     def destroy(self):
         self._destroyed = True
@@ -268,7 +302,7 @@ def get_template(template: str) -> RenderFunction:
 
 def build(
     component_name: str,
-    request: HttpRequest,
+    request: RequestWithRepo,
     params: QueryDict,
     state: dict[str, t.Any],
 ):
@@ -279,7 +313,7 @@ def build(
         )
 
     return REGISTRY[component_name](
-        **dict(
+        **dict(  # type: ignore
             state,
             hx_name=component_name,
             controller=Controller(request, params),
@@ -294,6 +328,9 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
     )
+
+    def __del__(self):
+        print("Dealocating component", self.hx_name)
 
     def __init_subclass__(cls, public=True):
         FQN[cls] = f"{cls.__module__}.{cls.__name__}"
