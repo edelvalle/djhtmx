@@ -27,7 +27,7 @@ class ComponentNotFound(LookupError):
 
 
 TUser = t.TypeVar("TUser", bound=AbstractUser)
-RenderFunction = t.Callable[[dict[str, t.Any]], SafeString]
+RenderFunction = t.Callable[[dict[str, t.Any], HttpRequest | None], SafeString]
 
 
 def get_params(request: HttpRequest) -> QueryDict:
@@ -235,7 +235,7 @@ class Controller:
         if self._destroyed:
             html = ""
         else:
-            html = render(context | {"request": self.request}).strip()
+            html = render(context, self.request).strip()
         return mark_safe(html)
 
 
@@ -256,7 +256,7 @@ def _compose(f: t.Callable[P, A], g: t.Callable[[A], B]) -> t.Callable[P, B]:
     return result
 
 
-def get_template(template: str) -> t.Callable[..., SafeString]:
+def get_template(template: str) -> RenderFunction:
     if settings.DEBUG:
         return _compose(loader.get_template(template).render, mark_safe)
     else:
@@ -359,11 +359,14 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         return get_template(template or self._template_name)
 
     def _get_context(self):
+        attrs_to_exclude = {"user", "any_user"}
         with sentry_span(f"{FQN[type(self)]}._get_context"):
             return {
                 attr: getattr(self, attr)
                 for attr in dir(self)
-                if not attr.startswith("_") and not attr.startswith("model_")
+                if not attr.startswith("_")
+                and not attr.startswith("model_")
+                and attr not in attrs_to_exclude
             } | {"this": self}
 
 
