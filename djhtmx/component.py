@@ -12,7 +12,7 @@ from django.db import models
 from django.db.models.signals import post_save, pre_delete
 from django.http import Http404, HttpRequest, HttpResponse, QueryDict
 from django.shortcuts import resolve_url
-from django.template import loader
+from django.template import Context, loader
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, validate_call
@@ -27,7 +27,9 @@ class ComponentNotFound(LookupError):
 
 
 TUser = t.TypeVar("TUser", bound=AbstractUser)
-RenderFunction = t.Callable[[dict[str, t.Any], HttpRequest | None], SafeString]
+RenderFunction = t.Callable[
+    [Context | dict[str, t.Any] | None, HttpRequest | None], SafeString
+]
 
 
 def get_params(request: HttpRequest) -> QueryDict:
