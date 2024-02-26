@@ -57,7 +57,11 @@ def htmx(context, _name: str, **state):
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
-def hx_tag(context, swap: str = "outerHTML"):
+def hx_tag(
+    context,
+    swap: str = "outerHTML",
+    include: str | None = "#{id} [name]",
+):
     """Adds initialziation data to your root component tag.
 
     When your component starts, put it there:
@@ -75,7 +79,7 @@ def hx_tag(context, swap: str = "outerHTML"):
 
         html = [
             'id="{id}"',
-            'hx-include="#{id} [name]"',
+            (f'hx-include="{include}"' if include else None),
             'hx-swap="{swap}"',
             'data-hx-state="{state}"',
             (
