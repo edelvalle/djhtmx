@@ -78,7 +78,6 @@ def hx_tag(context, swap: str = "outerHTML"):
         attrs = {
             "id": component.id,
             "hx-swap": swap,
-            "hx-target": f"#{component.id}",
             "hx-swap-oob": oob,
             "data-hx-state": signer.sign(component.model_dump_json()),
             "data-hx-subscriptions": (
@@ -120,7 +119,7 @@ def on(
     context,
     _trigger,
     _event_handler=None,
-    hx_target: str | None = None,
+    hx_target: str | object | None = unset,
     hx_include: str | object | None = unset,
     **kwargs,
 ):
@@ -166,7 +165,7 @@ def on(
     attrs = {
         "hx-post": event_url(component, _event_handler),
         "hx-trigger": _trigger,
-        "hx-target": hx_target,
+        "hx-target": f"#{component.id}" if hx_target is unset else hx_target,
         "hx-include": (
             f"#{component.id} [name]" if hx_include is unset else hx_include
         ),
