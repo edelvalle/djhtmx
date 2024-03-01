@@ -1,10 +1,11 @@
+import typing as t
 from uuid import uuid4
 
 from django import template
 from django.core.signing import Signer
 from django.template.base import Node, Parser, Token
 from django.urls import reverse
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
 
 from .. import json, settings
@@ -12,6 +13,8 @@ from ..component import REGISTRY, Component, PydanticComponent, Repository
 
 register = template.Library()
 signer = Signer()
+
+unset = object()
 
 
 @register.inclusion_tag(
@@ -57,11 +60,7 @@ def htmx(context, _name: str, **state):
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
-def hx_tag(
-    context,
-    swap: str = "outerHTML",
-    include: str | None = "#{id} [name]",
-):
+def hx_tag(context, swap: str = "outerHTML"):
     """Adds initialziation data to your root component tag.
 
     When your component starts, put it there:
@@ -76,34 +75,24 @@ def hx_tag(
     component: Component | PydanticComponent = context["this"]
     if isinstance(component, PydanticComponent):
         oob = context.get("hx_oob")
-
-        html = [
-            'id="{id}"',
-            (f'hx-include="{include}"' if include else None),
-            'hx-swap="{swap}"',
-            'data-hx-state="{state}"',
-            (
-                'data-hx-subscriptions="{subscriptions}"'
+        attrs = {
+            "id": component.id,
+            "hx-swap": swap,
+            "hx-target": f"#{component.id}",
+            "hx-swap-oob": oob,
+            "data-hx-state": signer.sign(component.model_dump_json()),
+            "data-hx-subscriptions": (
+                ",".join(component.subscriptions)
                 if component.subscriptions
                 else None
             ),
-            'hx-swap-oob="{oob}"' if oob else None,
-        ]
-
-        return format_html(
-            " ".join(filter(None, html)),
-            id=component.id,
-            oob=oob,
-            swap=swap,
-            url=event_url(component, "render"),
-            state=signer.sign(component.model_dump_json()),
-            subscriptions=",".join(component.subscriptions),
-        )
+        }
+        return format_html_attrs(attrs)
     else:
         html = [
             'id="{id}"',
+            'hx-target="#{id}"',
             'hx-post="{url}"',
-            'hx-include="#{id} [name]"',
             'hx-trigger="render"',
             'hx-headers="{headers}"',
         ]
@@ -127,7 +116,14 @@ def hx_tag(
 
 
 @register.simple_tag(takes_context=True)
-def on(context, _trigger, _event_handler=None, hx_target=None, **kwargs):
+def on(
+    context,
+    _trigger,
+    _event_handler=None,
+    hx_target: str | None = None,
+    hx_include: str | object | None = unset,
+    **kwargs,
+):
     """Binds an event to a handler
 
     If no trigger is provided, it assumes the default one by omission, in this
@@ -162,32 +158,32 @@ def on(context, _trigger, _event_handler=None, hx_target=None, **kwargs):
 
     component: Component | PydanticComponent = context["this"]
 
-    assert callable(
-        getattr(component, _event_handler, None)
-    ), f"{type(component).__name__}.{_event_handler} event handler not found"
+    if settings.DEBUG:
+        assert callable(
+            getattr(component, _event_handler, None)
+        ), f"{type(component).__name__}.{_event_handler} event handler not found"
 
-    html = " ".join(
-        filter(
-            None,
-            [
-                'hx-post="{url}"',
-                'hx-target="#{target}"',
-                'hx-trigger="{trigger}"' if _trigger else None,
-                'hx-vals="{vals}"' if kwargs else None,
-            ],
-        )
+    attrs = {
+        "hx-post": event_url(component, _event_handler),
+        "hx-trigger": _trigger,
+        "hx-target": hx_target,
+        "hx-include": (
+            f"#{component.id} [name]" if hx_include is unset else hx_include
+        ),
+        "hx-vals": json.dumps(kwargs) if kwargs else None,
+    }
+    return format_html_attrs(attrs)
+
+
+def format_html_attrs(attrs: dict[str, t.Any]):
+    return format_html_join(
+        " ",
+        '{}="{}"',
+        [(k, v) for k, v in attrs.items() if v is not None],
     )
 
-    return format_html(
-        html,
-        target=hx_target or component.id,
-        trigger=_trigger,
-        url=event_url(component, _event_handler),
-        vals=json.dumps(kwargs) if kwargs else None,
-    )
 
-
-def event_url(component, event_handler):
+def event_url(component: PydanticComponent | Component, event_handler: str):
     return reverse(
         "djhtmx.endpoint",
         kwargs={
