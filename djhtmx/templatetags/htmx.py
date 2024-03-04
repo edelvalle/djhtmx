@@ -90,7 +90,6 @@ def hx_tag(context, swap: str = "outerHTML"):
     else:
         html = [
             'id="{id}"',
-            'hx-target="#{id}"',
             'hx-post="{url}"',
             'hx-trigger="render"',
             'hx-headers="{headers}"',
