@@ -28,7 +28,7 @@ classifiers=[
 [tool.poetry.dependencies]
 python = ">=3.10,<4"
 django = ">=4.1"
-pydantic = ">=1,<2.5"
+pydantic = ">=2,<3"
 
 
 [tool.poetry.group.dev.dependencies]
