@@ -410,6 +410,9 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                 and attr not in attrs_to_exclude
             } | {"this": self}
 
+    def redirect(self, url: str) -> None:
+        self.controller._headers["HX-Redirect"] = url
+
 
 class Triggers:
     def __init__(self):
