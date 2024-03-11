@@ -1,8 +1,9 @@
 import inspect
-import typing as t
 import types
+import typing as t
 from collections import defaultdict
 from dataclasses import dataclass
+from inspect import Parameter
 
 from django.db import models
 from django.utils.datastructures import MultiValueDict
@@ -61,12 +62,29 @@ def isinstance_safe(o, types):
     except TypeError:
         return False
 
+
 def issubclass_safe(o, types):
     try:
         return issubclass(o, types)
     except TypeError:
         return False
 
+
+# for state of old components
+
+
+def get_function_parameters(
+    function: t.Callable, exclude: set[str] | None = None
+) -> tuple[str, ...]:
+    exclude = exclude or set()
+    return tuple(
+        param.name
+        for param in inspect.signature(function).parameters.values()
+        if param.name not in exclude and param.kind != Parameter.VAR_KEYWORD
+    )
+
+
+# for signals and subscriptions
 
 
 def get_related_fields(model):
@@ -98,7 +116,7 @@ def get_related_fields(model):
 
 def filter_parameters(f, kwargs):
     has_kwargs = any(
-        param.kind == inspect.Parameter.VAR_KEYWORD
+        param.kind == Parameter.VAR_KEYWORD
         for param in inspect.signature(f).parameters.values()
     )
     if has_kwargs:

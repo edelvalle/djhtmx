@@ -18,7 +18,11 @@ from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, validate_call
 
 from . import json
-from .introspection import annotate_model, get_related_fields
+from .introspection import (
+    annotate_model,
+    get_function_parameters,
+    get_related_fields,
+)
 from .tracing import sentry_span
 
 
@@ -445,6 +449,7 @@ class Component:
     _all = {}
     _urls = {}
     _name = ...
+    _fields: tuple[str, ...]
 
     _pydantic_config = ConfigDict(
         {
@@ -458,11 +463,12 @@ class Component:
             cls._all[name] = cls
             cls._name = name
 
-        for attr_name in vars(cls):
+        cls._fields = get_function_parameters(cls.__init__, exclude={"self"})
+
+        for attr_name in dict(vars(cls)):
             attr = getattr(cls, attr_name)
-            if (
-                attr_name == "__init__"
-                or not attr_name.startswith("_")
+            if attr_name == "__init__" or (
+                not attr_name.startswith("_")
                 and attr_name.islower()
                 and callable(attr)
             ):
@@ -499,29 +505,7 @@ class Component:
 
     @property
     def _state_json(self) -> str:
-        return json.dumps(self._state)
-
-    @property
-    def _state(self) -> dict:
-        if schema := getattr(self.__init__, "__pydantic_core_schema__", None):
-            # This is Pydantic v2 which doesn't expose a model, but creates a
-            # direct validator.
-            call_args = schema["arguments_schema"]  # of type 'call'
-            fn_args = call_args["arguments_schema"]
-            return {
-                name: getattr(self, name)
-                for arg in fn_args
-                if (name := arg["name"]) != "self"
-                if hasattr(self, name)
-            }
-        elif model := getattr(self.__init__, "model", None):
-            return {
-                name: getattr(self, name)
-                for name in model.__fields__
-                if hasattr(self, name)
-            }
-        else:
-            return {}
+        return json.dumps({name: getattr(self, name) for name in self._fields})
 
     def destroy(self):
         self._destroyed = True
