@@ -28,7 +28,7 @@ def endpoint(request, component_name, component_id, event_handler):
             subscriptions_by_id = {
                 component_id: subscriptions.split(",")
                 for component_id, subscriptions in json.loads(
-                    request.POST["__hx-subscriptions__"]
+                    request.POST.get("__hx-subscriptions__", "{}")
                 ).items()
             }
 
