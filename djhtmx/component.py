@@ -225,7 +225,7 @@ class Controller:
     def __del__(self):
         print("Dealocating controller")
 
-    def build(self, component: t.Type["PydanticComponent"] | str, **state):
+    def build(self, component: type["PydanticComponent"] | str, **state):
         if isinstance(component, type):
             component = component.__name__
         return self.request.djhtmx.build(component, state)
@@ -233,20 +233,32 @@ class Controller:
     def destroy(self):
         self._destroyed = True
 
-    def append(self, target: str, component: "PydanticComponent"):
-        self._oob.append((f"beforeend:{target}", component))
+    def append(
+        self, target: str, component: type["PydanticComponent"], **state
+    ):
+        self._oob.append(
+            (f"beforeend:{target}", self.build(component, **state))
+        )
 
-    def prepend(self, target: str, component: "PydanticComponent"):
-        self._oob.append((f"afterbegin:{target}", component))
+    def prepend(
+        self, target: str, component: type["PydanticComponent"], **state
+    ):
+        self._oob.append(
+            (f"afterbegin:{target}", self.build(component, **state))
+        )
 
-    def after(self, target: str, component: "PydanticComponent"):
-        self._oob.append((f"afterend:{target}", component))
+    def after(self, target: str, component: type["PydanticComponent"], **state):
+        self._oob.append((f"afterend:{target}", self.build(component, **state)))
 
-    def before(self, target: str, component: "PydanticComponent"):
-        self._oob.append((f"beforebegin:{target}", component))
+    def before(
+        self, target: str, component: type["PydanticComponent"], **state
+    ):
+        self._oob.append(
+            (f"beforebegin:{target}", self.build(component, **state))
+        )
 
-    def update(self, component: "PydanticComponent"):
-        self._oob.append(("true", component))
+    def update(self, component: type["PydanticComponent"], **state):
+        self._oob.append(("true", self.build(component, **state)))
 
     @cached_property
     def triggers(self):
