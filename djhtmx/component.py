@@ -104,7 +104,7 @@ class Repository:
 
     def _listen_to_post_save(
         self,
-        sender: t.Type[models.Model],
+        sender: type[models.Model],
         instance: models.Model,
         created: bool,
         **kwargs,
@@ -118,7 +118,7 @@ class Repository:
 
     def _listen_to_pre_delete(
         self,
-        sender: t.Type[models.Model],
+        sender: type[models.Model],
         instance: models.Model,
         **kwargs,
     ):
@@ -135,7 +135,7 @@ class Repository:
 
     def _listen_to_related(
         self,
-        sender: t.Type[models.Model],
+        sender: type[models.Model],
         instance: models.Model,
         action: str,
     ):
@@ -252,7 +252,9 @@ class Controller:
     def triggers(self):
         return Triggers()
 
-    def redirect_to(self, url, **kwargs):
+    def redirect_to(
+        self, url: t.Callable[..., t.Any] | models.Model | str, **kwargs
+    ):
         self._headers["HX-Redirect"] = resolve_url(url, **kwargs)
 
     def focus(self, selector):
@@ -281,8 +283,8 @@ class Controller:
         return mark_safe(html)
 
 
-REGISTRY: dict[str, t.Type["PydanticComponent"]] = {}
-FQN: dict[t.Type["PydanticComponent"], str] = {}
+REGISTRY: dict[str, type["PydanticComponent"]] = {}
+FQN: dict[type["PydanticComponent"], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
