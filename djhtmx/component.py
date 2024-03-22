@@ -163,7 +163,8 @@ class Repository:
                 yield self.render_html(component, oob="true")
 
     def render_oob(self):
-        for component in self.component_by_id.values():
+        # component_by_id can change size during iteration
+        for component in list(self.component_by_id.values()):
             for oob, component in component.controller._oob:
                 yield self.render_html(component, oob=oob)
 
