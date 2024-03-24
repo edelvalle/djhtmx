@@ -89,9 +89,6 @@ class Repository:
                 receiver=self._listen_to_pre_delete,
             )
 
-    def __del__(self):
-        print("Dealocating repo")
-
     def unlink(self):
         """Remove circular references to ensure GC deallocates me"""
         for component in self.component_by_id.values():
@@ -223,9 +220,6 @@ class Controller:
         self._headers: dict[str, str] = {}
         self._oob: list[tuple[str, "PydanticComponent"]] = []
 
-    def __del__(self):
-        print("Dealocating controller")
-
     def build(self, component: type["PydanticComponent"] | str, **state):
         if isinstance(component, type):
             component = component.__name__
@@ -351,9 +345,6 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
     )
-
-    def __del__(self):
-        print("Dealocating component", self.hx_name)
 
     def __init_subclass__(cls, public=True):
         FQN[cls] = f"{cls.__module__}.{cls.__name__}"
