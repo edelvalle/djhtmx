@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, validate_call
 from . import json
 from .introspection import (
     annotate_model,
+    get_event_handler_event_types,
     get_function_parameters,
     get_related_fields,
 )
@@ -91,6 +92,9 @@ class Repository:
     ):
         self.request = request
         self.component_by_id: dict[str, PydanticComponent] = {}
+        self.component_by_name: dict[str, list[PydanticComponent]] = (
+            defaultdict(list)
+        )
         self.state_by_id = state_by_id or {}
         self.subscriptions_by_id = subscriptions_by_id or {}
 
@@ -114,6 +118,7 @@ class Repository:
         delattr(self, "request")
         delattr(self, "params")
         delattr(self, "component_by_id")
+        delattr(self, "component_by_name")
 
     def _listen_to_post_save(
         self,
@@ -162,18 +167,36 @@ class Repository:
             print("LAUNCHED SIGNALS:")
             pprint(self.signals)
 
+        components_to_update: set["PydanticComponent"] = set()
+
+        # Model mutation signals
         for component_id, subscriptions in self.subscriptions_by_id.items():
             if (
                 self.signals.intersection(subscriptions)
-                and (state := self.state_by_id.pop(component_id, None))
+                and (component := self.get_component_by_id(component_id))
                 is not None
             ):
-                component = self.register_component(
-                    build(state["hx_name"], self.request, self.params, state)
-                )
                 if settings.DEBUG:
-                    print("> MATCHED: ", state["hx_name"], subscriptions)
-                yield self.render_html(component, oob="true")
+                    print("> MATCHED: ", component.hx_name, subscriptions)
+                components_to_update.add(component)
+
+        # Events emitted
+        more_to_come = True
+        while more_to_come:
+            more_to_come = False
+            for component in list(self.component_by_id.values()):
+                for event in component.controller.consume_events():
+                    more_to_come = True
+                    for component_name in LISTENERS[type(event)]:
+                        for component in self.get_components_by_name(
+                            component_name
+                        ):
+                            component._handle_event(event)  # type: ignore
+                            components_to_update.add(component)
+
+        # Rendering
+        for component in components_to_update:
+            yield self.render_html(component, oob="true")
 
     def render_oob(self):
         # component_by_id can change size during iteration
@@ -193,17 +216,39 @@ class Repository:
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
+    def get_component_by_id(self, component_id: str):
+        if component_id in self.state_by_id:
+            state = self.state_by_id.pop(component_id)
+            return self.build(state["hx_name"], state)
+        else:
+            return self.component_by_id.get(component_id)
+
+    def get_components_by_name(
+        self, name: str
+    ) -> t.Iterator["PydanticComponent"]:
+        yield from self.component_by_name[name]
+        for state in list(self.state_by_id.values()):
+            if state["hx_name"] == name:
+                yield self.build(name, state)
+
     def register_component(self, component: PyComp) -> PyComp:
         self.component_by_id[component.id] = component
+        self.component_by_name[type(component).__name__].append(component)
         return component
 
-    def render(self, component: PydanticComponent, template: str | None = None):
+    def render(
+        self, component: PydanticComponent, template: str | None = None
+    ) -> HttpResponse:
         return component.controller.render(
             component._get_template(template),
             component._get_context() | {"htmx_repo": self},
         )
 
-    def render_html(self, component: PydanticComponent, oob: str = None):
+    def render_html(
+        self,
+        component: PydanticComponent,
+        oob: str = None,
+    ) -> SafeString:
         is_oob = oob not in ("true", None)
         html = [
             format_html('<div hx-swap-oob="{oob}">', oob=oob)
@@ -226,6 +271,15 @@ class Controller:
         self._destroyed: bool = False
         self._headers: dict[str, str] = {}
         self._oob: list[tuple[str, PydanticComponent]] = []
+        self._events: list[t.Any] = []
+
+    def emit(self, event: t.Any):
+        self._events.append(event)
+
+    def consume_events(self):
+        event = self._events
+        self._events = []
+        return event
 
     def build(self, component: type[PydanticComponent] | str, **state):
         if isinstance(component, type):
@@ -294,6 +348,7 @@ class Controller:
 
 
 REGISTRY: dict[str, type[PydanticComponent]] = {}
+LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[PydanticComponent], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
@@ -375,6 +430,10 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                         attr
                     ),
                 )
+
+        if event_handler := getattr(cls, "_handle_event", None):
+            for event_type in get_event_handler_event_types(event_handler):
+                LISTENERS[event_type].add(cls.__name__)
 
         return super().__init_subclass__()
 

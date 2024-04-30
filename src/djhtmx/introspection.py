@@ -169,3 +169,11 @@ def _parse_obj(
             v for _, v in sorted(items.items(), key=lambda kv: kv[0])
         ]
     return output
+
+
+def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
+    event = inspect.signature(f).parameters["event"]
+    if isinstance(event.annotation, types.UnionType):
+        return set(event.annotation.__args__)
+    else:
+        return {event.annotation}

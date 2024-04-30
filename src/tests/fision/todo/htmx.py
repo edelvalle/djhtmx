@@ -1,8 +1,14 @@
+from dataclasses import dataclass
 from enum import StrEnum
 
 from djhtmx.component import PydanticComponent
 
 from .models import Item
+
+
+@dataclass
+class ItemsCleared:
+    pass
 
 
 class Showing(StrEnum):
@@ -49,9 +55,17 @@ class TodoList(PydanticComponent):
 class ListHeader(PydanticComponent):
     _template_name = "todo/list_header.html"
 
+    def _handle_event(self, event: ItemsCleared | int):
+        pass
+
     def add(self, new_item: str):
         item = Item.objects.create(text=new_item)
-        self.controller.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
+        self.controller.append(
+            "#todo-list",
+            TodoItem,
+            id=f"item-{item.id}",
+            item=item,
+        )
 
 
 class TodoItem(PydanticComponent):
