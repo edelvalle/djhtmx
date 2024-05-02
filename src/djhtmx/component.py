@@ -167,7 +167,7 @@ class Repository:
             print("LAUNCHED SIGNALS:")
             pprint(self.signals)
 
-        components_to_update: set["PydanticComponent"] = set()
+        components_to_update = set()
 
         # Model mutation signals
         for component_id, subscriptions in self.subscriptions_by_id.items():
@@ -178,7 +178,7 @@ class Repository:
             ):
                 if settings.DEBUG:
                     print("> MATCHED: ", component.hx_name, subscriptions)
-                components_to_update.add(component)
+                components_to_update.add(component.id)
 
         # Events emitted
         more_to_come = True
@@ -192,10 +192,12 @@ class Repository:
                             component_name
                         ):
                             component._handle_event(event)  # type: ignore
-                            components_to_update.add(component)
+                            components_to_update.add(component.id)
 
         # Rendering
-        for component in components_to_update:
+        for component_id in components_to_update:
+            component = self.get_component_by_id(component_id)
+            assert component
             yield self.render_html(component, oob="true")
 
     def render_oob(self):
