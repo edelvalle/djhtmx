@@ -51,10 +51,7 @@ class ListHeader(PydanticComponent):
 
     def add(self, new_item: str):
         item = Item.objects.create(text=new_item)
-        todo_item = self.controller.build(
-            TodoItem, id=f"item-{item.id}", item=item
-        )
-        self.controller.append("#todo-list", todo_item)
+        self.controller.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
 
 
 class TodoItem(PydanticComponent):
