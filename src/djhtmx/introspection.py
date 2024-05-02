@@ -172,8 +172,14 @@ def _parse_obj(
 
 
 def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
+    "Extract the types of the annotations of parameter 'event'."
     event = inspect.signature(f).parameters["event"]
-    if isinstance(event.annotation, types.UnionType):
-        return set(event.annotation.__args__)
-    else:
+    if t.get_origin(event.annotation) is t.Union:
+        return {
+            arg
+            for arg in t.get_args(event.annotation)
+            if isinstance(arg, type) and arg is not types.NoneType
+        }
+    elif isinstance(event.annotation, type):
         return {event.annotation}
+    return set()
