@@ -9,6 +9,7 @@ PROJECT_NAME := djhtmx
 
 USE_UV ?= true
 install:
+	@curl -LsSf https://astral.sh/uv/install.sh | sh
 	@rye self update || curl -sSf https://rye-up.com/get | bash
 	@rye config --set-bool behavior.use-uv=$(USE_UV)
 	@rye pin --relaxed $(PYTHON_VERSION)
