@@ -53,3 +53,13 @@ run:
 	@$(RYE_EXEC) python src/tests/manage.py migrate
 	@$(RYE_EXEC) python src/tests/manage.py runserver
 .PHONY: run
+
+
+py:
+	@$(RYE_EXEC) ipython
+.PHONY: py
+
+SHELL_CMD ?= shell_plus
+shell:
+	@$(RYE_EXEC) python src/tests/manage.py $(SHELL_CMD) || $(RYE_EXEC) python src/tests/manage.py shell
+.PHONY: shell

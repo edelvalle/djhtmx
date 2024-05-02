@@ -52,6 +52,7 @@ dev-dependencies = [
     "whitenoise~=6.6.0",
     "isort~=5.13.2",
     "ipdb~=0.13.13",
+    "django-extensions~=3.2.3",
 ]
 
 
