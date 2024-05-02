@@ -431,7 +431,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                     ),
                 )
 
-        if event_handler := getattr(cls, "_handle_event", None):
+        if public and (event_handler := getattr(cls, "_handle_event", None)):
             for event_type in get_event_handler_event_types(event_handler):
                 LISTENERS[event_type].add(cls.__name__)
 
