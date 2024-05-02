@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import typing as t
 from collections import defaultdict
 from functools import cached_property
@@ -48,17 +50,31 @@ def get_params(request: HttpRequest) -> QueryDict:
 
 
 class RequestWithRepo(HttpRequest):
-    djhtmx: "Repository"
+    djhtmx: Repository
+
+
+PyComp = t.TypeVar("PyComp", bound="PydanticComponent")
 
 
 class Repository:
+    """An in-memory (cheap) mapping of component IDs to its states.
+
+    When an HTMX request comes, all the state from all the components are
+    placed in a registry.  This way we can instantiate components if/when
+    needed.
+
+    For instance, if a component is subscribed to an event and the event fires
+    during the request, that component is rendered.
+
+    """
+
     @classmethod
     def from_request(
         cls,
         request: RequestWithRepo,
         state_by_id: dict[str, dict[str, t.Any]] = None,
         subscriptions_by_id: dict[str, list[str]] = None,
-    ) -> "Repository":
+    ) -> Repository:
         if not hasattr(request, "djhtmx"):
             request.djhtmx = cls(
                 request,
@@ -74,7 +90,7 @@ class Repository:
         subscriptions_by_id: dict[str, list[str]] = None,
     ):
         self.request = request
-        self.component_by_id: dict[str, "PydanticComponent"] = {}
+        self.component_by_id: dict[str, PydanticComponent] = {}
         self.state_by_id = state_by_id or {}
         self.subscriptions_by_id = subscriptions_by_id or {}
 
@@ -177,26 +193,17 @@ class Repository:
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
-    def register_component(
-        self,
-        component: "PydanticComponent",
-    ) -> "PydanticComponent":
+    def register_component(self, component: PyComp) -> PyComp:
         self.component_by_id[component.id] = component
         return component
 
-    def render(
-        self, component: "PydanticComponent", template: str | None = None
-    ):
+    def render(self, component: PydanticComponent, template: str | None = None):
         return component.controller.render(
             component._get_template(template),
             component._get_context() | {"htmx_repo": self},
         )
 
-    def render_html(
-        self,
-        component: "PydanticComponent",
-        oob: str = None,
-    ):
+    def render_html(self, component: PydanticComponent, oob: str = None):
         is_oob = oob not in ("true", None)
         html = [
             format_html('<div hx-swap-oob="{oob}">', oob=oob)
@@ -218,9 +225,9 @@ class Controller:
         self.params = params
         self._destroyed: bool = False
         self._headers: dict[str, str] = {}
-        self._oob: list[tuple[str, "PydanticComponent"]] = []
+        self._oob: list[tuple[str, PydanticComponent]] = []
 
-    def build(self, component: type["PydanticComponent"] | str, **state):
+    def build(self, component: type[PydanticComponent] | str, **state):
         if isinstance(component, type):
             component = component.__name__
         return self.request.djhtmx.build(component, state)
@@ -228,16 +235,12 @@ class Controller:
     def destroy(self):
         self._destroyed = True
 
-    def append(
-        self, target: str, component: type["PydanticComponent"], **state
-    ):
+    def append(self, target: str, component: type[PydanticComponent], **state):
         self._oob.append(
             (f"beforeend:{target}", self.build(component, **state))
         )
 
-    def prepend(
-        self, target: str, component: type["PydanticComponent"], **state
-    ):
+    def prepend(self, target: str, component: type[PydanticComponent], **state):
         self._oob.append(
             (f"afterbegin:{target}", self.build(component, **state))
         )
@@ -245,14 +248,12 @@ class Controller:
     def after(self, target: str, component: type["PydanticComponent"], **state):
         self._oob.append((f"afterend:{target}", self.build(component, **state)))
 
-    def before(
-        self, target: str, component: type["PydanticComponent"], **state
-    ):
+    def before(self, target: str, component: type[PydanticComponent], **state):
         self._oob.append(
             (f"beforebegin:{target}", self.build(component, **state))
         )
 
-    def update(self, component: type["PydanticComponent"], **state):
+    def update(self, component: type[PydanticComponent], **state):
         self._oob.append(("true", self.build(component, **state)))
 
     @cached_property
@@ -260,7 +261,9 @@ class Controller:
         return Triggers()
 
     def redirect_to(
-        self, url: t.Callable[..., t.Any] | models.Model | str, **kwargs
+        self,
+        url: t.Callable[..., t.Any] | models.Model | str,
+        **kwargs,
     ):
         self._headers["HX-Redirect"] = resolve_url(url, **kwargs)
 
@@ -290,8 +293,8 @@ class Controller:
         return mark_safe(html)
 
 
-REGISTRY: dict[str, type["PydanticComponent"]] = {}
-FQN: dict[type["PydanticComponent"], str] = {}
+REGISTRY: dict[str, type[PydanticComponent]] = {}
+FQN: dict[type[PydanticComponent], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
@@ -376,8 +379,8 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         return super().__init_subclass__()
 
     # State
-    id: str = Field(default_factory=lambda: f"hx-{uuid4().hex}")
-    controller: Controller = Field(exclude=True)
+    id: t.Annotated[str, Field(default_factory=lambda: f"hx-{uuid4().hex}")]
+    controller: t.Annotated[Controller, Field(exclude=True)]
 
     hx_name: str
 
