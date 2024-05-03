@@ -50,7 +50,7 @@ class TodoList(PydanticComponent):
     def all_items_are_completed(self):
         return self.items.count() == self.items.completed().count()
 
-    def toggle_all(self, toggle_all: bool):
+    def toggle_all(self, toggle_all: bool = False):
         self.items.update(completed=toggle_all)
 
     def show(self, showing: Showing):
