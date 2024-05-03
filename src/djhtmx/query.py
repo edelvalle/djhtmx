@@ -12,8 +12,9 @@ import pydantic
 from django.db import models
 from django.http import QueryDict
 from pydantic.fields import FieldInfo
+from pydantic_core import PydanticUndefined
 
-from djhtmx.introspection import annotate_model, issubclass_safe
+from djhtmx.introspection import annotate_model, get_field_info, issubclass_safe
 
 
 @dataclass(slots=True)
@@ -41,8 +42,8 @@ class QueryPatcher:
         yield
         after = getattr(component, self.field_name, unset)
         if previous != after:
-            repository.signals.add(f"querystring.{self.qs_arg}")
             self._set_value(repository.params, after)
+            repository.signals.add(f"querystring.{self.qs_arg}")
 
     def get_state_updates(self, qdict: QueryDict):
         return self._get_value(qdict)
@@ -111,24 +112,32 @@ class QueryPatcher:
         def _get_value(qdict: QueryDict):
             if qs_value := extract_value(qdict):
                 try:
-                    if (
-                        parsed := adapter.validate_python(qs_value)
-                    ) is not None:
-                        return {field_name: parsed}
+                    return {field_name: adapter.validate_python(qs_value)}
                 except pydantic.ValidationError:
                     pass
+            elif f.default is not PydanticUndefined:
+                return {field_name: f.default}
+            elif f.default_factory is not None:
+                return {field_name: f.default_factory()}
+
             return {}
 
         if _is_seq_of_simple_types(f.annotation):
 
             def _set_value(qdict: QueryDict, value):
                 value = adapter.dump_python(value)
-                qdict.setlist(qs_arg, value)
+                if not value:
+                    qdict.pop(qs_arg, None)
+                else:
+                    qdict.setlist(qs_arg, value)
         else:
 
             def _set_value(qdict: QueryDict, value):
                 value = adapter.dump_python(value)
-                qdict[qs_arg] = value
+                if not value:
+                    qdict.pop(qs_arg, None)
+                else:
+                    qdict[qs_arg] = value
 
         return cls(
             qs_arg,
@@ -158,8 +167,17 @@ class QueryPatcher:
                 include_extras=True,
             )
             for name, ann_type in hints.items():
-                f = FieldInfo.from_annotation(ann_type)
+                f = get_field_info(component_cls, name, ann_type)
                 for qs_arg in _get_querystring_args(name, f):
+                    if (
+                        f.default is PydanticUndefined
+                        and f.default_factory is None
+                    ):
+                        raise TypeError(
+                            f"Field '{name}' of {cls.__qualname__} must have "
+                            "a default or default_factory."
+                        )
+
                     if qs_arg in seen:
                         raise TypeError(
                             f"Component {cls.__qualname__} has multiple "

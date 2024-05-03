@@ -1,13 +1,15 @@
+import dataclasses
 import inspect
 import types
 import typing as t
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass
 from inspect import Parameter
 
 from django.db import models
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer
+from pydantic.fields import FieldInfo
 
 # model
 
@@ -185,3 +187,26 @@ def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
     elif isinstance(event.annotation, type):
         return {event.annotation}
     return set()
+
+
+def get_field_info(cls, name, ann_type) -> FieldInfo:
+    default = getattr(cls, name, Unset)
+    if isinstance(default, FieldInfo):
+        return default
+
+    if isinstance(default, dataclasses.Field):
+        default_factory = default.default_factory
+        default = default.default
+        if default is dataclasses.MISSING and default_factory is not MISSING:
+            default = default_factory()
+
+        if default is dataclasses.MISSING:
+            default = Unset
+
+    if default is Unset:
+        return FieldInfo.from_annotation(ann_type)
+    else:
+        return FieldInfo.from_annotated_attribute(ann_type, default)
+
+
+Unset = object()
