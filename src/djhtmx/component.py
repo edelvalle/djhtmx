@@ -439,9 +439,14 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
             # because we need the simplest types of the fields.
             cls._settle_querystring_patchers(component_name)
 
+
+        # We use 'get_type_hints' to resolve the forward refs if needed, but
+        # we only need to rewrite the actual annotations of the current class,
+        # that's why we iter over the '__annotations__' names.
         hints = t.get_type_hints(cls, include_extras=True)
-        for name, annotation in list(hints.items()):
+        for name in list(cls.__annotations__):
             if not name.startswith("_"):
+                annotation = hints[name]
                 cls.__annotations__[name] = annotate_model(annotation)
 
         for attr_name in vars(cls):
