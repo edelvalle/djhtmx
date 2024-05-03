@@ -486,6 +486,14 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     def subscriptions(self) -> set[str]:
         return set()
 
+    def get_all_subscriptions(self) -> set[str]:
+        result = self.subscriptions
+        query_patchers = QS_MAP.get(self.hx_name, [])
+        query_subscriptions = {
+            f"querystring.{p.qs_arg}" for p in query_patchers
+        }
+        return result | query_subscriptions
+
     @cached_property
     def user(self) -> TUser:
         if isinstance(self.any_user, AnonymousUser):

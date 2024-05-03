@@ -16,14 +16,6 @@ from pydantic.fields import FieldInfo
 from djhtmx.introspection import annotate_model, issubclass_safe
 
 
-class Signal(t.Protocol):
-    """The minimal protocol to signal query string changes"""
-
-    @property
-    def signals(self) -> set[str]: ...
-    def push_raw_url(self, url: str): ...
-
-
 @dataclass(slots=True)
 class Query:
     """Annotation to integrate the state with the URL's query string."""
@@ -41,10 +33,16 @@ class QueryPatcher:
     qs_arg: str
     field_name: str
     _get_value: t.Callable[[QueryDict], dict[str, t.Any]]
+    _set_value: t.Callable[[QueryDict, t.Any], None]
 
     @contextlib.contextmanager
-    def tracking_query_string(self):
+    def tracking_query_string(self, repository, component):
+        previous = getattr(component, self.field_name, (unset := object()))
         yield
+        after = getattr(component, self.field_name, unset)
+        if previous != after:
+            repository.signals.add(f"querystring.{self.qs_arg}")
+            self._set_value(repository.params, after)
 
     def get_state_updates(self, qdict: QueryDict):
         return self._get_value(qdict)
@@ -110,16 +108,34 @@ class QueryPatcher:
         extract_value = _get_value_extractor(f.annotation)
         adapter = pydantic.TypeAdapter(t.Optional[annotate_model(f.annotation)])  # type: ignore
 
-        def patcher(qdict: QueryDict):
+        def _get_value(qdict: QueryDict):
             if qs_value := extract_value(qdict):
                 try:
-                    if parsed := adapter.validate_python(qs_value):
+                    if (
+                        parsed := adapter.validate_python(qs_value)
+                    ) is not None:
                         return {field_name: parsed}
                 except pydantic.ValidationError:
                     pass
             return {}
 
-        return cls(qs_arg, field_name, _get_value=patcher)
+        if _is_seq_of_simple_types(f.annotation):
+
+            def _set_value(qdict: QueryDict, value):
+                value = adapter.dump_python(value)
+                qdict.setlist(qs_arg, value)
+        else:
+
+            def _set_value(qdict: QueryDict, value):
+                value = adapter.dump_python(value)
+                qdict[qs_arg] = value
+
+        return cls(
+            qs_arg,
+            field_name,
+            _get_value=_get_value,
+            _set_value=_set_value,
+        )
 
     @classmethod
     def for_component(cls, component_cls):

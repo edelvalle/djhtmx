@@ -32,10 +32,6 @@ class TodoList(PydanticComponent):
             return Item.objects.filter(text__icontains=self.query)
 
     @property
-    def subscriptions(self) -> set[str]:
-        return {"querystring.q"}
-
-    @property
     def items(self):
         match self.showing:
             case Showing.ALL:
@@ -110,7 +106,7 @@ class TodoCounter(PydanticComponent):
 
     @property
     def subscriptions(self) -> set[str]:
-        return {"todo.item", "querystring.q"}
+        return {"todo.item"}
 
     @property
     def items(self):

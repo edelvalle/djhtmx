@@ -81,8 +81,8 @@ def hx_tag(context, swap: str = "outerHTML"):
             "hx-swap-oob": oob,
             "data-hx-state": signer.sign(component.model_dump_json()),
             "data-hx-subscriptions": (
-                ",".join(component.subscriptions)
-                if component.subscriptions
+                ",".join(subscriptions)
+                if (subscriptions := component.get_all_subscriptions())
                 else None
             ),
         }
