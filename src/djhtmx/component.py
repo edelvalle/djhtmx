@@ -439,7 +439,6 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
             # because we need the simplest types of the fields.
             cls._settle_querystring_patchers(component_name)
 
-
         # We use 'get_type_hints' to resolve the forward refs if needed, but
         # we only need to rewrite the actual annotations of the current class,
         # that's why we iter over the '__annotations__' names.
@@ -452,9 +451,8 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         for attr_name in vars(cls):
             attr = getattr(cls, attr_name)
             if (
-                not (
-                    attr_name.startswith("_") or attr_name.startswith("model_")
-                )
+                not attr_name.startswith("_")
+                and attr_name not in PYDANTIC_MODEL_METHODS
                 and attr_name.islower()
                 and callable(attr)
             ):
@@ -526,7 +524,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                 attr: getattr(self, attr)
                 for attr in dir(self)
                 if not attr.startswith("_")
-                and not attr.startswith("model_")
+                and attr not in PYDANTIC_MODEL_METHODS
                 and attr not in attrs_to_exclude
             } | {"this": self}
 
@@ -739,3 +737,10 @@ class Component:
             mod = ""
         name = cls.__name__
         return f"{mod}.{name}" if mod else name
+
+
+PYDANTIC_MODEL_METHODS = {
+    attr
+    for attr, value in vars(BaseModel).items()
+    if not attr.startswith("_") and callable(value)
+}
