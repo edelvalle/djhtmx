@@ -28,13 +28,15 @@ def Model(model: t.Type[models.Model]):
     return t.Annotated[
         model,
         BeforeValidator(
-            lambda v: v
-            if isinstance(v, model)
-            else model.objects.filter(pk=v).first()
+            lambda v: (
+                v
+                if isinstance(v, model)
+                else model.objects.filter(pk=v).first()
+            )
         ),
         PlainSerializer(
-            lambda v: v.pk,
-            int if (pk := model().pk) is None else type(pk),
+            func=lambda v: v.pk,
+            return_type=str if (pk := model().pk) is None else type(pk),
         ),
     ]
 

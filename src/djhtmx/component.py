@@ -398,6 +398,10 @@ def build(
     )
 
 
+def _generate_uuid():
+    return f"hx-{uuid4().hex}"
+
+
 class PydanticComponent(BaseModel, t.Generic[TUser]):
     _template_name: str = ...  # type: ignore
 
@@ -412,7 +416,8 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         if public:
             REGISTRY[cls.__name__] = cls
 
-        for name, annotation in list(t.get_type_hints(cls).items()):
+        hints = t.get_type_hints(cls, include_extras=True)
+        for name, annotation in list(hints.items()):
             if not name.startswith("_"):
                 cls.__annotations__[name] = annotate_model(annotation)
 
@@ -440,7 +445,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         return super().__init_subclass__()
 
     # State
-    id: t.Annotated[str, Field(default_factory=lambda: f"hx-{uuid4().hex}")]
+    id: t.Annotated[str, Field(default_factory=_generate_uuid)]
     controller: t.Annotated[Controller, Field(exclude=True)]
 
     hx_name: str
