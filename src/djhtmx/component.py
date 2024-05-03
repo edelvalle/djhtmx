@@ -412,7 +412,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         if public:
             REGISTRY[cls.__name__] = cls
 
-        for name, annotation in list(cls.__annotations__.items()):
+        for name, annotation in list(t.get_type_hints(cls).items()):
             if not name.startswith("_"):
                 cls.__annotations__[name] = annotate_model(annotation)
 

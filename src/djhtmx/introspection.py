@@ -42,14 +42,14 @@ def Model(model: t.Type[models.Model]):
 def annotate_model(annotation):
     if issubclass_safe(annotation, models.Model):
         return Model(annotation)
-    elif isinstance_safe(annotation, types.UnionType):
-        return t.Union[*(annotate_model(a) for a in annotation.__args__)]  # type:ignore
+    elif t.get_origin(annotation) is types.UnionType:
+        return t.Union[*(annotate_model(a) for a in t.get_args(annotation))]  # type:ignore
     elif type(annotation).__name__ == "_TypedDictMeta":
         return t.TypedDict(
             annotation.__name__,  # type: ignore
             {
                 k: annotate_model(v)  # type: ignore
-                for k, v in annotation.__annotations__.items()
+                for k, v in t.get_type_hints(annotation).items()
             },
         )
     else:
@@ -174,7 +174,7 @@ def _parse_obj(
 def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
     "Extract the types of the annotations of parameter 'event'."
     event = inspect.signature(f).parameters["event"]
-    if t.get_origin(event.annotation) is t.Union:
+    if t.get_origin(event.annotation) is types.UnionType:
         return {
             arg
             for arg in t.get_args(event.annotation)
