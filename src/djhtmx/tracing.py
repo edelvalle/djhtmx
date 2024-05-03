@@ -1,7 +1,10 @@
 import contextlib
 
 try:
-    from sentry_sdk import Hub, configure_scope
+    from sentry_sdk import (  # pyright: ignore[reportMissingImports]
+        Hub,
+        configure_scope,
+    )
 
     @contextlib.contextmanager
     def sentry_transaction_name(transaction_name):
@@ -14,7 +17,7 @@ try:
                 scope.transaction = transaction_name
             yield
 
-    def sentry_span(description, **tags):
+    def sentry_span(description, **tags):  # pyright: ignore[reportRedeclaration]
         hub = Hub.current
         span = hub.start_span(op="djhtmx", description=description)
         for tag, value in tags.items():

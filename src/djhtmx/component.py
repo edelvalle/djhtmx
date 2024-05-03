@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import typing as t
 from collections import defaultdict
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import cached_property
 from itertools import chain
 from pprint import pprint
@@ -20,10 +24,14 @@ from pydantic import BaseModel, ConfigDict, Field, validate_call
 from . import json
 from .introspection import (
     annotate_model,
+    get_event_handler_event_types,
     get_function_parameters,
     get_related_fields,
 )
+from .query import Query, QueryPatcher
 from .tracing import sentry_span
+
+__all__ = ("Component", "PydanticComponent", "Query", "ComponentNotFound")
 
 
 class ComponentNotFound(LookupError):
@@ -39,7 +47,7 @@ RenderFunction = t.Callable[
 def get_params(request: HttpRequest) -> QueryDict:
     is_htmx_request = json.loads(request.META.get("HTTP_HX_REQUEST", "false"))
     if is_htmx_request:
-        return QueryDict(
+        return QueryDict(  # type: ignore
             urlparse(request.META["HTTP_HX_CURRENT_URL"]).query,
             mutable=True,
         )
@@ -48,17 +56,31 @@ def get_params(request: HttpRequest) -> QueryDict:
 
 
 class RequestWithRepo(HttpRequest):
-    djhtmx: "Repository"
+    djhtmx: Repository
+
+
+PyComp = t.TypeVar("PyComp", bound="PydanticComponent")
 
 
 class Repository:
+    """An in-memory (cheap) mapping of component IDs to its states.
+
+    When an HTMX request comes, all the state from all the components are
+    placed in a registry.  This way we can instantiate components if/when
+    needed.
+
+    For instance, if a component is subscribed to an event and the event fires
+    during the request, that component is rendered.
+
+    """
+
     @classmethod
     def from_request(
         cls,
         request: RequestWithRepo,
         state_by_id: dict[str, dict[str, t.Any]] = None,
         subscriptions_by_id: dict[str, list[str]] = None,
-    ) -> "Repository":
+    ) -> Repository:
         if not hasattr(request, "djhtmx"):
             request.djhtmx = cls(
                 request,
@@ -74,7 +96,10 @@ class Repository:
         subscriptions_by_id: dict[str, list[str]] = None,
     ):
         self.request = request
-        self.component_by_id: dict[str, "PydanticComponent"] = {}
+        self.component_by_id: dict[str, PydanticComponent] = {}
+        self.component_by_name: dict[str, list[PydanticComponent]] = (
+            defaultdict(list)
+        )
         self.state_by_id = state_by_id or {}
         self.subscriptions_by_id = subscriptions_by_id or {}
 
@@ -98,6 +123,7 @@ class Repository:
         delattr(self, "request")
         delattr(self, "params")
         delattr(self, "component_by_id")
+        delattr(self, "component_by_name")
 
     def _listen_to_post_save(
         self,
@@ -146,18 +172,38 @@ class Repository:
             print("LAUNCHED SIGNALS:")
             pprint(self.signals)
 
+        components_to_update = set()
+
+        # Model mutation signals
         for component_id, subscriptions in self.subscriptions_by_id.items():
             if (
                 self.signals.intersection(subscriptions)
-                and (state := self.state_by_id.pop(component_id, None))
+                and (component := self.get_component_by_id(component_id))
                 is not None
             ):
-                component = self.register_component(
-                    build(state["hx_name"], self.request, self.params, state)
-                )
                 if settings.DEBUG:
-                    print("> MATCHED: ", state["hx_name"], subscriptions)
-                yield self.render_html(component, oob="true")
+                    print("> MATCHED: ", component.hx_name, subscriptions)
+                components_to_update.add(component.id)
+
+        # Events emitted
+        more_to_come = True
+        while more_to_come:
+            more_to_come = False
+            for component in list(self.component_by_id.values()):
+                for event in component.controller.consume_events():
+                    more_to_come = True
+                    for component_name in LISTENERS[type(event)]:
+                        for component in self.get_components_by_name(
+                            component_name
+                        ):
+                            component._handle_event(event)  # type: ignore
+                            components_to_update.add(component.id)
+
+        # Rendering
+        for component_id in components_to_update:
+            component = self.get_component_by_id(component_id)
+            assert component
+            yield self.render_html(component, oob="true")
 
     def render_oob(self):
         # component_by_id can change size during iteration
@@ -174,19 +220,33 @@ class Repository:
             elif stored_state := self.state_by_id.pop(component_id, None):
                 state = stored_state | state
 
+        state = self._patch_state_with_query_string(component_name, state)
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
-    def register_component(
-        self,
-        component: "PydanticComponent",
-    ) -> "PydanticComponent":
+    def get_component_by_id(self, component_id: str):
+        if component_id in self.state_by_id:
+            state = self.state_by_id.pop(component_id)
+            return self.build(state["hx_name"], state)
+        else:
+            return self.component_by_id.get(component_id)
+
+    def get_components_by_name(
+        self, name: str
+    ) -> t.Iterator["PydanticComponent"]:
+        yield from self.component_by_name[name]
+        for state in list(self.state_by_id.values()):
+            if state["hx_name"] == name:
+                yield self.build(name, state)
+
+    def register_component(self, component: PyComp) -> PyComp:
         self.component_by_id[component.id] = component
+        self.component_by_name[type(component).__name__].append(component)
         return component
 
     def render(
-        self, component: "PydanticComponent", template: str | None = None
-    ):
+        self, component: PydanticComponent, template: str | None = None
+    ) -> HttpResponse:
         return component.controller.render(
             component._get_template(template),
             component._get_context() | {"htmx_repo": self},
@@ -194,9 +254,9 @@ class Repository:
 
     def render_html(
         self,
-        component: "PydanticComponent",
+        component: PydanticComponent,
         oob: str = None,
-    ):
+    ) -> SafeString:
         is_oob = oob not in ("true", None)
         html = [
             format_html('<div hx-swap-oob="{oob}">', oob=oob)
@@ -211,6 +271,13 @@ class Repository:
         ]
         return mark_safe("".join(filter(None, html)))
 
+    def _patch_state_with_query_string(self, component_name, state):
+        """Patches the state with the component's query annotated fields"""
+        if patchers := QS_MAP.get(component_name):
+            for patcher in patchers:
+                state = state | patcher.get_state_updates(self.params)
+        return state
+
 
 class Controller:
     def __init__(self, request: RequestWithRepo, params: QueryDict):
@@ -218,9 +285,18 @@ class Controller:
         self.params = params
         self._destroyed: bool = False
         self._headers: dict[str, str] = {}
-        self._oob: list[tuple[str, "PydanticComponent"]] = []
+        self._oob: list[tuple[str, PydanticComponent]] = []
+        self._events: list[t.Any] = []
 
-    def build(self, component: type["PydanticComponent"] | str, **state):
+    def emit(self, event: t.Any):
+        self._events.append(event)
+
+    def consume_events(self):
+        event = self._events
+        self._events = []
+        return event
+
+    def build(self, component: type[PydanticComponent] | str, **state):
         if isinstance(component, type):
             component = component.__name__
         return self.request.djhtmx.build(component, state)
@@ -228,16 +304,12 @@ class Controller:
     def destroy(self):
         self._destroyed = True
 
-    def append(
-        self, target: str, component: type["PydanticComponent"], **state
-    ):
+    def append(self, target: str, component: type[PydanticComponent], **state):
         self._oob.append(
             (f"beforeend:{target}", self.build(component, **state))
         )
 
-    def prepend(
-        self, target: str, component: type["PydanticComponent"], **state
-    ):
+    def prepend(self, target: str, component: type[PydanticComponent], **state):
         self._oob.append(
             (f"afterbegin:{target}", self.build(component, **state))
         )
@@ -245,14 +317,12 @@ class Controller:
     def after(self, target: str, component: type["PydanticComponent"], **state):
         self._oob.append((f"afterend:{target}", self.build(component, **state)))
 
-    def before(
-        self, target: str, component: type["PydanticComponent"], **state
-    ):
+    def before(self, target: str, component: type[PydanticComponent], **state):
         self._oob.append(
             (f"beforebegin:{target}", self.build(component, **state))
         )
 
-    def update(self, component: type["PydanticComponent"], **state):
+    def update(self, component: type[PydanticComponent], **state):
         self._oob.append(("true", self.build(component, **state)))
 
     @cached_property
@@ -260,7 +330,9 @@ class Controller:
         return Triggers()
 
     def redirect_to(
-        self, url: t.Callable[..., t.Any] | models.Model | str, **kwargs
+        self,
+        url: t.Callable[..., t.Any] | models.Model | str,
+        **kwargs,
     ):
         self._headers["HX-Redirect"] = resolve_url(url, **kwargs)
 
@@ -290,9 +362,14 @@ class Controller:
         return mark_safe(html)
 
 
-REGISTRY: dict[str, type["PydanticComponent"]] = {}
-FQN: dict[type["PydanticComponent"], str] = {}
+REGISTRY: dict[str, type[PydanticComponent]] = {}
+LISTENERS: dict[type, set[str]] = defaultdict(set)
+FQN: dict[type[PydanticComponent], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
+
+# Mapping from component name to the list of the patcher of the internal
+# state from query string.
+QS_MAP: dict[str, list[QueryPatcher]] = defaultdict(list)
 
 
 A = t.TypeVar("A")
@@ -338,6 +415,10 @@ def build(
     )
 
 
+def _generate_uuid():
+    return f"hx-{uuid4().hex}"
+
+
 class PydanticComponent(BaseModel, t.Generic[TUser]):
     _template_name: str = ...  # type: ignore
 
@@ -349,19 +430,29 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     def __init_subclass__(cls, public=True):
         FQN[cls] = f"{cls.__module__}.{cls.__name__}"
 
+        component_name = cls.__name__
         if public:
-            REGISTRY[cls.__name__] = cls
+            REGISTRY[component_name] = cls
 
-        for name, annotation in list(cls.__annotations__.items()):
+        if public:
+            # We settle the query string patchers before any other processing,
+            # because we need the simplest types of the fields.
+            cls._settle_querystring_patchers(component_name)
+
+        # We use 'get_type_hints' to resolve the forward refs if needed, but
+        # we only need to rewrite the actual annotations of the current class,
+        # that's why we iter over the '__annotations__' names.
+        hints = t.get_type_hints(cls, include_extras=True)
+        for name in list(cls.__annotations__):
             if not name.startswith("_"):
+                annotation = hints[name]
                 cls.__annotations__[name] = annotate_model(annotation)
 
         for attr_name in vars(cls):
             attr = getattr(cls, attr_name)
             if (
-                not (
-                    attr_name.startswith("_") or attr_name.startswith("model_")
-                )
+                not attr_name.startswith("_")
+                and attr_name not in PYDANTIC_MODEL_METHODS
                 and attr_name.islower()
                 and callable(attr)
             ):
@@ -373,11 +464,20 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                     ),
                 )
 
+        if public and (event_handler := getattr(cls, "_handle_event", None)):
+            for event_type in get_event_handler_event_types(event_handler):
+                LISTENERS[event_type].add(component_name)
+
         return super().__init_subclass__()
 
+    @classmethod
+    def _settle_querystring_patchers(cls, component_name):
+        """Updates the mapping to track query strings."""
+        QS_MAP[component_name] = QueryPatcher.for_component(cls)
+
     # State
-    id: str = Field(default_factory=lambda: f"hx-{uuid4().hex}")
-    controller: Controller = Field(exclude=True)
+    id: t.Annotated[str, Field(default_factory=_generate_uuid)]
+    controller: t.Annotated[Controller, Field(exclude=True)]
 
     hx_name: str
 
@@ -388,6 +488,14 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     @property
     def subscriptions(self) -> set[str]:
         return set()
+
+    def get_all_subscriptions(self) -> set[str]:
+        result = self.subscriptions
+        query_patchers = QS_MAP.get(self.hx_name, [])
+        query_subscriptions = {
+            f"querystring.{p.qs_arg}" for p in query_patchers
+        }
+        return result | query_subscriptions
 
     @cached_property
     def user(self) -> TUser:
@@ -416,16 +524,29 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                 attr: getattr(self, attr)
                 for attr in dir(self)
                 if not attr.startswith("_")
-                and not attr.startswith("model_")
+                and attr not in PYDANTIC_MODEL_METHODS
                 and attr not in attrs_to_exclude
             } | {"this": self}
 
 
+@dataclass(slots=True)
 class Triggers:
-    def __init__(self):
-        self._trigger = defaultdict(list)
-        self._after_swap = defaultdict(list)
-        self._after_settle = defaultdict(list)
+    """HTMX triggers.
+
+    Allow to trigger events on the client from the server.  See
+    https://htmx.org/attributes/hx-trigger/
+
+    """
+
+    _trigger: dict[str, list[t.Any]] = dataclass_field(
+        default_factory=lambda: defaultdict(list)
+    )
+    _after_swap: dict[str, list[t.Any]] = dataclass_field(
+        default_factory=lambda: defaultdict(list)
+    )
+    _after_settle: dict[str, list[t.Any]] = dataclass_field(
+        default_factory=lambda: defaultdict(list)
+    )
 
     def add(self, name, what: t.Any):
         self._trigger[name].append(what)
@@ -616,3 +737,10 @@ class Component:
             mod = ""
         name = cls.__name__
         return f"{mod}.{name}" if mod else name
+
+
+PYDANTIC_MODEL_METHODS = {
+    attr
+    for attr, value in vars(BaseModel).items()
+    if not attr.startswith("_") and callable(value)
+}

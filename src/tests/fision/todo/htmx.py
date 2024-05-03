@@ -1,8 +1,15 @@
+import typing as t
+from dataclasses import dataclass
 from enum import StrEnum
 
-from djhtmx.component import PydanticComponent
+from djhtmx.component import PydanticComponent, Query
 
 from .models import Item
+
+
+@dataclass
+class ItemsCleared:
+    pass
 
 
 class Showing(StrEnum):
@@ -14,11 +21,15 @@ class Showing(StrEnum):
 class TodoList(PydanticComponent):
     _template_name = "todo/list.html"
 
-    showing: Showing = Showing.ALL
+    showing: t.Annotated[Showing, Query("showing")] = Showing.ALL
+    query: t.Annotated[str, Query("q")] = ""
 
     @property
     def queryset(self):
-        return Item.objects.all()
+        if not self.query:
+            return Item.objects.all()
+        else:
+            return Item.objects.filter(text__icontains=self.query)
 
     @property
     def items(self):
@@ -35,12 +46,11 @@ class TodoList(PydanticComponent):
     def all_items_are_completed(self):
         return self.items.count() == self.items.completed().count()
 
-    def toggle_all(self, toggle_all: bool):
+    def toggle_all(self, toggle_all: bool = False):
         self.items.update(completed=toggle_all)
 
     def show(self, showing: Showing):
         self.showing = showing
-        self.controller.params["showing"] = showing
 
     def clear_completed(self):
         self.items.completed().delete()
@@ -49,9 +59,17 @@ class TodoList(PydanticComponent):
 class ListHeader(PydanticComponent):
     _template_name = "todo/list_header.html"
 
+    def _handle_event(self, event: ItemsCleared | int):
+        pass
+
     def add(self, new_item: str):
         item = Item.objects.create(text=new_item)
-        self.controller.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
+        self.controller.append(
+            "#todo-list",
+            TodoItem,
+            id=f"item-{item.id}",
+            item=item,
+        )
 
 
 class TodoItem(PydanticComponent):
@@ -83,6 +101,9 @@ class TodoItem(PydanticComponent):
 class TodoCounter(PydanticComponent):
     _template_name = "todo/counter.html"
 
+    query: t.Annotated[str, Query("q")] = ""
+
+
     @property
     def subscriptions(self) -> set[str]:
         return {"todo.item"}
@@ -90,3 +111,11 @@ class TodoCounter(PydanticComponent):
     @property
     def items(self):
         return Item.objects.active()
+
+
+class TodoFilter(PydanticComponent):
+    _template_name = "todo/filter.html"
+    query: t.Annotated[str, Query("q")] = ""
+
+    def set_query(self, query: str = ""):
+        self.query = query.strip()

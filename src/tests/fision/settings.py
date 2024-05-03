@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "fision.todo",
     "djhtmx",
     "whitenoise.runserver_nostatic",
+    "django_extensions",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",

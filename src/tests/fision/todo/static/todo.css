@@ -80,6 +80,7 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+.filter-todo,
 .new-todo,
 .edit {
   position: relative;

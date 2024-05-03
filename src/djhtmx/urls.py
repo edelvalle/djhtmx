@@ -1,10 +1,11 @@
+from contextlib import ExitStack
 from itertools import chain
 
 from django.core.signing import Signer
 from django.urls import path
 
 from . import json
-from .component import REGISTRY, Component, Repository, get_params
+from .component import QS_MAP, REGISTRY, Component, Repository, get_params
 from .introspection import filter_parameters, parse_request_data
 from .tracing import sentry_request_transaction
 
@@ -42,7 +43,14 @@ def endpoint(request, component_name, component_id, event_handler):
             handler_kwargs = parse_request_data(request.POST)
             handler_kwargs = filter_parameters(handler, handler_kwargs)
 
-            template = handler(**handler_kwargs)
+            template = None
+            with ExitStack() as stack:
+                for patcher in QS_MAP.get(component_name, []):
+                    stack.enter_context(
+                        patcher.tracking_query_string(repo, component)
+                    )
+                template = handler(**handler_kwargs)
+
             if isinstance(template, tuple):
                 target, template = template
             else:
@@ -67,9 +75,7 @@ def endpoint(request, component_name, component_id, event_handler):
                 response._container.append(response.make_bytes(oob_render))  # type: ignore
 
             if params != repo.params:
-                response["HX-Push-Url"] = (
-                    "?" + component.controller.params.urlencode()
-                )
+                response["HX-Push-Url"] = "?" + repo.params.urlencode()
 
             return response
         else:

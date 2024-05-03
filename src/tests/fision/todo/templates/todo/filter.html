@@ -1,0 +1,9 @@
+{% load htmx %}
+
+<div {% hx-tag %} class="header">
+  <input placeholder="Filter"
+         name="query"
+         value="{{ query }}"
+         class="filter-todo"
+         {% on "keypress[key=='Enter']" "set_query" %} />
+</div>

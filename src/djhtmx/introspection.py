@@ -1,13 +1,15 @@
+import dataclasses
 import inspect
 import types
 import typing as t
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass
 from inspect import Parameter
 
 from django.db import models
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer
+from pydantic.fields import FieldInfo
 
 # model
 
@@ -28,13 +30,15 @@ def Model(model: t.Type[models.Model]):
     return t.Annotated[
         model,
         BeforeValidator(
-            lambda v: v
-            if isinstance(v, model)
-            else model.objects.filter(pk=v).first()
+            lambda v: (
+                v
+                if isinstance(v, model)
+                else model.objects.filter(pk=v).first()
+            )
         ),
         PlainSerializer(
-            lambda v: v.pk,
-            int if (pk := model().pk) is None else type(pk),
+            func=lambda v: v.pk,
+            return_type=str if (pk := model().pk) is None else type(pk),
         ),
     ]
 
@@ -42,14 +46,14 @@ def Model(model: t.Type[models.Model]):
 def annotate_model(annotation):
     if issubclass_safe(annotation, models.Model):
         return Model(annotation)
-    elif isinstance_safe(annotation, types.UnionType):
-        return t.Union[*(annotate_model(a) for a in annotation.__args__)]  # type:ignore
+    elif t.get_origin(annotation) is types.UnionType:
+        return t.Union[*(annotate_model(a) for a in t.get_args(annotation))]  # type:ignore
     elif type(annotation).__name__ == "_TypedDictMeta":
         return t.TypedDict(
             annotation.__name__,  # type: ignore
             {
                 k: annotate_model(v)  # type: ignore
-                for k, v in annotation.__annotations__.items()
+                for k, v in t.get_type_hints(annotation).items()
             },
         )
     else:
@@ -169,3 +173,40 @@ def _parse_obj(
             v for _, v in sorted(items.items(), key=lambda kv: kv[0])
         ]
     return output
+
+
+def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
+    "Extract the types of the annotations of parameter 'event'."
+    event = inspect.signature(f).parameters["event"]
+    if t.get_origin(event.annotation) is types.UnionType:
+        return {
+            arg
+            for arg in t.get_args(event.annotation)
+            if isinstance(arg, type) and arg is not types.NoneType
+        }
+    elif isinstance(event.annotation, type):
+        return {event.annotation}
+    return set()
+
+
+def get_field_info(cls, name, ann_type) -> FieldInfo:
+    default = getattr(cls, name, Unset)
+    if isinstance(default, FieldInfo):
+        return default
+
+    if isinstance(default, dataclasses.Field):
+        default_factory = default.default_factory
+        default = default.default
+        if default is dataclasses.MISSING and default_factory is not MISSING:
+            default = default_factory()
+
+        if default is dataclasses.MISSING:
+            default = Unset
+
+    if default is Unset:
+        return FieldInfo.from_annotation(ann_type)
+    else:
+        return FieldInfo.from_annotated_attribute(ann_type, default)
+
+
+Unset = object()
