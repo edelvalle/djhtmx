@@ -18,12 +18,14 @@ install:
 
 sync:
 	@rye config --set-bool behavior.use-uv=$(USE_UV)
+	@rye pin --relaxed $(PYTHON_VERSION)
 	@rye sync --no-lock
 .PHONY: sync
 
 
 lock:
 	@rye config --set-bool behavior.use-uv=$(USE_UV)
+	@rye pin --relaxed $(PYTHON_VERSION)
 	@rye sync
 .PHONY: lock
 
