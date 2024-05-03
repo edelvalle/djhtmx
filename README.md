@@ -80,20 +80,6 @@ Now use the component in any of your html templates:
 {% htmx 'Counter' counter=3 %}
 ```
 
-## What batteries are included
-
-This project mixes htmx with morphdom for a more smooth rendering a find control of the focus when this one is on an input.
-
-If you wanna use `hx-boost` go ahead and enable it with:
-
-```
-...
-<body hx-boost="true">
-   ...
-</body>
-...
-```
-
 ## Python APIs
 
 TODO
