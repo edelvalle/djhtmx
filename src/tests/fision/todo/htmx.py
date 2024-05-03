@@ -1,7 +1,8 @@
+import typing as t
 from dataclasses import dataclass
 from enum import StrEnum
 
-from djhtmx.component import PydanticComponent
+from djhtmx.component import PydanticComponent, Query
 
 from .models import Item
 
@@ -20,11 +21,19 @@ class Showing(StrEnum):
 class TodoList(PydanticComponent):
     _template_name = "todo/list.html"
 
-    showing: Showing = Showing.ALL
+    showing: t.Annotated[Showing, Query("showing")] = Showing.ALL
+    query: t.Annotated[str, Query("q")] = ""
 
     @property
     def queryset(self):
-        return Item.objects.all()
+        if not self.query:
+            return Item.objects.all()
+        else:
+            return Item.objects.filter(text__icontains=self.query)
+
+    @property
+    def subscriptions(self) -> set[str]:
+        return {"querystring.q"}
 
     @property
     def items(self):
@@ -46,7 +55,6 @@ class TodoList(PydanticComponent):
 
     def show(self, showing: Showing):
         self.showing = showing
-        self.controller.params["showing"] = showing
 
     def clear_completed(self):
         self.items.completed().delete()
@@ -97,10 +105,21 @@ class TodoItem(PydanticComponent):
 class TodoCounter(PydanticComponent):
     _template_name = "todo/counter.html"
 
+    query: t.Annotated[str, Query("q")] = ""
+
+
     @property
     def subscriptions(self) -> set[str]:
-        return {"todo.item"}
+        return {"todo.item", "querystring.q"}
 
     @property
     def items(self):
         return Item.objects.active()
+
+
+class TodoFilter(PydanticComponent):
+    _template_name = "todo/filter.html"
+    query: t.Annotated[str, Query("q")] = ""
+
+    def set_query(self, query: str = ""):
+        self.query = query.strip()

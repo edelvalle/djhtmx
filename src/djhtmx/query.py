@@ -100,23 +100,23 @@ class QueryPatcher:
                 )
 
             def result(qd):
-                return {"qs_value": getter(qd, qs_arg)}
+                return getter(qd, qs_arg)
 
             return result
 
         # NB: We need to perform the serialization during patching, otherwise
         # ill-formed values in the query will cause a Pydantic
         # ValidationError, but we should just simply ignore invalid values.
-        extractor = _get_value_extractor(f.annotation)
-        adapter = pydantic.TypeAdapter(annotate_model(f.annotation))
+        extract_value = _get_value_extractor(f.annotation)
+        adapter = pydantic.TypeAdapter(t.Optional[annotate_model(f.annotation)])  # type: ignore
 
         def patcher(qdict: QueryDict):
-            qs_value = extractor(qdict)
-            try:
-                if parsed := adapter.validate_python(qs_value):
-                    return {field_name: parsed}
-            except pydantic.ValidationError:
-                pass
+            if qs_value := extract_value(qdict):
+                try:
+                    if parsed := adapter.validate_python(qs_value):
+                        return {field_name: parsed}
+                except pydantic.ValidationError:
+                    pass
             return {}
 
         return cls(qs_arg, field_name, _get_value=patcher)
@@ -160,4 +160,4 @@ class QueryPatcher:
             ) from cause
 
 
-_VALID_QS_NAME_RX = re.compile("^[a-zA-Z\d][-a-zA-Z\d]*$")
+_VALID_QS_NAME_RX = re.compile(r"^[a-zA-Z\d][-a-zA-Z\d]*$")

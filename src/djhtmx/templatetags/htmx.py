@@ -100,7 +100,7 @@ def hx_tag(context, swap: str = "outerHTML"):
         else:
             html.append(f'hx-swap="{swap}"')
 
-        component = context["this"]
+        component = t.cast(Component, context["this"])
         return format_html(
             " ".join(html),
             id=context["id"],

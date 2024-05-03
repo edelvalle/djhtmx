@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import typing as t
 from collections import defaultdict
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import cached_property
 from itertools import chain
 from pprint import pprint
@@ -26,7 +28,10 @@ from .introspection import (
     get_function_parameters,
     get_related_fields,
 )
+from .query import Query, QueryPatcher
 from .tracing import sentry_span
+
+__all__ = ("Component", "PydanticComponent", "Query", "ComponentNotFound")
 
 
 class ComponentNotFound(LookupError):
@@ -42,7 +47,7 @@ RenderFunction = t.Callable[
 def get_params(request: HttpRequest) -> QueryDict:
     is_htmx_request = json.loads(request.META.get("HTTP_HX_REQUEST", "false"))
     if is_htmx_request:
-        return QueryDict(
+        return QueryDict(  # type: ignore
             urlparse(request.META["HTTP_HX_CURRENT_URL"]).query,
             mutable=True,
         )
@@ -215,6 +220,7 @@ class Repository:
             elif stored_state := self.state_by_id.pop(component_id, None):
                 state = stored_state | state
 
+        state = self._patch_state_with_query_string(component_name, state)
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
@@ -264,6 +270,13 @@ class Repository:
             "</div>" if is_oob else None,
         ]
         return mark_safe("".join(filter(None, html)))
+
+    def _patch_state_with_query_string(self, component_name, state):
+        """Patches the state with the component's query annotated fields"""
+        if patchers := QS_MAP.get(component_name):
+            for patcher in patchers:
+                state = state | patcher.get_state_updates(self.params)
+        return state
 
 
 class Controller:
@@ -354,6 +367,10 @@ LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[PydanticComponent], str] = {}
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
+# Mapping from component name to the list of the patcher of the internal
+# state from query string.
+QS_MAP: dict[str, list[QueryPatcher]] = defaultdict(list)
+
 
 A = t.TypeVar("A")
 B = t.TypeVar("B")
@@ -413,8 +430,14 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     def __init_subclass__(cls, public=True):
         FQN[cls] = f"{cls.__module__}.{cls.__name__}"
 
+        component_name = cls.__name__
         if public:
-            REGISTRY[cls.__name__] = cls
+            REGISTRY[component_name] = cls
+
+        if public:
+            # We settle the query string patchers before any other processing,
+            # because we need the simplest types of the fields.
+            cls._settle_querystring_patchers(component_name)
 
         hints = t.get_type_hints(cls, include_extras=True)
         for name, annotation in list(hints.items()):
@@ -440,9 +463,14 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
 
         if public and (event_handler := getattr(cls, "_handle_event", None)):
             for event_type in get_event_handler_event_types(event_handler):
-                LISTENERS[event_type].add(cls.__name__)
+                LISTENERS[event_type].add(component_name)
 
         return super().__init_subclass__()
+
+    @classmethod
+    def _settle_querystring_patchers(cls, component_name):
+        """Updates the mapping to track query strings."""
+        QS_MAP[component_name] = QueryPatcher.for_component(cls)
 
     # State
     id: t.Annotated[str, Field(default_factory=_generate_uuid)]
@@ -490,11 +518,24 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
             } | {"this": self}
 
 
+@dataclass(slots=True)
 class Triggers:
-    def __init__(self):
-        self._trigger = defaultdict(list)
-        self._after_swap = defaultdict(list)
-        self._after_settle = defaultdict(list)
+    """HTMX triggers.
+
+    Allow to trigger events on the client from the server.  See
+    https://htmx.org/attributes/hx-trigger/
+
+    """
+
+    _trigger: dict[str, list[t.Any]] = dataclass_field(
+        default_factory=lambda: defaultdict(list)
+    )
+    _after_swap: dict[str, list[t.Any]] = dataclass_field(
+        default_factory=lambda: defaultdict(list)
+    )
+    _after_settle: dict[str, list[t.Any]] = dataclass_field(
+        default_factory=lambda: defaultdict(list)
+    )
 
     def add(self, name, what: t.Any):
         self._trigger[name].append(what)
