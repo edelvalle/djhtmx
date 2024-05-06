@@ -18,11 +18,19 @@ class Showing(StrEnum):
     ACTIVE = "active"
 
 
+@dataclass(slots=True)
+class FilterChanged:
+    query: str
+
+
 class TodoList(PydanticComponent):
     _template_name = "todo/list.html"
 
     showing: t.Annotated[Showing, Query("showing")] = Showing.ALL
-    query: t.Annotated[str, Query("q")] = ""
+    query: str = ""
+
+    def _handle_event(self, event: FilterChanged):
+        self.query = event.query
 
     @property
     def queryset(self):
@@ -103,7 +111,6 @@ class TodoCounter(PydanticComponent):
 
     query: t.Annotated[str, Query("q")] = ""
 
-
     @property
     def subscriptions(self) -> set[str]:
         return {"todo.item"}
@@ -118,4 +125,5 @@ class TodoFilter(PydanticComponent):
     query: t.Annotated[str, Query("q")] = ""
 
     def set_query(self, query: str = ""):
-        self.query = query.strip()
+        self.query = query = query.strip()
+        self.controller.emit(FilterChanged(query))
