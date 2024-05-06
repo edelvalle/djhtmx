@@ -13,7 +13,7 @@ install:
 	@rye self update || curl -sSf https://rye-up.com/get | bash
 	@rye config --set-bool behavior.use-uv=$(USE_UV)
 	@rye pin --relaxed $(PYTHON_VERSION)
-	@rye sync --no-lock || rye sync
+	@rye sync -f
 .PHONY: install
 
 sync:
