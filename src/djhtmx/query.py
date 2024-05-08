@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import enum
 import re
 import types
@@ -39,6 +40,10 @@ class QueryPatcher:
     @contextlib.contextmanager
     def tracking_query_string(self, repository, component):
         previous = getattr(component, self.field_name, (unset := object()))
+        if previous is not unset:
+            # Make a copy of the data, so that mutable types (e.g lists) can
+            # be mutated and still tracked.
+            previous = copy.copy(previous)
         yield
         after = getattr(component, self.field_name, unset)
         if previous != after:
