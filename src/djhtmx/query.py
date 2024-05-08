@@ -79,7 +79,7 @@ class QueryPatcher:
 
         def _is_seq_of_simple_types(ann):
             ann = _maybe_extract_optional(ann)
-            if t.get_origin(ann) in (list, t.List, t.Sequence):
+            if t.get_origin(ann) in _SEQUENCE_ANNOTATIONS:
                 try:
                     [arg] = t.get_args(ann)
                 except ValueError:
@@ -200,3 +200,13 @@ class QueryPatcher:
 
 
 _VALID_QS_NAME_RX = re.compile(r"^[a-zA-Z\d][-a-zA-Z\d]*$")
+_SEQUENCE_ANNOTATIONS = (
+    list,
+    set,
+    frozenset,
+    t.List,
+    t.Sequence,
+    t.MutableSet,
+    t.Set,
+    t.FrozenSet,
+)
