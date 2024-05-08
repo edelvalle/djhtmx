@@ -167,7 +167,10 @@ class Repository:
             signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"
             self.signals.update((signal, f"{signal}.{action}"))
 
-    def dispatch_signals(self):
+    def dispatch_signals(self, ignore_components: set[str] | None = None):
+        if not ignore_components:
+            ignore_components = set()
+
         if settings.DEBUG and self.signals:
             print("LAUNCHED SIGNALS:")
             pprint(self.signals)
@@ -176,6 +179,9 @@ class Repository:
 
         # Model mutation signals
         for component_id, subscriptions in self.subscriptions_by_id.items():
+            if component_id in ignore_components:
+                continue  # HAHAHA!!! 🤯
+
             if (
                 self.signals.intersection(subscriptions)
                 and (component := self.get_component_by_id(component_id))

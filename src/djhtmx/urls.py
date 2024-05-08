@@ -68,8 +68,9 @@ def endpoint(request, component_name, component_id, event_handler):
                 if isinstance(target, str):
                     response["HX-Retarget"] = target
 
-            for oob_render in chain.from_iterable(
-                [repo.dispatch_signals(), repo.render_oob()]
+            for oob_render in chain(
+                repo.dispatch_signals(ignore_components={component.id}),
+                repo.render_oob(),
             ):
                 response._container.append(b"\n")  # type: ignore
                 response._container.append(response.make_bytes(oob_render))  # type: ignore
