@@ -140,7 +140,7 @@ def on(
     You can also pass explicit arguments:
 
         ```html
-        <button {% on 'inc' amount=2 %}>+2</button>
+        <button {% on 'click' 'inc' amount=2 %}>+2</button>
         ```
 
     Remember that together with the explicit arguments, all fields with a
