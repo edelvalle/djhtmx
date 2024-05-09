@@ -196,11 +196,10 @@ class Repository:
         while more_to_come:
             more_to_come = False
             for component_id, component in list(self.component_by_id.items()):
-                if component_id in ignore_components:
-                    continue  # HAHAHA!!! 🤯
-
                 for event in component.controller.consume_events():
                     more_to_come = True
+                    if component_id in ignore_components:
+                        continue  # HAHAHA!!! 🤯
                     for component_name in LISTENERS[type(event)]:
                         for component in self.get_components_by_name(
                             component_name
