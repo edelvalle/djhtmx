@@ -21,7 +21,9 @@ class ItemQS(models.QuerySet["Item"]):
 class Item(BaseModel):
     completed = models.BooleanField(default=False)
     text = models.CharField(max_length=256)
+    description = models.TextField(null=True, default=None)
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    deadline = models.DateTimeField(null=True, default=None, db_index=True)
 
     objects: ItemQS = ItemQS.as_manager()  # type: ignore
 

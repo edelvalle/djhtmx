@@ -57,6 +57,11 @@ run:
 .PHONY: run
 
 
+makemigrations:
+	@$(RYE_EXEC) python src/tests/manage.py makemigrations
+.PHONY: makemigrations
+
+
 py:
 	@$(RYE_EXEC) ipython
 .PHONY: py
