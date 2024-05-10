@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
+from django.core.signing import Signer
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
 from django.http import Http404, HttpRequest, HttpResponse, QueryDict
@@ -63,6 +64,9 @@ class RequestWithRepo(HttpRequest):
 PyComp = t.TypeVar("PyComp", bound="PydanticComponent")
 
 
+signer = Signer()
+
+
 class Repository:
     """An in-memory (cheap) mapping of component IDs to its states.
 
@@ -79,21 +83,48 @@ class Repository:
     def from_request(
         cls,
         request: RequestWithRepo,
-        state_by_id: dict[str, dict[str, t.Any]] = None,
+        states_by_id: dict[str, dict[str, t.Any]] = None,
         subscriptions_by_id: dict[str, list[str]] = None,
     ) -> Repository:
-        if not hasattr(request, "djhtmx"):
-            request.djhtmx = cls(
+        """Get or build the Repository from the request.
+
+        If the request has already a Repository attached, return it without
+        further processing.
+
+        Otherwise, build the repository from the request's POST and attach it
+        to the request.
+
+        """
+        if (result := getattr(request, "djhtmx", None)) is None:
+            if states_by_id is None:
+                states_by_id = {
+                    state["id"]: state
+                    for state in [
+                        json.loads(signer.unsign(state))
+                        for state in request.POST.getlist("__hx-states__")
+                    ]
+                }
+
+            if subscriptions_by_id is None:
+                subscriptions_by_id = {
+                    component_id: subscriptions.split(",")
+                    for component_id, subscriptions in json.loads(
+                        request.POST.get("__hx-subscriptions__", "{}")
+                    ).items()
+                }
+
+            request.djhtmx = result = cls(
                 request,
-                state_by_id=state_by_id,
+                states_by_id=states_by_id,
                 subscriptions_by_id=subscriptions_by_id,
             )
-        return request.djhtmx
+
+        return result
 
     def __init__(
         self,
         request: RequestWithRepo,
-        state_by_id: dict[str, dict[str, t.Any]] = None,
+        states_by_id: dict[str, dict[str, t.Any]] = None,
         subscriptions_by_id: dict[str, list[str]] = None,
     ):
         self.request = request
@@ -101,7 +132,7 @@ class Repository:
         self.component_by_name: dict[str, list[PydanticComponent]] = (
             defaultdict(list)
         )
-        self.state_by_id = state_by_id or {}
+        self.states_by_id = states_by_id or {}
         self.subscriptions_by_id = subscriptions_by_id or {}
 
         self.params = get_params(request)
@@ -218,31 +249,41 @@ class Repository:
             for oob, component in component.controller._oob:
                 yield self.render_html(component, oob=oob)
 
+    def get_component_by_id(self, component_id):
+        """Return (possibly build) the component by its ID.
+
+        If the component was already built, get it unchanged, otherwise build
+        it from the request's payload and return it.
+
+        If the `component_id` cannot be found, raise a KeyError.
+
+        """
+        result = self.component_by_id.get(component_id)
+        if result is not None:
+            return result
+
+        state = self.states_by_id.pop(component_id)
+        return self.build(state["hx_name"], state)
+
     def build(self, component_name: str, state: dict[str, t.Any]):
+        """Build (or update) a component's state."""
         if component_id := state.get("id"):
             if component := self.component_by_id.get(component_id):
                 for key, value in state.items():
                     setattr(component, key, value)
                 return component
-            elif stored_state := self.state_by_id.pop(component_id, None):
+            elif stored_state := self.states_by_id.pop(component_id, None):
                 state = stored_state | state
 
         state = self._patch_state_with_query_string(component_name, state)
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
-    def get_component_by_id(self, component_id: str):
-        if component_id in self.state_by_id:
-            state = self.state_by_id.pop(component_id)
-            return self.build(state["hx_name"], state)
-        else:
-            return self.component_by_id.get(component_id)
-
     def get_components_by_name(
         self, name: str
     ) -> t.Iterator["PydanticComponent"]:
         yield from self.component_by_name[name]
-        for state in list(self.state_by_id.values()):
+        for state in list(self.states_by_id.values()):
             if state["hx_name"] == name:
                 yield self.build(name, state)
 

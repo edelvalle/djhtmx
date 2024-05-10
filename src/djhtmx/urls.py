@@ -1,89 +1,27 @@
-from contextlib import ExitStack
-from itertools import chain
-
-from django.core.signing import Signer
 from django.urls import path
 
+from djhtmx.executor import Executor
+
 from . import json
-from .component import QS_MAP, REGISTRY, Component, Repository, get_params
+from .component import (
+    REGISTRY,
+    Component,
+)
 from .introspection import filter_parameters, parse_request_data
 from .tracing import sentry_request_transaction
-
-signer = Signer()
 
 
 def endpoint(request, component_name, component_id, event_handler):
     with sentry_request_transaction(request, component_name, event_handler):
         if component_name in REGISTRY:
             # PydanticComponent
-            params = get_params(request)
-
-            states_by_id = {
-                state["id"]: state
-                for state in [
-                    json.loads(signer.unsign(state))
-                    for state in request.POST.getlist("__hx-states__")
-                ]
-            }
-
-            subscriptions_by_id = {
-                component_id: subscriptions.split(",")
-                for component_id, subscriptions in json.loads(
-                    request.POST.get("__hx-subscriptions__", "{}")
-                ).items()
-            }
-
-            repo = Repository.from_request(
-                request,
-                states_by_id,
-                subscriptions_by_id,
+            executor = Executor(
+                request, component_name, component_id, event_handler
             )
-            component = repo.build(component_name, states_by_id[component_id])
-            handler = getattr(component, event_handler)
-            handler_kwargs = parse_request_data(request.POST)
-            handler_kwargs = filter_parameters(handler, handler_kwargs)
-
-            template = None
-            with ExitStack() as stack:
-                for patcher in QS_MAP.get(component_name, []):
-                    stack.enter_context(
-                        patcher.tracking_query_string(repo, component)
-                    )
-                template = handler(**handler_kwargs)
-
-            if isinstance(template, tuple):
-                target, template = template
-            else:
-                target = None
-            response = repo.render(component, template=template)
-
-            if isinstance(template, str):
-                # if there was a partial response, send the state for update
-                response["HX-State"] = json.dumps(
-                    {
-                        "component_id": component.id,
-                        "state": signer.sign(component.model_dump_json()),
-                    }
-                )
-                if isinstance(target, str):
-                    response["HX-Retarget"] = target
-
-            for oob_render in chain(
-                repo.dispatch_signals(ignore_components={component.id}),
-                repo.render_oob(),
-            ):
-                response._container.append(b"\n")  # type: ignore
-                response._container.append(response.make_bytes(oob_render))  # type: ignore
-
-            if params != repo.params:
-                response["HX-Push-Url"] = "?" + repo.params.urlencode()
-
-            return response
+            return executor()
         else:
             # Legacy Component
-
             state = request.META.get("HTTP_X_COMPONENT_STATE", "")
-            state = Signer().unsign(state)
             state = json.loads(state)
             component = Component._build(
                 component_name, request, component_id, state

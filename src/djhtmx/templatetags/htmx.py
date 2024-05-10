@@ -44,7 +44,11 @@ def htmx(context, _name: str, **state):
         {% htmx 'AmazinData' data=some_data %}
         ```
     """
-    repo = Repository.from_request(context["request"])
+    repo = Repository.from_request(
+        context["request"],
+        states_by_id={},
+        subscriptions_by_id={},
+    )
     if _name in REGISTRY:
         # PydanticComponent
         component = repo.build(_name, state)
