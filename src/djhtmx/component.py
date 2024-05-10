@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import typing as t
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cached_property
@@ -136,7 +136,8 @@ class Repository:
         self.subscriptions_by_id = subscriptions_by_id or {}
 
         self.params = get_params(request)
-        self.signals = set()
+        self.signals: set[str] = set()
+        self.events = []
 
         if self.subscriptions_by_id:
             post_save.connect(
@@ -149,13 +150,25 @@ class Repository:
     def unlink(self):
         """Remove circular references to ensure GC deallocates me"""
         for component in self.component_by_id.values():
-            delattr(component.controller, "request")
-            delattr(component.controller, "params")
+            component.controller.unlink()
             delattr(component, "controller")
         delattr(self, "request")
         delattr(self, "params")
         delattr(self, "component_by_id")
         delattr(self, "component_by_name")
+
+    def emit(self, event):
+        self.events.append(event)
+
+    def consume_events(self) -> list[t.Any]:
+        result = self.events
+        self.events = []
+        return result
+
+    def consume_signals(self) -> set[str]:
+        result = self.signals
+        self.signals = set()
+        return result
 
     def _listen_to_post_save(
         self,
@@ -203,44 +216,69 @@ class Repository:
         if not ignore_components:
             ignore_components = set()
 
-        if settings.DEBUG and self.signals:
-            print("LAUNCHED SIGNALS:")
-            pprint(self.signals)
+        if settings.DEBUG:
+
+            def _log_signals(signals):  # pyright: ignore[reportRedeclaration]
+                print("LAUNCHED SIGNALS:")
+                pprint(signals)
+
+            def _log_events(events):  # pyright: ignore[reportRedeclaration]
+                print("LAUNCHED EVENTS:")
+                pprint(events)
+        else:
+
+            def _log_signals(_signals):
+                pass
+
+            def _log_events(_events):
+                pass
 
         components_to_update = set()
+        signals_queue: t.Deque[set[str]] = deque([self.consume_signals()])
+        events_queue: t.Deque[list[t.Any]] = deque([self.consume_events()])
+        generation = 0
 
-        # Model mutation signals
-        for component_id, subscriptions in self.subscriptions_by_id.items():
-            if component_id in ignore_components:
-                continue  # HAHAHA!!! 🤯
+        while (signals_queue or events_queue) and generation < _MAX_GENERATION:
+            generation += 1
+            current_signals = signals_queue.pop()
+            _log_signals(current_signals)
 
-            if (
-                self.signals.intersection(subscriptions)
-                and (component := self.get_component_by_id(component_id))
-                is not None
-            ):
-                if settings.DEBUG:
-                    print("> MATCHED: ", component.hx_name, subscriptions)
-                components_to_update.add(component.id)
+            for component_id, subscriptions in self.subscriptions_by_id.items():
+                if component_id in ignore_components:
+                    continue  # HAHAHA!!! 🤯
 
-        # Events emitted
-        more_to_come = True
-        while more_to_come:
-            more_to_come = False
-            for component_id, component in list(self.component_by_id.items()):
-                for event in component.controller.consume_events():
-                    more_to_come = True
-                    for component_name in LISTENERS[type(event)]:
-                        for component in self.get_components_by_name(
-                            component_name
-                        ):
-                            component._handle_event(event)  # type: ignore
-                            components_to_update.add(component.id)
+                if (
+                    current_signals.intersection(subscriptions)
+                    and (component := self.get_component_by_id(component_id))
+                    is not None
+                ):
+                    if settings.DEBUG:
+                        print("> MATCHED: ", component.hx_name, subscriptions)
+                    components_to_update.add(component.id)
+
+            current_events = events_queue.pop()
+            _log_events(current_events)
+
+            for event in current_events:
+                for name in LISTENERS[type(event)]:
+                    self._awake_components_by_name(name)
+
+                    for component in self.get_components_by_name(name):
+                        component._handle_event(event)  # type: ignore
+                        components_to_update.add(component.id)
+
+            if more_events := self.consume_events():
+                events_queue.append(more_events)
+            if more_signals := self.consume_signals():
+                signals_queue.append(more_signals)
+
+        if generation >= _MAX_GENERATION:
+            raise RuntimeError("Possibly cyclic events/signals handlers")
 
         # Rendering
         for component_id in components_to_update:
             component = self.get_component_by_id(component_id)
-            assert component
+            assert component, "Event updated non-existent component"
             yield self.render_html(component, oob="true")
 
     def render_oob(self):
@@ -279,10 +317,10 @@ class Repository:
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
-    def get_components_by_name(
-        self, name: str
-    ) -> t.Iterator["PydanticComponent"]:
+    def get_components_by_name(self, name: str):
         yield from self.component_by_name[name]
+
+    def _awake_components_by_name(self, name: str):
         for state in list(self.states_by_id.values()):
             if state["hx_name"] == name:
                 yield self.build(name, state)
@@ -293,7 +331,9 @@ class Repository:
         return component
 
     def render(
-        self, component: PydanticComponent, template: str | None = None
+        self,
+        component: PydanticComponent,
+        template: str | None = None,
     ) -> HttpResponse:
         return component.controller.render(
             component._get_template(template),
@@ -334,20 +374,19 @@ class Controller:
         self._destroyed: bool = False
         self._headers: dict[str, str] = {}
         self._oob: list[tuple[str, PydanticComponent]] = []
-        self._events: list[t.Any] = []
+
+    def unlink(self):
+        self.request = None
+        self.params = None
+        self._oob = []
 
     def emit(self, event: t.Any):
-        self._events.append(event)
-
-    def consume_events(self):
-        event = self._events
-        self._events = []
-        return event
+        self.request.djhtmx.emit(event)  # type: ignore
 
     def build(self, component: type[PydanticComponent] | str, **state):
         if isinstance(component, type):
             component = component.__name__
-        return self.request.djhtmx.build(component, state)
+        return self.request.djhtmx.build(component, state)  # type: ignore
 
     def destroy(self):
         self._destroyed = True
@@ -793,3 +832,5 @@ PYDANTIC_MODEL_METHODS = {
     for attr, value in vars(BaseModel).items()
     if not attr.startswith("_") and callable(value)
 }
+
+_MAX_GENERATION = 50

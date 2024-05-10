@@ -3,10 +3,7 @@ from django.urls import path
 from djhtmx.executor import Executor
 
 from . import json
-from .component import (
-    REGISTRY,
-    Component,
-)
+from .component import REGISTRY, Component
 from .introspection import filter_parameters, parse_request_data
 from .tracing import sentry_request_transaction
 
