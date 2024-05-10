@@ -20,6 +20,7 @@ from django.template import Context, loader
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, validate_call
+from typing_extensions import deprecated
 
 from . import json
 from .introspection import (
@@ -576,6 +577,7 @@ class Triggers:
 # Legacy Components
 
 
+@deprecated("Use PydanticComponent")
 class Component:
     template_name = ""
     template = None
