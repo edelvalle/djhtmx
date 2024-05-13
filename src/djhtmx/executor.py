@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from itertools import chain
 
 from django.http import Http404
+from django.http.response import HttpResponse
 
 from . import json
 from .component import QS_MAP, Repository, RequestWithRepo, get_params, signer
@@ -40,7 +41,24 @@ class Executor:
             target, template = template
         else:
             target = None
-        response = repo.render(component, template=template)
+
+        # Before trying to render the component, we must dispatch all the
+        # signals/events because that could potentially render the main
+        # component.
+        partials = {
+            component_id: result
+            for component_id, result in repo.dispatch_signals(
+                main_component_id=component.id
+            )
+        }
+
+        # If the partials don't contain the main component, we must render it.
+        # Otherwise,
+        if main_partial := partials.pop(component.id, None):
+            controller = component.controller
+            response = controller._apply_headers(HttpResponse(main_partial))
+        else:
+            response = repo.render(component, template=template)
 
         if isinstance(template, str):
             # if there was a partial response, send the state for update
@@ -53,10 +71,9 @@ class Executor:
             if isinstance(target, str):
                 response["HX-Retarget"] = target
 
-        for oob_render in chain(
-            repo.dispatch_signals(ignore_components={component.id}),
-            repo.render_oob(),
-        ):
+        # Now we append all the rendered partials and the custom oob added by
+        # the components.
+        for oob_render in chain(partials.values(), repo.render_oob()):
             response._container.append(b"\n")  # type: ignore
             response._container.append(response.make_bytes(oob_render))  # type: ignore
 

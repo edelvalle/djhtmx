@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import logging
 import typing as t
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cached_property
 from itertools import chain
-from pprint import pprint
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -212,28 +212,8 @@ class Repository:
             signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"
             self.signals.update((signal, f"{signal}.{action}"))
 
-    def dispatch_signals(self, ignore_components: set[str] | None = None):
-        if not ignore_components:
-            ignore_components = set()
-
-        if settings.DEBUG:
-
-            def _log_signals(signals):  # pyright: ignore[reportRedeclaration]
-                print("LAUNCHED SIGNALS:")
-                pprint(signals)
-
-            def _log_events(events):  # pyright: ignore[reportRedeclaration]
-                print("LAUNCHED EVENTS:")
-                pprint(events)
-        else:
-
-            def _log_signals(_signals):
-                pass
-
-            def _log_events(_events):
-                pass
-
-        components_to_update = set()
+    def dispatch_signals(self, main_component_id: str):
+        components_to_update: set[str] = set()
         signals_queue: t.Deque[set[str]] = deque([self.consume_signals()])
         events_queue: t.Deque[list[t.Any]] = deque([self.consume_events()])
         generation = 0
@@ -241,29 +221,29 @@ class Repository:
         while (signals_queue or events_queue) and generation < _MAX_GENERATION:
             generation += 1
             current_signals = signals_queue.pop()
-            _log_signals(current_signals)
+            logger.debug("LAUNCHED SIGNALS: %s", current_signals)
 
             for component_id, subscriptions in self.subscriptions_by_id.items():
-                if component_id in ignore_components:
-                    continue  # HAHAHA!!! 🤯
-
                 if (
                     current_signals.intersection(subscriptions)
                     and (component := self.get_component_by_id(component_id))
                     is not None
                 ):
-                    if settings.DEBUG:
-                        print("> MATCHED: ", component.hx_name, subscriptions)
+                    logger.debug(
+                        " > MATCHED: %s (%s)", component.hx_name, subscriptions
+                    )
                     components_to_update.add(component.id)
 
             current_events = events_queue.pop()
-            _log_events(current_events)
+            logger.debug("EVENTS EMITTED: %s", current_events)
 
             for event in current_events:
                 for name in LISTENERS[type(event)]:
+                    logger.debug("> AWAKING: %s", name)
                     self._awake_components_by_name(name)
 
                     for component in self.get_components_by_name(name):
+                        logger.debug("> AWAKED: %s", component)
                         component._handle_event(event)  # type: ignore
                         components_to_update.add(component.id)
 
@@ -278,8 +258,14 @@ class Repository:
         # Rendering
         for component_id in components_to_update:
             component = self.get_component_by_id(component_id)
+            logger.debug("> Rendering %s (%s)", component.hx_name, component_id)
             assert component, "Event updated non-existent component"
-            yield self.render_html(component, oob="true")
+            oob = "true" if component_id != main_component_id else None
+            logger.debug("Rendering signaled component %s", component)
+            yield (
+                component_id,
+                self.render_html(component, oob=oob),
+            )
 
     def render_oob(self):
         # component_by_id can change size during iteration
@@ -323,7 +309,7 @@ class Repository:
     def _awake_components_by_name(self, name: str):
         for state in list(self.states_by_id.values()):
             if state["hx_name"] == name:
-                yield self.build(name, state)
+                self.build(name, state)
 
     def register_component(self, component: PyComp) -> PyComp:
         self.component_by_id[component.id] = component
@@ -344,6 +330,7 @@ class Repository:
         self,
         component: PydanticComponent,
         oob: str = None,
+        template: str | None = None,
     ) -> SafeString:
         is_oob = oob not in ("true", None)
         html = [
@@ -351,7 +338,7 @@ class Repository:
             if is_oob
             else None,
             component.controller.render_html(
-                component._get_template(),
+                component._get_template(template),
                 component._get_context()
                 | {"htmx_repo": self, "hx_oob": None if is_oob else oob},
             ),
@@ -435,11 +422,14 @@ class Controller:
             },
         )
 
-    def render(self, render: RenderFunction, context: dict[str, t.Any]):
-        response = HttpResponse(self.render_html(render, context))
+    def _apply_headers(self, response: HttpResponse) -> HttpResponse:
         for key, value in (self._headers | self.triggers.headers).items():
             response[key] = value
         return response
+
+    def render(self, render: RenderFunction, context: dict[str, t.Any]):
+        response = HttpResponse(self.render_html(render, context))
+        return self._apply_headers(response)
 
     def render_html(self, render: RenderFunction, context: dict[str, t.Any]):
         if self._destroyed:
@@ -834,3 +824,5 @@ PYDANTIC_MODEL_METHODS = {
 }
 
 _MAX_GENERATION = 50
+
+logger = logging.getLogger(__name__)
