@@ -23,6 +23,8 @@ from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, validate_call
 from typing_extensions import deprecated
 
+from djhtmx.assets import Asset
+
 from . import json
 from .introspection import (
     annotate_model,
@@ -272,6 +274,29 @@ class Repository:
         for component in list(self.component_by_id.values()):
             for oob, component in component.controller._oob:
                 yield self.render_html(component, oob=oob)
+
+    def render_assets(
+        self,
+        *,
+        oob: bool = True,
+    ) -> t.Generator[SafeString, None, None]:
+        assets = list(
+            {
+                asset
+                for component in self.component_by_id.values()
+                for asset in component.required_assets
+            }
+        )
+        if assets:
+            assets.sort(key=lambda a: a.ordering, reverse=True)
+            body = mark_safe("\n".join(a.render() for a in assets))
+            if oob:
+                yield format_html(
+                    "<div hx-select='head' hx-swap-oob='beforeend'>{}</div>",
+                    body,
+                )
+            else:
+                yield body
 
     def get_component_by_id(self, component_id):
         """Return (possibly build) the component by its ID.
@@ -565,6 +590,15 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     @property
     def subscriptions(self) -> set[str]:
         return set()
+
+    @property
+    def required_assets(self) -> list[Asset]:
+        """Return the list of assets.
+
+        All assets are appended to the <head> of the document.
+
+        """
+        return []
 
     def get_all_subscriptions(self) -> set[str]:
         result = self.subscriptions

@@ -52,7 +52,15 @@ def htmx(context, _name: str, **state):
     if _name in REGISTRY:
         # PydanticComponent
         component = repo.build(_name, state)
-        return repo.render_html(component)
+        body = repo.render_html(component)
+        if preamble := format_html_join(
+            "\n",
+            "{}",
+            ((a,) for a in repo.render_assets(oob=False)),
+        ):
+            return format_html("{}\n{}", preamble, body)
+        else:
+            return body
     else:
         # Legacy Component
         if "id" in state:

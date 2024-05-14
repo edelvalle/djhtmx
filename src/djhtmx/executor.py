@@ -73,7 +73,11 @@ class Executor:
 
         # Now we append all the rendered partials and the custom oob added by
         # the components.
-        for oob_render in chain(partials.values(), repo.render_oob()):
+        for oob_render in chain(
+            partials.values(),
+            repo.render_oob(),
+            repo.render_assets(),
+        ):
             response._container.append(b"\n")  # type: ignore
             response._container.append(response.make_bytes(oob_render))  # type: ignore
 
