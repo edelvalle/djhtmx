@@ -81,6 +81,7 @@ def hx_tag(context, swap: str = "outerHTML"):
         oob = context.get("hx_oob")
         attrs = {
             "id": component.id,
+            "class": f"t-pc-{component.hx_name}",
             "hx-swap": swap,
             "hx-swap-oob": oob,
             "data-hx-state": signer.sign(component.model_dump_json()),
