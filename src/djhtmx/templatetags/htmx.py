@@ -52,7 +52,15 @@ def htmx(context, _name: str, **state):
     if _name in REGISTRY:
         # PydanticComponent
         component = repo.build(_name, state)
-        return repo.render_html(component)
+        body = repo.render_html(component)
+        if preamble := format_html_join(
+            "\n",
+            "{}",
+            ((a,) for a in repo.render_assets(oob=False)),
+        ):
+            return format_html("{}\n{}", preamble, body)
+        else:
+            return body
     else:
         # Legacy Component
         if "id" in state:
@@ -81,6 +89,7 @@ def hx_tag(context, swap: str = "outerHTML"):
         oob = context.get("hx_oob")
         attrs = {
             "id": component.id,
+            "class": f"t-pc-{component.hx_name}",
             "hx-swap": swap,
             "hx-swap-oob": oob,
             "data-hx-state": signer.sign(component.model_dump_json()),
