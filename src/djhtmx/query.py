@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import datetime
 import enum
 import re
 import types
 import typing as t
 from dataclasses import dataclass
+from datetime import date
 from uuid import UUID
 
 import pydantic
@@ -67,7 +69,7 @@ class QueryPatcher:
 
         def _is_simple_type(ann):
             return (
-                ann in (int, str, float, UUID, types.NoneType)
+                ann in (int, str, float, UUID, types.NoneType, date, datetime)
                 or issubclass_safe(ann, models.Model)
                 or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
             )
