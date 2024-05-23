@@ -817,6 +817,21 @@ class Component:
         return f"{mod}.{name}" if mod else name
 
 
+class EmptyType:
+    """The class of the value `Empty`.
+
+    This value indicates that the handler won't swap any content of the
+    component.
+
+    Technically, this sends the response with 'HX-Reswap' set to 'none'.  See
+    https://htmx.org/reference/#response_headers
+
+    """
+
+
+Empty = EmptyType()
+
+
 PYDANTIC_MODEL_METHODS = {
     attr
     for attr, value in vars(BaseModel).items()

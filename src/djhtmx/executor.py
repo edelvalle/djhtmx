@@ -6,7 +6,14 @@ from django.http import Http404
 from django.http.response import HttpResponse
 
 from . import json
-from .component import QS_MAP, Repository, RequestWithRepo, get_params, signer
+from .component import (
+    QS_MAP,
+    EmptyType,
+    Repository,
+    RequestWithRepo,
+    get_params,
+    signer,
+)
 from .introspection import filter_parameters, parse_request_data
 
 
@@ -60,7 +67,15 @@ class Executor:
         else:
             response = repo.render(component, template=template)
 
-        if isinstance(template, str):
+        if isinstance(template, EmptyType):
+            response["HX-State"] = json.dumps(
+                {
+                    "component_id": component.id,
+                    "state": signer.sign(component.model_dump_json()),
+                }
+            )
+            response["HX-Reswap"] = "none"
+        elif isinstance(template, str):
             # if there was a partial response, send the state for update
             response["HX-State"] = json.dumps(
                 {
