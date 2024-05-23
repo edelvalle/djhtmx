@@ -413,12 +413,36 @@ class Controller:
     def focus(self, selector):
         self.triggers.after_settle("hxFocus", selector)
 
-    def dispatch_event(self, target: str, event: str):
+    def dispatch_event(
+        self,
+        target: str,
+        event: str,
+        *,
+        bubbles: bool = False,
+        cancelable: bool = False,
+        composed: bool = False,
+        detail=None,
+    ):
+        """Trigger a custom event in the given DOM target.
+
+        The meaning of the arguments `bubbles`, `cancelable`, and `composed`
+        are given in
+        https://developer.mozilla.org/en-US/docs/Web/API/Event/Event#options
+
+        The `detail` is a JSON reprentable data to add as the details of the
+        Event object, as in
+        https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent/detail
+
+        """
         self.triggers.after_settle(
             "hxDispatchEvent",
             {
-                "target": target,
                 "event": event,
+                "target": target,
+                "detail": detail,
+                "bubbles": bubbles,
+                "cancelable": cancelable,
+                "composed": composed,
             },
         )
 
