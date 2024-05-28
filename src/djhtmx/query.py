@@ -184,22 +184,24 @@ class QueryPatcher:
 
         if _is_seq_of_simple_types(f.annotation):
 
+            default_value = f.default
             def _set_value(qdict: QueryDict, value, suffix: str = ""):
-                value = adapter.dump_python(value)
+                serial = adapter.dump_python(value)
                 qs_param = f"{qs_arg}__{suffix}" if suffix else qs_arg
-                if not value:
+                if not serial or value == default_value:
                     qdict.pop(qs_param, None)
                 else:
-                    qdict.setlist(qs_param, value)
+                    qdict.setlist(qs_param, serial)
         else:
 
+            default_value = f.default
             def _set_value(qdict: QueryDict, value, suffix: str = ""):
-                value = adapter.dump_python(value)
+                serial = adapter.dump_python(value)
                 qs_param = f"{qs_arg}__{suffix}" if suffix else qs_arg
-                if not value:
+                if not serial or value == default_value:
                     qdict.pop(qs_param, None)
                 else:
-                    qdict[qs_param] = value
+                    qdict[qs_param] = serial
 
         return cls(
             qs_arg,
