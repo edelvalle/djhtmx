@@ -55,7 +55,7 @@ lint:
 
 PYRIGHT_FILES ?= src/$(PROJECT_NAME)
 pyright:
-	@$(RYE_EXEC) pyright $(PYRIGHT_FILES)
+	@$(RYE_EXEC) basedpyright $(PYRIGHT_FILES)
 .PHONY: pyright
 
 
