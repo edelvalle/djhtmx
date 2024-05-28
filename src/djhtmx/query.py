@@ -14,6 +14,7 @@ from uuid import UUID
 import pydantic
 from django.db import models
 from django.http import QueryDict
+from pydantic import BeforeValidator, PlainSerializer
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
@@ -103,7 +104,7 @@ class QueryPatcher:
 
         def _is_simple_type(ann):
             return (
-                ann in (int, str, float, UUID, types.NoneType, date, datetime)
+                ann in _SIMPLE_TYPES
                 or issubclass_safe(ann, models.Model)
                 or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
             )
@@ -147,11 +148,26 @@ class QueryPatcher:
 
             return result
 
+        def _get_annotation_adapter(annotation):
+            if f.annotation is bool:
+                # compacted adapter for booleans ('t', 'f', infallible)
+                return pydantic.TypeAdapter(
+                    t.Annotated[
+                        bool,
+                        BeforeValidator(lambda v: True if v == "t" else False),
+                        PlainSerializer(lambda v: "t" if v else "f"),
+                    ]
+                )
+
+            return pydantic.TypeAdapter(
+                t.Optional[annotate_model(f.annotation)]  # type: ignore
+            )
+
         # NB: We need to perform the serialization during patching, otherwise
         # ill-formed values in the query will cause a Pydantic
         # ValidationError, but we should just simply ignore invalid values.
         extract_value = _get_value_extractor(f.annotation)
-        adapter = pydantic.TypeAdapter(t.Optional[annotate_model(f.annotation)])  # type: ignore
+        adapter = _get_annotation_adapter(f.annotation)
 
         def _get_value(qdict: QueryDict, suffix: str = ""):
             if qs_value := extract_value(qdict, suffix):
@@ -258,3 +274,4 @@ _SEQUENCE_ANNOTATIONS = (
     t.Set,
     t.FrozenSet,
 )
+_SIMPLE_TYPES = (int, str, float, UUID, types.NoneType, date, datetime, bool)
