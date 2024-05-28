@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import typing as t
 from collections import defaultdict, deque
@@ -299,7 +300,11 @@ class Repository:
             elif stored_state := self.states_by_id.pop(component_id, None):
                 state = stored_state | state
 
-        state = self._patch_state_with_query_string(component_name, state)
+        state = self._patch_state_with_query_string(
+            component_name,
+            component_id,
+            state,
+        )
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
@@ -346,11 +351,26 @@ class Repository:
         ]
         return mark_safe("".join(filter(None, html)))
 
-    def _patch_state_with_query_string(self, component_name, state):
+    def _patch_state_with_query_string(
+        self,
+        component_name,
+        component_id,
+        state,
+    ):
         """Patches the state with the component's query annotated fields"""
+
         if patchers := QS_MAP.get(component_name):
             for patcher in patchers:
-                state = state | patcher.get_state_updates(self.params)
+                if patcher.shared:
+                    state = state | patcher.get_shared_state_updates(
+                        self.params
+                    )
+                elif component_id:
+                    state = state | patcher.get_private_state_updates(
+                        self.params,
+                        component_id,
+                    )
+
         return state
 
 
@@ -517,7 +537,7 @@ def build(
 
 
 def _generate_uuid():
-    return f"hx-{uuid4().hex}"
+    return f"hx-{_bytes_compact_digest(uuid4().bytes)}"
 
 
 class PydanticComponent(BaseModel, t.Generic[TUser]):
@@ -581,6 +601,12 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     controller: t.Annotated[Controller, Field(exclude=True)]
 
     hx_name: str
+
+    @cached_property
+    def _hx_name_scrambled(self):
+        if name := self.hx_name:
+            return _compact_hash(name)
+        return self.id
 
     @classmethod
     def _build(cls, controller: Controller, **state):
@@ -850,3 +876,31 @@ PYDANTIC_MODEL_METHODS = {
 _MAX_GENERATION = 50
 
 logger = logging.getLogger(__name__)
+
+
+def _compact_hash(v: str) -> str:
+    """Return a SHA1 using a very base with 64+ symbols"""
+    h = hashlib.sha1()
+    h.update(v.encode("ascii"))
+    d = h.digest()
+    return _bytes_compact_digest(d)
+
+
+def _bytes_compact_digest(v: bytes) -> str:
+    # Convert the binary digest to an integer
+    num = int.from_bytes(v, byteorder="big")
+
+    # Convert the integer to the custom base
+    base_len = len(_BASE)
+    encoded = []
+    while num > 0:
+        num, rem = divmod(num, base_len)
+        encoded.append(_BASE[rem])
+
+    return "".join(encoded)
+
+
+# The order of the base is random so that it doesn't match anything out there.
+# The symbols are chosen to avoid extra encoding in the URL and HTML, and but
+# put in plain CSS selectors.
+_BASE = "ZmBeUHhTgusXNW_-Y1b05KPiFcQJD86joqnIRE7Lfkrdp3AOMCvltSwzVG9yxa42"
