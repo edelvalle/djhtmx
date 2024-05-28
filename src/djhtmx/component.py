@@ -299,7 +299,11 @@ class Repository:
             elif stored_state := self.states_by_id.pop(component_id, None):
                 state = stored_state | state
 
-        state = self._patch_state_with_query_string(component_name, state)
+        state = self._patch_state_with_query_string(
+            component_name,
+            component_id,
+            state,
+        )
         component = build(component_name, self.request, self.params, state)
         return self.register_component(component)
 
@@ -346,11 +350,26 @@ class Repository:
         ]
         return mark_safe("".join(filter(None, html)))
 
-    def _patch_state_with_query_string(self, component_name, state):
+    def _patch_state_with_query_string(
+        self,
+        component_name,
+        component_id,
+        state,
+    ):
         """Patches the state with the component's query annotated fields"""
+
         if patchers := QS_MAP.get(component_name):
             for patcher in patchers:
-                state = state | patcher.get_state_updates(self.params)
+                if patcher.shared:
+                    state = state | patcher.get_shared_state_updates(
+                        self.params
+                    )
+                elif component_id:
+                    state = state | patcher.get_private_state_updates(
+                        self.params,
+                        component_id,
+                    )
+
         return state
 
 

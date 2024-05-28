@@ -22,9 +22,24 @@ from djhtmx.introspection import annotate_model, get_field_info, issubclass_safe
 
 @dataclass(slots=True)
 class Query:
-    """Annotation to integrate the state with the URL's query string."""
+    """Annotation to integrate the state with the URL's query string.
+
+    By default the query string name can be shared across many components,
+    provided the have the same type annotation.
+
+    You can set `shared` to False, to make this a specific (by component id)
+    param.  In this case the URL is `<name>__<id>=value`.
+
+    .. note:: If you're going to use non-shared parameters, you SHOULD really
+              provide an id that is consistent across many runs (e.g an id
+              that is attached to the component).
+
+    """
 
     name: str
+
+    #: Control where this parameter is shared or component-specific.
+    shared: bool = True
 
     def __post_init__(self):
         assert _VALID_QS_NAME_RX.match(self.name) is not None
@@ -36,8 +51,13 @@ class QueryPatcher:
 
     qs_arg: str
     field_name: str
-    _get_value: t.Callable[[QueryDict], dict[str, t.Any]]
-    _set_value: t.Callable[[QueryDict, t.Any], None]
+    shared: bool
+
+    _get_shared_value: t.Callable[[QueryDict], dict[str, t.Any]]
+    _get_private_value: t.Callable[[QueryDict, str], dict[str, t.Any]]
+
+    _set_shared_value: t.Callable[[QueryDict, t.Any], None]
+    _set_private_value: t.Callable[[QueryDict, t.Any, str], None]
 
     @contextlib.contextmanager
     def tracking_query_string(self, repository, component):
@@ -49,14 +69,28 @@ class QueryPatcher:
         yield
         after = getattr(component, self.field_name, unset)
         if previous != after:
-            self._set_value(repository.params, after)
+            if self.shared:
+                self._set_shared_value(repository.params, after)
+            else:
+                self._set_private_value(repository.params, after, component.id)
             repository.signals.add(f"querystring.{self.qs_arg}")
 
-    def get_state_updates(self, qdict: QueryDict):
-        return self._get_value(qdict)
+    def get_shared_state_updates(self, qdict: QueryDict):
+        return self._get_shared_value(qdict)
+
+    def get_private_state_updates(self, qdict: QueryDict, component_id):
+        return self._get_private_value(qdict, component_id)
 
     @classmethod
-    def from_field_info(cls, qs_arg: str, field_name: str, f: FieldInfo):
+    def from_field_info(cls, field_name: str, annotation: Query, f: FieldInfo):
+        return cls._from_field_info(
+            annotation.name, field_name, f, annotation.shared
+        )
+
+    @classmethod
+    def _from_field_info(
+        cls, qs_arg: str, field_name: str, f: FieldInfo, shared: bool
+    ):
         def _maybe_extract_optional(ann):
             # Possibly extract t.Optional[sequence_type]
             if t.get_origin(ann) is types.UnionType:
@@ -105,8 +139,11 @@ class QueryPatcher:
                     f"Invalid type annotation {ann} for a query string"
                 )
 
-            def result(qd):
-                return getter(qd, qs_arg)
+            def result(qd, suffix):
+                if suffix:
+                    return getter(qd, f"{qs_arg}__{suffix}")
+                else:
+                    return getter(qd, qs_arg)
 
             return result
 
@@ -116,8 +153,8 @@ class QueryPatcher:
         extract_value = _get_value_extractor(f.annotation)
         adapter = pydantic.TypeAdapter(t.Optional[annotate_model(f.annotation)])  # type: ignore
 
-        def _get_value(qdict: QueryDict):
-            if qs_value := extract_value(qdict):
+        def _get_value(qdict: QueryDict, suffix: str = ""):
+            if qs_value := extract_value(qdict, suffix):
                 try:
                     return {field_name: adapter.validate_python(qs_value)}
                 except pydantic.ValidationError:
@@ -131,30 +168,41 @@ class QueryPatcher:
 
         if _is_seq_of_simple_types(f.annotation):
 
-            def _set_value(qdict: QueryDict, value):
+            def _set_value(qdict: QueryDict, value, suffix: str = ""):
                 value = adapter.dump_python(value)
+                qs_param = f"{qs_arg}__{suffix}" if suffix else qs_arg
                 if not value:
-                    qdict.pop(qs_arg, None)
+                    qdict.pop(qs_param, None)
                 else:
-                    qdict.setlist(qs_arg, value)
+                    qdict.setlist(qs_param, value)
         else:
 
-            def _set_value(qdict: QueryDict, value):
+            def _set_value(qdict: QueryDict, value, suffix: str = ""):
                 value = adapter.dump_python(value)
+                qs_param = f"{qs_arg}__{suffix}" if suffix else qs_arg
                 if not value:
-                    qdict.pop(qs_arg, None)
+                    qdict.pop(qs_param, None)
                 else:
-                    qdict[qs_arg] = value
+                    qdict[qs_param] = value
 
         return cls(
             qs_arg,
             field_name,
-            _get_value=_get_value,
-            _set_value=_set_value,
+            shared=shared,
+            _get_shared_value=_get_value,
+            _get_private_value=_get_value,
+            _set_shared_value=_set_value,
+            _set_private_value=_set_value,
         )
 
     @classmethod
     def for_component(cls, component_cls):
+        def _field_has_default(f: FieldInfo):
+            return (
+                f.default is not PydanticUndefined
+                or f.default_factory is not None
+            )
+
         def _get_querystring_args(name, f: FieldInfo):
             done = False
             for meta in f.metadata:
@@ -164,7 +212,13 @@ class QueryPatcher:
                             f"Field '{name}' in component {cls.__qualname__} "
                             " has more than one Query annotation."
                         )
-                    yield meta.name
+                    if not _field_has_default(f):
+                        raise TypeError(
+                            f"Field '{name}' of {cls.__qualname__} must have "
+                            "a default or default_factory."
+                        )
+
+                    yield meta
                     done = True
 
         def _get_annotated_fields():
@@ -175,23 +229,15 @@ class QueryPatcher:
             )
             for name, ann_type in hints.items():
                 f = get_field_info(component_cls, name, ann_type)
-                for qs_arg in _get_querystring_args(name, f):
-                    if (
-                        f.default is PydanticUndefined
-                        and f.default_factory is None
-                    ):
-                        raise TypeError(
-                            f"Field '{name}' of {cls.__qualname__} must have "
-                            "a default or default_factory."
-                        )
-
+                for qs_annotation in _get_querystring_args(name, f):
+                    qs_arg = qs_annotation.name
                     if qs_arg in seen:
                         raise TypeError(
                             f"Component {cls.__qualname__} has multiple "
                             f"fields with the same query param '{qs_arg}'"
                         )
                     seen.add(qs_arg)
-                    yield QueryPatcher.from_field_info(qs_arg, name, f)
+                    yield QueryPatcher.from_field_info(name, qs_annotation, f)
 
         try:
             return list(_get_annotated_fields())
