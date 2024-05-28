@@ -32,12 +32,14 @@ class Query:
     param.  In this case the URL is `<name>__<ns>=value`.
 
     The `ns` is the value of the component's attribute given by `ns_attr_name`
-    (defaults to "_hx_name_scrambled").
+    (defaults to "hx_name_scrambled").
 
-    .. note:: If you're going to use non-shared parameters, you SHOULD really
-              provide a consistent `ns_attr_name`.  Notice that if the
-              `ns_attr_name` returns a shared value, you might get
-              cross-components shares.
+    .. important:: This attribute MUST be part of the state of the component.
+
+    .. important:: If you're going to use non-shared parameters, you SHOULD
+       really provide a consistent `ns_attr_name`.  Notice that if the
+       `ns_attr_name` returns a shared value, you might get cross-components
+       shares.
 
     """
 
@@ -45,7 +47,7 @@ class Query:
 
     #: Control where this parameter is shared or component-specific.
     shared: bool = True
-    ns_attr_name: str = "_hx_name_scrambled"
+    ns_attr_name: str = "hx_name_scrambled"
 
     def __post_init__(self):
         assert _VALID_QS_NAME_RX.match(self.name) is not None
@@ -80,7 +82,7 @@ class QueryPatcher:
             if self.shared:
                 self._set_shared_value(repository.params, after)
             elif ns := getattr(
-                component, self.ns_attr_name, component._hx_name_scrambled
+                component, self.ns_attr_name, component.hx_name_scrambled
             ):
                 self._set_private_value(repository.params, after, ns)
             repository.signals.add(f"querystring.{self.qs_arg}")
@@ -88,8 +90,8 @@ class QueryPatcher:
     def get_shared_state_updates(self, qdict: QueryDict):
         return self._get_shared_value(qdict)
 
-    def get_private_state_updates(self, qdict: QueryDict, component_id):
-        return self._get_private_value(qdict, component_id)
+    def get_private_state_updates(self, qdict: QueryDict, suffix):
+        return self._get_private_value(qdict, suffix)
 
     @classmethod
     def from_field_info(cls, field_name: str, annotation: Query, f: FieldInfo):
