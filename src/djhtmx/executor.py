@@ -6,7 +6,7 @@ from django.http import Http404
 from django.http.response import HttpResponse
 
 from . import json
-from .component import QS_MAP, Repository, RequestWithRepo, get_params, signer
+from .component import Repository, RequestWithRepo, get_params, signer
 from .introspection import filter_parameters, parse_request_data
 
 
@@ -31,7 +31,7 @@ class Executor:
 
         template = None
         with ExitStack() as stack:
-            for patcher in QS_MAP.get(self.component_name, []):
+            for patcher in component._get_query_patchers():
                 stack.enter_context(
                     patcher.tracking_query_string(repo, component)
                 )

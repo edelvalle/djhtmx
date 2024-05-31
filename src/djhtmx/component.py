@@ -607,7 +607,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     def subscriptions(self) -> set[str]:
         return set()
 
-    def get_all_subscriptions(self) -> set[str]:
+    def _get_all_subscriptions(self) -> set[str]:
         result = self.subscriptions
         query_patchers = QS_MAP.get(self.hx_name, [])
         query_subscriptions = {
@@ -645,6 +645,16 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                 and attr not in PYDANTIC_MODEL_METHODS
                 and attr not in attrs_to_exclude
             } | {"this": self}
+
+    def _get_query_patchers(self) -> t.Sequence[QueryPatcher]:
+        """Return the list of query-param patchers for the component.
+
+        The default implementation uses the fields annotated with `Query`.
+        Subclasses could override/extend this to include more dynamically
+        annotated patchers.
+
+        """
+        return tuple(QS_MAP.get(self.hx_name, []))
 
 
 @dataclass(slots=True)
