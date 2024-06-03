@@ -544,11 +544,8 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
 
         component_name = cls.__name__
         if public:
-            if component_name in REGISTRY or component_name in Component._all:
-                raise TypeError(f"Duplicated component '{component_name}'")
             REGISTRY[component_name] = cls
 
-        if public:
             # We settle the query string patchers before any other processing,
             # because we need the simplest types of the fields.
             cls._settle_querystring_patchers(component_name)
@@ -718,9 +715,7 @@ class Component:
     def __init_subclass__(cls, name=None, public=True):
         if public:
             name = name or cls.__name__
-            if name in REGISTRY or name in cls._all:
-                raise TypeError(f"Duplicated component '{name}'")
-            cls._all[name] = cls
+            Component._all[name] = cls
             cls._name = name
 
         cls._fields = get_function_parameters(cls.__init__, exclude={"self"})
