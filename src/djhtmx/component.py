@@ -544,6 +544,8 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
 
         component_name = cls.__name__
         if public:
+            if component_name in REGISTRY or component_name in Component._all:
+                raise TypeError(f"Duplicated component '{component_name}'")
             REGISTRY[component_name] = cls
 
         if public:
@@ -716,6 +718,8 @@ class Component:
     def __init_subclass__(cls, name=None, public=True):
         if public:
             name = name or cls.__name__
+            if name in REGISTRY or name in cls._all:
+                raise TypeError(f"Duplicated component '{name}'")
             cls._all[name] = cls
             cls._name = name
 
