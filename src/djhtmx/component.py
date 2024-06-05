@@ -33,6 +33,7 @@ from .introspection import (
 )
 from .query import Query, QueryPatcher
 from .tracing import sentry_span
+from .utils import get_model_subscriptions
 
 __all__ = ("Component", "PydanticComponent", "Query", "ComponentNotFound")
 
@@ -178,11 +179,10 @@ class Repository:
         created: bool,
         **kwargs,
     ):
-        app = sender._meta.app_label
-        name = sender._meta.model_name
-        self.signals.update([f"{app}.{name}", f"{app}.{name}.{instance.pk}"])
         action = "created" if created else "updated"
-        self.signals.add(f"{app}.{name}.{instance.pk}.{action}")
+        self.signals.update(
+            get_model_subscriptions(instance, actions=(action,))
+        )
         self._listen_to_related(sender, instance, action=action)
 
     def _listen_to_pre_delete(
@@ -191,14 +191,8 @@ class Repository:
         instance: models.Model,
         **kwargs,
     ):
-        app = sender._meta.app_label
-        name = sender._meta.model_name
         self.signals.update(
-            [
-                f"{app}.{name}",
-                f"{app}.{name}.{instance.pk}",
-                f"{app}.{name}.{instance.pk}.deleted",
-            ]
+            get_model_subscriptions(instance, actions=("deleted",))
         )
         self._listen_to_related(sender, instance, action="deleted")
 
