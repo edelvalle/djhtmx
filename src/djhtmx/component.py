@@ -602,7 +602,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
 
     def _get_all_subscriptions(self) -> set[str]:
         result = self.subscriptions
-        query_patchers = QS_MAP.get(self.hx_name, [])
+        query_patchers = self._get_query_patchers()
         query_subscriptions = {
             f"querystring.{p.qs_arg}" for p in query_patchers
         }
