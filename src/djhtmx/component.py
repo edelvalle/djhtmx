@@ -604,7 +604,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         result = self.subscriptions
         query_patchers = self._get_query_patchers()
         query_subscriptions = {
-            f"querystring.{p.qs_arg}" for p in query_patchers
+            p.subscription_channel for p in query_patchers if p.auto_subscribe
         }
         return result | query_subscriptions
 

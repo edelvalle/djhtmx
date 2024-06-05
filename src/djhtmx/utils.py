@@ -2,6 +2,8 @@ import typing as t
 
 from django.db import models
 
+from djhtmx.query import Query, QueryPatcher
+
 
 def get_model_subscriptions(
     obj: t.Type[models.Model] | models.Model,
@@ -31,3 +33,17 @@ def get_model_subscriptions(
         for action in actions:
             result.add(f"{prefix}.{action}")
     return result
+
+
+def get_query_subscription(obj: Query | QueryPatcher | str) -> str:
+    "Return the subscription for a query-string object or name."
+    match obj:
+        case Query():
+            name = obj.name
+        case QueryPatcher():
+            name = obj.qs_arg
+        case str():
+            name = obj
+        case _:
+            raise TypeError("Invalid type calling get_query_subscription")
+    return f"querystring.{name}"

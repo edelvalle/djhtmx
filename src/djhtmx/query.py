@@ -34,6 +34,10 @@ class Query:
     The `ns` is the value of the component's attribute given by `ns_attr_name`
     (defaults to "hx_name_scrambled").
 
+    If `auto_subscribe` is True (the default), the component is automatically
+    subscribed to changes in the query string.  Otherwise, changes in the
+    query string won't be signaled.
+
     .. important:: This attribute MUST be part of the state of the component.
 
     .. important:: If you're going to use non-shared parameters, you SHOULD
@@ -48,9 +52,16 @@ class Query:
     #: Control where this parameter is shared or component-specific.
     shared: bool = True
     ns_attr_name: str = "hx_name_scrambled"
+    auto_subscribe: bool = True
 
     def __post_init__(self):
         assert _VALID_QS_NAME_RX.match(self.name) is not None
+
+    @property
+    def subscription_channel(self):
+        from .utils import get_query_subscription
+
+        return get_query_subscription(self)
 
 
 @dataclass(slots=True)
@@ -60,6 +71,7 @@ class QueryPatcher:
     qs_arg: str
     field_name: str
     shared: bool
+    auto_subscribe: bool
 
     _get_shared_value: t.Callable[[QueryDict], dict[str, t.Any]]
     _get_private_value: t.Callable[[QueryDict, str], dict[str, t.Any]]
@@ -68,6 +80,12 @@ class QueryPatcher:
     _set_private_value: t.Callable[[QueryDict, t.Any, str], None]
 
     ns_attr_name: str
+
+    @property
+    def subscription_channel(self):
+        from .utils import get_query_subscription
+
+        return get_query_subscription(self)
 
     @contextlib.contextmanager
     def tracking_query_string(self, repository, component):
@@ -85,7 +103,7 @@ class QueryPatcher:
                 component, self.ns_attr_name, component.hx_name_scrambled
             ):
                 self._set_private_value(repository.params, after, ns)
-            repository.signals.add(f"querystring.{self.qs_arg}")
+            repository.signals.add(self.subscription_channel)
 
     def get_shared_state_updates(self, qdict: QueryDict):
         return self._get_shared_value(qdict)
@@ -95,13 +113,7 @@ class QueryPatcher:
 
     @classmethod
     def from_field_info(cls, field_name: str, annotation: Query, f: FieldInfo):
-        return cls._from_field_info(
-            annotation.name,
-            field_name,
-            f,
-            annotation.shared,
-            annotation.ns_attr_name,
-        )
+        return cls._from_field_info(annotation.name, field_name, f, annotation)
 
     @classmethod
     def _from_field_info(
@@ -109,8 +121,7 @@ class QueryPatcher:
         qs_arg: str,
         field_name: str,
         f: FieldInfo,
-        shared: bool,
-        ns_attr_name: str,
+        query_annotation: Query,
     ):
         def _maybe_extract_optional(ann):
             # Possibly extract t.Optional[sequence_type]
@@ -226,8 +237,9 @@ class QueryPatcher:
         return cls(
             qs_arg,
             field_name,
-            shared=shared,
-            ns_attr_name=ns_attr_name,
+            shared=query_annotation.shared,
+            ns_attr_name=query_annotation.ns_attr_name,
+            auto_subscribe=query_annotation.auto_subscribe,
             _get_shared_value=_get_value,
             _get_private_value=_get_value,
             _set_shared_value=_set_value,
