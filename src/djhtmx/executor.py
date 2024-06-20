@@ -32,9 +32,7 @@ class Executor:
         template = None
         with ExitStack() as stack:
             for patcher in component._get_query_patchers():
-                stack.enter_context(
-                    patcher.tracking_query_string(repo, component)
-                )
+                stack.enter_context(patcher.tracking_query_string(repo, component))
             template = handler(**handler_kwargs)
 
         if isinstance(template, tuple):
@@ -62,12 +60,10 @@ class Executor:
 
         if isinstance(template, str):
             # if there was a partial response, send the state for update
-            response["HX-State"] = json.dumps(
-                {
-                    "component_id": component.id,
-                    "state": signer.sign(component.model_dump_json()),
-                }
-            )
+            response["HX-State"] = json.dumps({
+                "component_id": component.id,
+                "state": signer.sign(component.model_dump_json()),
+            })
             if isinstance(target, str):
                 response["HX-Retarget"] = target
 

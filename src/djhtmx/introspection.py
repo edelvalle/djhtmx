@@ -21,20 +21,14 @@ class ModelRelatedField:
     related_model_name: str
 
 
-MODEL_RELATED_FIELDS: dict[
-    t.Type[models.Model], tuple[ModelRelatedField, ...]
-] = {}
+MODEL_RELATED_FIELDS: dict[t.Type[models.Model], tuple[ModelRelatedField, ...]] = {}
 
 
 def Model(model: t.Type[models.Model]):
     return t.Annotated[
         model,
         BeforeValidator(
-            lambda v: (
-                v
-                if isinstance(v, model)
-                else model.objects.filter(pk=v).first()
-            )
+            lambda v: (v if isinstance(v, model) else model.objects.filter(pk=v).first())
         ),
         PlainSerializer(
             func=lambda v: v.pk,
@@ -161,17 +155,13 @@ def _parse_obj(
             field_name = fragment[: fragment.index("[")]
             index = int(fragment[fragment.index("[") + 1 : -1])
             arrays[field_name][index] = (
-                _parse_obj([(tail, value)], arrays[field_name][index])
-                if tail
-                else value
+                _parse_obj([(tail, value)], arrays[field_name][index]) if tail else value
             )
         else:
             output[fragment] = _parse_obj([(tail, value)]) if tail else value
 
     for field, items in arrays.items():
-        output[field] = [
-            v for _, v in sorted(items.items(), key=lambda kv: kv[0])
-        ]
+        output[field] = [v for _, v in sorted(items.items(), key=lambda kv: kv[0])]
     return output
 
 

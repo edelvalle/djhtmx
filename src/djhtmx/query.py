@@ -99,9 +99,7 @@ class QueryPatcher:
         if previous != after:
             if self.shared:
                 self._set_shared_value(repository.params, after)
-            elif ns := getattr(
-                component, self.ns_attr_name, component.hx_name_scrambled
-            ):
+            elif ns := getattr(component, self.ns_attr_name, component.hx_name_scrambled):
                 self._set_private_value(repository.params, after, ns)
             repository.signals.add(self.subscription_channel)
 
@@ -126,9 +124,7 @@ class QueryPatcher:
         def _maybe_extract_optional(ann):
             # Possibly extract t.Optional[sequence_type]
             if t.get_origin(ann) is types.UnionType:
-                args = [
-                    arg for arg in t.get_args(ann) if ann is not types.NoneType
-                ]
+                args = [arg for arg in t.get_args(ann) if ann is not types.NoneType]
                 if len(args) == 1:
                     return args[0]
             return ann
@@ -167,9 +163,7 @@ class QueryPatcher:
             elif _is_seq_of_simple_types(ann):
                 getter = QueryDict.getlist
             else:
-                raise TypeError(
-                    f"Invalid type annotation {ann} for a query string"
-                )
+                raise TypeError(f"Invalid type annotation {ann} for a query string")
 
             def result(qd, suffix):
                 if suffix:
@@ -249,10 +243,7 @@ class QueryPatcher:
     @classmethod
     def for_component(cls, component_cls):
         def _field_has_default(f: FieldInfo):
-            return (
-                f.default is not PydanticUndefined
-                or f.default_factory is not None
-            )
+            return f.default is not PydanticUndefined or f.default_factory is not None
 
         def _get_querystring_args(name, f: FieldInfo):
             done = False

@@ -74,13 +74,9 @@ def check_pydantic_components_shadowing():
         for name, shadows in clashes.items():
             shadows = delete_duplicates(shadows)
             if shadows:
-                click.echo(
-                    f"Pydantic Component {bold(name)} might be shadowed by:"
-                )
+                click.echo(f"Pydantic Component {bold(name)} might be shadowed by:")
                 for shadow in shadows:
-                    click.echo(
-                        f"  -  {bold(shadow.__module__)}.{bold(shadow.__name__)}"
-                    )
+                    click.echo(f"  -  {bold(shadow.__module__)}.{bold(shadow.__name__)}")
 
     return bool(clashes)
 
@@ -101,12 +97,8 @@ def check_old_components_shadowing():
         for name, shadows in clashes.items():
             shadows = delete_duplicates(shadows)
             if shadows:
-                click.echo(
-                    f"Old-style component {bold(name)} might be shadowed by:"
-                )
+                click.echo(f"Old-style component {bold(name)} might be shadowed by:")
                 for shadow in shadows:
-                    click.echo(
-                        f"  -  {bold(shadow.__module__)}.{bold(shadow.__name__)}"
-                    )
+                    click.echo(f"  -  {bold(shadow.__module__)}.{bold(shadow.__name__)}")
 
     return bool(clashes)

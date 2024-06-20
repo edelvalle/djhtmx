@@ -109,11 +109,9 @@ def hx_tag(context, swap: str = "outerHTML"):
             " ".join(html),
             id=context["id"],
             url=event_url(component, "render"),
-            headers=json.dumps(
-                {
-                    "X-Component-State": signer.sign(component._state_json),
-                }
-            ),
+            headers=json.dumps({
+                "X-Component-State": signer.sign(component._state_json),
+            }),
         )
 
 
@@ -169,9 +167,7 @@ def on(
         "hx-post": event_url(component, _event_handler),
         "hx-trigger": _trigger,
         "hx-target": f"#{component.id}" if hx_target is unset else hx_target,
-        "hx-include": (
-            f"#{component.id} [name]" if hx_include is unset else hx_include
-        ),
+        "hx-include": (f"#{component.id} [name]" if hx_include is unset else hx_include),
         "hx-vals": json.dumps(kwargs) if kwargs else None,
     }
     return format_html_attrs(attrs)

@@ -131,9 +131,7 @@ class Repository:
     ):
         self.request = request
         self.component_by_id: dict[str, PydanticComponent] = {}
-        self.component_by_name: dict[str, list[PydanticComponent]] = (
-            defaultdict(list)
-        )
+        self.component_by_name: dict[str, list[PydanticComponent]] = defaultdict(list)
         self.states_by_id = states_by_id or {}
         self.subscriptions_by_id = subscriptions_by_id or {}
 
@@ -180,9 +178,7 @@ class Repository:
         **kwargs,
     ):
         action = "created" if created else "updated"
-        self.signals.update(
-            get_model_subscriptions(instance, actions=(action,))
-        )
+        self.signals.update(get_model_subscriptions(instance, actions=(action,)))
         self._listen_to_related(sender, instance, action=action)
 
     def _listen_to_pre_delete(
@@ -191,9 +187,7 @@ class Repository:
         instance: models.Model,
         **kwargs,
     ):
-        self.signals.update(
-            get_model_subscriptions(instance, actions=("deleted",))
-        )
+        self.signals.update(get_model_subscriptions(instance, actions=("deleted",)))
         self._listen_to_related(sender, instance, action="deleted")
 
     def _listen_to_related(
@@ -221,12 +215,9 @@ class Repository:
             for component_id, subscriptions in self.subscriptions_by_id.items():
                 if (
                     current_signals.intersection(subscriptions)
-                    and (component := self.get_component_by_id(component_id))
-                    is not None
+                    and (component := self.get_component_by_id(component_id)) is not None
                 ):
-                    logger.debug(
-                        " > MATCHED: %s (%s)", component.hx_name, subscriptions
-                    )
+                    logger.debug(" > MATCHED: %s (%s)", component.hx_name, subscriptions)
                     components_to_update.add(component.id)
 
             current_events = events_queue.pop()
@@ -329,9 +320,7 @@ class Repository:
     ) -> SafeString:
         is_oob = oob not in ("true", None)
         html = [
-            format_html('<div hx-swap-oob="{oob}">', oob=oob)
-            if is_oob
-            else None,
+            format_html('<div hx-swap-oob="{oob}">', oob=oob) if is_oob else None,
             component.controller.render_html(
                 component._get_template(template),
                 component._get_context()
@@ -347,9 +336,7 @@ class Repository:
         if patchers := QS_MAP.get(component_name):
             for patcher in patchers:
                 if patcher.shared:
-                    state = state | patcher.get_shared_state_updates(
-                        self.params
-                    )
+                    state = state | patcher.get_shared_state_updates(self.params)
                 elif ns := state.get(patcher.ns_attr_name, ""):
                     state = state | patcher.get_private_state_updates(
                         self.params,
@@ -384,22 +371,16 @@ class Controller:
         self._destroyed = True
 
     def append(self, target: str, component: type[PydanticComponent], **state):
-        self._oob.append(
-            (f"beforeend:{target}", self.build(component, **state))
-        )
+        self._oob.append((f"beforeend:{target}", self.build(component, **state)))
 
     def prepend(self, target: str, component: type[PydanticComponent], **state):
-        self._oob.append(
-            (f"afterbegin:{target}", self.build(component, **state))
-        )
+        self._oob.append((f"afterbegin:{target}", self.build(component, **state)))
 
     def after(self, target: str, component: type["PydanticComponent"], **state):
         self._oob.append((f"afterend:{target}", self.build(component, **state)))
 
     def before(self, target: str, component: type[PydanticComponent], **state):
-        self._oob.append(
-            (f"beforebegin:{target}", self.build(component, **state))
-        )
+        self._oob.append((f"beforebegin:{target}", self.build(component, **state)))
 
     def update(self, component: type[PydanticComponent], **state):
         self._oob.append(("true", self.build(component, **state)))
@@ -564,9 +545,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                 setattr(
                     cls,
                     attr_name,
-                    validate_call(config={"arbitrary_types_allowed": True})(
-                        attr
-                    ),
+                    validate_call(config={"arbitrary_types_allowed": True})(attr),
                 )
 
         if public and (event_handler := getattr(cls, "_handle_event", None)):
@@ -623,9 +602,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         else:
             return user
 
-    def _get_template(
-        self, template: str | None = None
-    ) -> t.Callable[..., SafeString]:
+    def _get_template(self, template: str | None = None) -> t.Callable[..., SafeString]:
         return get_template(template or self._template_name)
 
     def _get_context(self):
@@ -700,11 +677,9 @@ class Component:
     _name = ...
     _fields: tuple[str, ...]
 
-    _pydantic_config = ConfigDict(
-        {
-            "arbitrary_types_allowed": True,
-        }
-    )
+    _pydantic_config = ConfigDict({
+        "arbitrary_types_allowed": True,
+    })
 
     def __init_subclass__(cls, name=None, public=True):
         if public:
@@ -717,9 +692,7 @@ class Component:
         for attr_name in dict(vars(cls)):
             attr = getattr(cls, attr_name)
             if attr_name == "__init__" or (
-                not attr_name.startswith("_")
-                and attr_name.islower()
-                and callable(attr)
+                not attr_name.startswith("_") and attr_name.islower() and callable(attr)
             ):
                 setattr(
                     cls,

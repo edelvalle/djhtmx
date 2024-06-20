@@ -1,10 +1,7 @@
 import contextlib
 
 try:
-    from sentry_sdk import (  # pyright: ignore[reportMissingImports]
-        Hub,
-        configure_scope,
-    )
+    from sentry_sdk import Hub, configure_scope  # pyright: ignore[reportMissingImports]
 
     @contextlib.contextmanager
     def sentry_transaction_name(transaction_name):
