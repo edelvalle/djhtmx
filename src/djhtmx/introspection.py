@@ -5,7 +5,6 @@ import typing as t
 from collections import defaultdict
 from dataclasses import MISSING, dataclass
 from inspect import Parameter
-from uuid import UUID
 
 from django.db import models
 from django.utils.datastructures import MultiValueDict
@@ -26,19 +25,15 @@ MODEL_RELATED_FIELDS: dict[t.Type[models.Model], tuple[ModelRelatedField, ...]] 
 
 
 def Model(model: t.Type[models.Model]):
-    try:
-        return_type = (str if (pk := model().pk) is None else type(pk),)
-    except (TypeError, ValueError):
-        # If the model is abstract we cannot call `model()`
-        #
-        # TODO: Find the right type.
-        return_type = str | int | UUID
     return t.Annotated[
         t.Optional[model],
         BeforeValidator(
             lambda v: (v if isinstance(v, model) else model.objects.filter(pk=v).first())
         ),
-        PlainSerializer(func=lambda v: v.pk, return_type=return_type),
+        PlainSerializer(
+            func=lambda v: v.pk,
+            return_type=str if (pk := model().pk) is None else type(pk),
+        ),
     ]
 
 
