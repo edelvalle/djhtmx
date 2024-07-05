@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("todo", "0002_alter_item_options_item_timestamp"),
     ]

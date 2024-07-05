@@ -2,25 +2,22 @@ import asyncio
 import threading
 from os import environ as env
 from random import randint
-from urllib.parse import urljoin
 from time import sleep
+from urllib.parse import urljoin
 
-from uvicorn.main import Server as Uvicorn
-from uvicorn.config import Config as UvicornConfig
-
-from django.test import TestCase, TransactionTestCase, Client, override_settings
 from channels.routing import get_default_application
-
-from selenium.webdriver.common.keys import Keys
+from django.test import Client, TestCase, TransactionTestCase, override_settings
 from selenium.webdriver.common.action_chains import ActionChains
-
+from selenium.webdriver.common.keys import Keys
 from splinter import Browser
-from splinter.element_list import ElementList
 from splinter.driver import ElementAPI
+from splinter.driver.djangoclient import DjangoClient as DjangoDriver
+from splinter.driver.lxmldriver import LxmlDriver
 from splinter.driver.webdriver import WebDriverElement
 from splinter.driver.webdriver.firefox import WebDriver as FirefoxDriver
-from splinter.driver.lxmldriver import LxmlDriver
-from splinter.driver.djangoclient import DjangoClient as DjangoDriver
+from splinter.element_list import ElementList
+from uvicorn.config import Config as UvicornConfig
+from uvicorn.main import Server as Uvicorn
 
 from .models import Item
 
@@ -93,9 +90,7 @@ class TestMixin:
     def setUpClass(cls):
         super().setUpClass()
         headless = not env.get("DISPLAY")
-        cls.x = Browser(
-            cls.driver_type, headless=headless, wait_time=10 if headless else 2
-        )
+        cls.x = Browser(cls.driver_type, headless=headless, wait_time=10 if headless else 2)
 
     @classmethod
     def tearDownClass(cls):
@@ -104,8 +99,8 @@ class TestMixin:
 
     def print_html(self):
         from pygments import highlight
-        from pygments.lexers import HtmlLexer
         from pygments.formatters import TerminalTrueColorFormatter
+        from pygments.lexers import HtmlLexer
 
         print(highlight(self.x.html, HtmlLexer(), TerminalTrueColorFormatter()))
 
@@ -154,13 +149,7 @@ class ChannelsLiveServerTestCase(TestMixin, TransactionTestCase):
         return ActionChains(self.x.driver)
 
     def send_ctrl(self, key):
-        (
-            self.chain()
-            .key_down(Keys.CONTROL)
-            .send_keys(key)
-            .key_up(Keys.CONTROL)
-            .perform()
-        )
+        (self.chain().key_down(Keys.CONTROL).send_keys(key).key_up(Keys.CONTROL).perform())
 
 
 class SeleniumTests(ChannelsLiveServerTestCase):
@@ -217,9 +206,7 @@ class SeleniumTests(ChannelsLiveServerTestCase):
         first_task_input = first_task.find_by_css("input.edit")
         assert self.assert_focused(first_task_input)
         self.send_ctrl("a")
-        first_task_input._element.send_keys(
-            f"{Keys.BACKSPACE}First item{Keys.ENTER}"
-        )
+        first_task_input._element.send_keys(f"{Keys.BACKSPACE}First item{Keys.ENTER}")
 
         assert self.x.is_element_not_present_by_css("li .editing")
         first_task.find_by_css(".destroy").click()
