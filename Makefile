@@ -33,8 +33,16 @@ sync: bootstrap
 .PHONY: sync
 
 lock: bootstrap
+ifdef update_all
+	@rye sync --update-all
+else
 	@rye sync
+endif
 .PHONY: lock
+
+update: bootstrap
+	@$(MAKE) lock update_all=1
+.PHONY: update
 
 
 format-python:
