@@ -46,9 +46,9 @@ update: bootstrap
 
 
 format-python:
-	@$(RYE_EXEC) isort src/$(PROJECT_NAME)
-	@$(RYE_EXEC) ruff check --fix src/$(PROJECT_NAME)
-	@$(RYE_EXEC) ruff format src/$(PROJECT_NAME)
+	@$(RYE_EXEC) isort src/
+	@$(RYE_EXEC) ruff check --fix src/
+	@$(RYE_EXEC) ruff format src/
 
 format: format-python format-rescript
 .PHONY: format format-python format-rescript

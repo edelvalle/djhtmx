@@ -65,10 +65,14 @@ target-version = "py311"
 
 [tool.ruff.format]
 preview = true
+exclude = ["migrations"]
 
 [tool.isort]
 line_length = 100
 profile ="django"
+src_paths = ["src"]
+skip_glob = ["src/**/migrations/*", "src/**/__init__.py"]
+skip_gitignore = true
 
 
 [tool.pyright]

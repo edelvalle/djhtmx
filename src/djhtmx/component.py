@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import typing as t
 from collections import defaultdict, deque
 from dataclasses import dataclass, field as dataclass_field
@@ -509,10 +510,18 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         arbitrary_types_allowed=True,
     )
 
-    def __init_subclass__(cls, public=True):
+    def __init_subclass__(cls, public=None):
         FQN[cls] = f"{cls.__module__}.{cls.__name__}"
 
         component_name = cls.__name__
+
+        if public is None:
+            if _ABSTRACT_BASE_REGEX.match(component_name):
+                logger.info("Automatically detected non public component %s", component_name)
+                public = False
+            else:
+                public = True
+
         if public:
             REGISTRY[component_name] = cls
 
@@ -854,3 +863,4 @@ def _bytes_compact_digest(v: bytes) -> str:
 # The symbols are chosen to avoid extra encoding in the URL and HTML, and but
 # put in plain CSS selectors.
 _BASE = "ZmBeUHhTgusXNW_-Y1b05KPiFcQJD86joqnIRE7Lfkrdp3AOMCvltSwzVG9yxa42"
+_ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")

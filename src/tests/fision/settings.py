@@ -135,3 +135,36 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATICFILES_STORAGE = "django.contrib.staticfiles.storage.StaticFilesStorage"
 STATIC_ROOT = os.path.join(BASE_DIR, "static")
+
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "()": "django.utils.log.ServerFormatter",
+            "format": "[{asctime}]\t{levelname} {name}: {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+    },
+    "handlers": {
+        "fision.console": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "stream": "ext://sys.stderr",
+        },
+    },
+    "loggers": {
+        "djhtmx": {
+            "handlers": ["fision.console"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "fision": {
+            "handlers": ["fision.console"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+    },
+}

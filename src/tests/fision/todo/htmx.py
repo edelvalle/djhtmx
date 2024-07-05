@@ -2,6 +2,8 @@ import typing as t
 from dataclasses import dataclass
 from enum import StrEnum
 
+from pydantic import Field
+
 from djhtmx.component import PydanticComponent, Query
 
 from .models import Item
@@ -23,14 +25,19 @@ class FilterChanged:
     query: str
 
 
-class TodoList(PydanticComponent):
-    _template_name = "todo/list.html"
+class BaseToggleFilter(PydanticComponent):
+    showing: t.Annotated[Showing, Query("showing"), Field(default=Showing.ALL)]
 
-    showing: t.Annotated[Showing, Query("showing")] = Showing.ALL
+
+class BaseQueryFilter(PydanticComponent):
     query: str = ""
 
     def _handle_event(self, event: FilterChanged):
         self.query = event.query
+
+
+class TodoList(BaseToggleFilter, BaseQueryFilter):
+    _template_name = "todo/list.html"
 
     @property
     def queryset(self):
