@@ -284,9 +284,7 @@ class QueryPatcher:
         try:
             return list(_get_annotated_fields())
         except TypeError as cause:
-            raise TypeError(
-                f"Invalid query string annotations in {component_cls}"
-            ) from cause
+            raise TypeError(f"Invalid query string annotations in {component_cls}") from cause
 
 
 _VALID_QS_NAME_RX = re.compile(r"^[a-zA-Z\d][-a-zA-Z\d]*$")

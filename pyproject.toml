@@ -60,14 +60,14 @@ dev-dependencies = [
 
 
 [tool.ruff]
-line-length = 90
+line-length = 100
 target-version = "py311"
 
 [tool.ruff.format]
 preview = true
 
-[too.isort]
-line-length = 90
+[tool.isort]
+line_length = 100
 profile ="django"
 
 
@@ -79,10 +79,6 @@ exclude = [
   "**/migrations",
   "**/__pycache__",
 ]
-
-[tool.isort]
-profile = "black"
-line_length = 90
 
 [tool.djlint]
 # Here we ignore

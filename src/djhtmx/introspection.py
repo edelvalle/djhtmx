@@ -100,9 +100,7 @@ def get_related_fields(model):
                     ModelRelatedField(
                         name=field.attname,
                         relation_name=relation_name,
-                        related_model_name=(
-                            f"{rel_meta.app_label}.{rel_meta.model_name}"
-                        ),
+                        related_model_name=(f"{rel_meta.app_label}.{rel_meta.model_name}"),
                     )
                 )
         related_fields = MODEL_RELATED_FIELDS[model] = tuple(fields)
@@ -114,8 +112,7 @@ def get_related_fields(model):
 
 def filter_parameters(f, kwargs):
     has_kwargs = any(
-        param.kind == Parameter.VAR_KEYWORD
-        for param in inspect.signature(f).parameters.values()
+        param.kind == Parameter.VAR_KEYWORD for param in inspect.signature(f).parameters.values()
     )
     if has_kwargs:
         return kwargs
@@ -144,9 +141,7 @@ def _extract_data(data: MultiValueDict[str, t.Any]):
         yield key.split("."), value
 
 
-def _parse_obj(
-    data: t.Iterable[tuple[list[str], t.Any]], output=None
-) -> dict[str, t.Any] | t.Any:
+def _parse_obj(data: t.Iterable[tuple[list[str], t.Any]], output=None) -> dict[str, t.Any] | t.Any:
     output = output or {}
     arrays = defaultdict(lambda: defaultdict(dict))  # field -> index -> value
     for key, value in data:

@@ -34,6 +34,4 @@ except ImportError:
 
 
 def sentry_request_transaction(request, component_name, event_handler):
-    return sentry_transaction_name(
-        f"HTMX {request.method} {component_name}.{event_handler}"
-    )
+    return sentry_transaction_name(f"HTMX {request.method} {component_name}.{event_handler}")

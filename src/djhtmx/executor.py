@@ -45,9 +45,7 @@ class Executor:
         # component.
         partials = {
             component_id: result
-            for component_id, result in repo.dispatch_signals(
-                main_component_id=component.id
-            )
+            for component_id, result in repo.dispatch_signals(main_component_id=component.id)
         }
 
         # If the partials don't contain the main component, we must render it.

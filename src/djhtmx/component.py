@@ -4,8 +4,7 @@ import hashlib
 import logging
 import typing as t
 from collections import defaultdict, deque
-from dataclasses import dataclass
-from dataclasses import field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field
 from functools import cached_property
 from itertools import chain
 from urllib.parse import urlparse
@@ -43,9 +42,7 @@ class ComponentNotFound(LookupError):
 
 
 TUser = t.TypeVar("TUser", bound=AbstractUser)
-RenderFunction = t.Callable[
-    [Context | dict[str, t.Any] | None, HttpRequest | None], SafeString
-]
+RenderFunction = t.Callable[[Context | dict[str, t.Any] | None, HttpRequest | None], SafeString]
 
 
 def get_params(request: HttpRequest) -> QueryDict:
@@ -323,8 +320,7 @@ class Repository:
             format_html('<div hx-swap-oob="{oob}">', oob=oob) if is_oob else None,
             component.controller.render_html(
                 component._get_template(template),
-                component._get_context()
-                | {"htmx_repo": self, "hx_oob": None if is_oob else oob},
+                component._get_context() | {"htmx_repo": self, "hx_oob": None if is_oob else oob},
             ),
             "</div>" if is_oob else None,
         ]
@@ -489,8 +485,7 @@ def build(
 ):
     if component_name not in REGISTRY:
         raise ComponentNotFound(
-            f"Could not find requested component '{component_name}'. "
-            "Did you load the component?"
+            f"Could not find requested component '{component_name}'. " "Did you load the component?"
         )
 
     return REGISTRY[component_name](
@@ -582,9 +577,7 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     def _get_all_subscriptions(self) -> set[str]:
         result = self.subscriptions
         query_patchers = self._get_query_patchers()
-        query_subscriptions = {
-            p.subscription_channel for p in query_patchers if p.auto_subscribe
-        }
+        query_subscriptions = {p.subscription_channel for p in query_patchers if p.auto_subscribe}
         return result | query_subscriptions
 
     @cached_property
@@ -636,12 +629,8 @@ class Triggers:
 
     """
 
-    _trigger: dict[str, list[t.Any]] = dataclass_field(
-        default_factory=lambda: defaultdict(list)
-    )
-    _after_swap: dict[str, list[t.Any]] = dataclass_field(
-        default_factory=lambda: defaultdict(list)
-    )
+    _trigger: dict[str, list[t.Any]] = dataclass_field(default_factory=lambda: defaultdict(list))
+    _after_swap: dict[str, list[t.Any]] = dataclass_field(default_factory=lambda: defaultdict(list))
     _after_settle: dict[str, list[t.Any]] = dataclass_field(
         default_factory=lambda: defaultdict(list)
     )
@@ -813,11 +802,7 @@ class Component:
     def _get_context(self, hx_swap_oob):
         with sentry_span(f"{self._fqn}._get_context"):
             return dict(
-                {
-                    attr: getattr(self, attr)
-                    for attr in dir(self)
-                    if not attr.startswith("_")
-                },
+                {attr: getattr(self, attr) for attr in dir(self) if not attr.startswith("_")},
                 this=self,
                 hx_swap_oob=hx_swap_oob,
             )
@@ -835,9 +820,7 @@ class Component:
 
 
 PYDANTIC_MODEL_METHODS = {
-    attr
-    for attr, value in vars(BaseModel).items()
-    if not attr.startswith("_") and callable(value)
+    attr for attr, value in vars(BaseModel).items() if not attr.startswith("_") and callable(value)
 }
 
 _MAX_GENERATION = 50
