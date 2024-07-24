@@ -75,7 +75,10 @@ skip_glob = ["src/**/migrations/*", "src/**/__init__.py"]
 skip_gitignore = true
 
 
-[tool.pyright]
+[tool.basedpyright]
+typeCheckingMode="standard"
+reportIncompatibleMethodOverride = false
+reportIncompatibleVariableOverride = false
 strictParameterNoneValue = false
 reportMatchNotExhaustive = "error"
 exclude = [
