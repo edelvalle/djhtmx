@@ -517,13 +517,21 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
 
         if public is None:
             if _ABSTRACT_BASE_REGEX.match(component_name):
-                logger.info("Automatically detected non public component %s", component_name)
+                logger.info("HTMX Component: <%s> Automatically detected as non public", FQN[cls])
                 public = False
             else:
                 public = True
 
         if public:
             REGISTRY[component_name] = cls
+            # Warn of components that do not have event handlers and are public
+            if not any(cls.__own_event_handlers(get_parent_ones=True)) and not hasattr(
+                cls, "_handle_event"
+            ):
+                logger.warn(
+                    "HTMX Component <%s> has no event handlers, probably should not exist and be just a template",
+                    FQN[cls],
+                )
 
             # We settle the query string patchers before any other processing,
             # because we need the simplest types of the fields.
@@ -538,25 +546,31 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                 annotation = hints[name]
                 cls.__annotations__[name] = annotate_model(annotation)
 
-        for attr_name in vars(cls):
-            attr = getattr(cls, attr_name)
-            if (
-                not attr_name.startswith("_")
-                and attr_name not in PYDANTIC_MODEL_METHODS
-                and attr_name.islower()
-                and callable(attr)
-            ):
-                setattr(
-                    cls,
-                    attr_name,
-                    validate_call(config={"arbitrary_types_allowed": True})(attr),
-                )
+        for name, event_handler in cls.__own_event_handlers():
+            setattr(
+                cls,
+                name,
+                validate_call(config={"arbitrary_types_allowed": True})(event_handler),
+            )
 
         if public and (event_handler := getattr(cls, "_handle_event", None)):
             for event_type in get_event_handler_event_types(event_handler):
                 LISTENERS[event_type].add(component_name)
 
         return super().__init_subclass__()
+
+    @classmethod
+    def __own_event_handlers(cls, get_parent_ones=False):
+        for attr_name in dir(cls) if get_parent_ones else vars(cls):
+            if (
+                not attr_name.startswith("_")
+                and attr_name not in PYDANTIC_MODEL_METHODS
+                and attr_name.islower()
+                and callable(attr := getattr(cls, attr_name, None))
+            ):
+                if cls.__name__ == "InvolvedTours":
+                    print(attr_name, attr)
+                yield attr_name, attr
 
     @classmethod
     def _settle_querystring_patchers(cls, component_name):
@@ -829,7 +843,7 @@ class Component:
 
 
 PYDANTIC_MODEL_METHODS = {
-    attr for attr, value in vars(BaseModel).items() if not attr.startswith("_") and callable(value)
+    attr_name for attr_name in dir(BaseModel) if not attr_name.startswith("_")
 }
 
 _MAX_GENERATION = 50
