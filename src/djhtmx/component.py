@@ -524,18 +524,21 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
 
         if public:
             REGISTRY[component_name] = cls
+            # We settle the query string patchers before any other processing,
+            # because we need the simplest types of the fields.
+            cls._settle_querystring_patchers(component_name)
+
             # Warn of components that do not have event handlers and are public
-            if not any(cls.__own_event_handlers(get_parent_ones=True)) and not hasattr(
-                cls, "_handle_event"
+            if (
+                not any(cls.__own_event_handlers(get_parent_ones=True))
+                and not hasattr(cls, "_handle_event")
+                and not hasattr(cls, "subscriptions")
+                and not QS_MAP[component_name]
             ):
                 logger.warn(
                     "HTMX Component <%s> has no event handlers, probably should not exist and be just a template",
                     FQN[cls],
                 )
-
-            # We settle the query string patchers before any other processing,
-            # because we need the simplest types of the fields.
-            cls._settle_querystring_patchers(component_name)
 
         # We use 'get_type_hints' to resolve the forward refs if needed, but
         # we only need to rewrite the actual annotations of the current class,
@@ -593,12 +596,17 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
     def _build(cls, controller: Controller, **state):
         return cls(controller=controller, hx_name=cls.__name__, **state)
 
-    @property
-    def subscriptions(self) -> set[str]:
-        return set()
+    if t.TYPE_CHECKING:
+
+        @property
+        def subscriptions(self) -> set[str]:
+            return set()
 
     def _get_all_subscriptions(self) -> set[str]:
-        result = self.subscriptions
+        try:
+            result = self.subscriptions
+        except AttributeError:
+            result = set()
         query_patchers = self._get_query_patchers()
         query_subscriptions = {p.subscription_channel for p in query_patchers if p.auto_subscribe}
         return result | query_subscriptions
