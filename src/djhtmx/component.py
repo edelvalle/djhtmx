@@ -201,35 +201,41 @@ class Repository:
 
     def dispatch_signals(self, main_component_id: str):
         components_to_update: set[str] = set()
-        signals_queue: t.Deque[set[str]] = deque([self.consume_signals()])
-        events_queue: t.Deque[list[t.Any]] = deque([self.consume_events()])
+        signals_queue: t.Deque[set[str]] = (
+            deque([signals]) if (signals := self.consume_signals()) else deque([])
+        )
+        events_queue: t.Deque[list[t.Any]] = (
+            deque([events]) if (events := self.consume_events()) else deque([])
+        )
         generation = 0
 
         while (signals_queue or events_queue) and generation < _MAX_GENERATION:
             generation += 1
-            current_signals = signals_queue.pop()
-            logger.debug("LAUNCHED SIGNALS: %s", current_signals)
+            if signals_queue:
+                current_signals = signals_queue.pop()
+                logger.debug("LAUNCHED SIGNALS: %s", current_signals)
 
-            for component_id, subscriptions in self.subscriptions_by_id.items():
-                if (
-                    current_signals.intersection(subscriptions)
-                    and (component := self.get_component_by_id(component_id)) is not None
-                ):
-                    logger.debug(" > MATCHED: %s (%s)", component.hx_name, subscriptions)
-                    components_to_update.add(component.id)
-
-            current_events = events_queue.pop()
-            logger.debug("EVENTS EMITTED: %s", current_events)
-
-            for event in current_events:
-                for name in LISTENERS[type(event)]:
-                    logger.debug("> AWAKING: %s", name)
-                    self._awake_components_by_name(name)
-
-                    for component in self.get_components_by_name(name):
-                        logger.debug("> AWAKED: %s", component)
-                        component._handle_event(event)  # type: ignore
+                for component_id, subscriptions in self.subscriptions_by_id.items():
+                    if (
+                        current_signals.intersection(subscriptions)
+                        and (component := self.get_component_by_id(component_id)) is not None
+                    ):
+                        logger.debug(" > MATCHED: %s (%s)", component.hx_name, subscriptions)
                         components_to_update.add(component.id)
+
+            if events_queue:
+                current_events = events_queue.pop()
+                logger.debug("EVENTS EMITTED: %s", current_events)
+
+                for event in current_events:
+                    for name in LISTENERS[type(event)]:
+                        logger.debug("> AWAKING: %s", name)
+                        self._awake_components_by_name(name)
+
+                        for component in self.get_components_by_name(name):
+                            logger.debug("> AWAKED: %s", component)
+                            component._handle_event(event)  # type: ignore
+                            components_to_update.add(component.id)
 
             if more_events := self.consume_events():
                 events_queue.append(more_events)
