@@ -182,14 +182,24 @@ def format_html_attrs(attrs: dict[str, t.Any]):
 
 
 def event_url(component: PydanticComponent | Component, event_handler: str):
-    return reverse(
-        "djhtmx.endpoint",
-        kwargs={
-            "component_name": type(component).__name__,
-            "component_id": component.id,
-            "event_handler": event_handler,
-        },
-    )
+    if isinstance(component, PydanticComponent):
+        component_name = type(component).__name__
+        return reverse(
+            f"djhtmx.{component_name}",
+            kwargs={
+                "component_id": component.id,
+                "event_handler": event_handler,
+            },
+        )
+    else:
+        return reverse(
+            "djhtmx.legacy_endpoint",
+            kwargs={
+                "component_name": type(component).__name__,
+                "component_id": component.id,
+                "event_handler": event_handler,
+            },
+        )
 
 
 # Shortcuts and helpers
