@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field as dataclass_field
 from functools import cached_property
 from itertools import chain
+from os.path import basename
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from django.template import Context, loader
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, validate_call
+from pydantic.fields import ModelPrivateAttr
 from typing_extensions import deprecated
 
 from . import json
@@ -545,6 +547,16 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                     "HTMX Component <%s> has no event handlers, probably should not exist and be just a template",
                     FQN[cls],
                 )
+
+        assert isinstance(cls._template_name, ModelPrivateAttr)
+        if (
+            isinstance(cls._template_name.default, str)
+            and basename(cls._template_name.default) != f"{component_name}.html"
+        ):
+            logger.warn(
+                "HTMX Component <%s> template name does not match the component name",
+                FQN[cls],
+            )
 
         # We use 'get_type_hints' to resolve the forward refs if needed, but
         # we only need to rewrite the actual annotations of the current class,
