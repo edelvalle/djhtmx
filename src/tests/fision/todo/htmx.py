@@ -25,11 +25,11 @@ class FilterChanged:
     query: str
 
 
-class BaseToggleFilter(PydanticComponent):
+class BaseToggleFilter(PydanticComponent, public=False):
     showing: t.Annotated[Showing, Query("showing"), Field(default=Showing.ALL)]
 
 
-class BaseQueryFilter(PydanticComponent):
+class BaseQueryFilter(PydanticComponent, public=False):
     query: str = ""
 
     def _handle_event(self, event: FilterChanged):
@@ -37,7 +37,7 @@ class BaseQueryFilter(PydanticComponent):
 
 
 class TodoList(BaseToggleFilter, BaseQueryFilter):
-    _template_name = "todo/list.html"
+    _template_name = "todo/TodoList.html"
 
     @property
     def queryset(self):
@@ -72,7 +72,7 @@ class TodoList(BaseToggleFilter, BaseQueryFilter):
 
 
 class ListHeader(PydanticComponent):
-    _template_name = "todo/list_header.html"
+    _template_name = "todo/ListHeader.html"
 
     def _handle_event(self, event: ItemsCleared | int):
         pass
@@ -88,7 +88,7 @@ class ListHeader(PydanticComponent):
 
 
 class TodoItem(PydanticComponent):
-    _template_name = "todo/item.html"
+    _template_name = "todo/TodoItem.html"
 
     item: Item
     editing: bool = False
@@ -114,7 +114,7 @@ class TodoItem(PydanticComponent):
 
 
 class TodoCounter(PydanticComponent):
-    _template_name = "todo/counter.html"
+    _template_name = "todo/TodoCounter.html"
 
     query: t.Annotated[str, Query("q")] = ""
 
@@ -128,7 +128,7 @@ class TodoCounter(PydanticComponent):
 
 
 class TodoFilter(PydanticComponent):
-    _template_name = "todo/filter.html"
+    _template_name = "todo/TodoFilter.html"
     query: t.Annotated[str, Query("q")] = ""
 
     def set_query(self, query: str = ""):
