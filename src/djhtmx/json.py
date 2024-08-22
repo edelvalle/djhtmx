@@ -16,7 +16,7 @@ def encode(instance: models.Model) -> str:
 
 def decode(instance: str) -> models.Model:
     obj: DeserializedObject = list(deserialize("json", instance))[0]
-    obj.object.save = obj.save
+    obj.object.save = obj.save  # type: ignore
     return obj.object
 
 
@@ -35,7 +35,7 @@ class HtmxEncoder(DjangoJSONEncoder):
             return o.model_dump()
 
         if dataclasses.is_dataclass(o):
-            return dataclasses.asdict(o)
+            return dataclasses.asdict(o)  # type: ignore
 
         if isinstance(o, enum.Enum):
             return o.value

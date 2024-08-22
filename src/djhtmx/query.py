@@ -217,6 +217,7 @@ class QueryPatcher:
                     qdict.pop(qs_param, None)
                 else:
                     qdict.setlist(qs_param, serial)
+
         else:
             default_value = f.default
 

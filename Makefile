@@ -55,9 +55,8 @@ format: format-python format-rescript
 
 
 lint:
-	@$(RYE_EXEC) ruff src/$(PROJECT_NAME)
+	@$(RYE_EXEC) ruff check src/$(PROJECT_NAME)
 	@$(RYE_EXEC) ruff format --check src/$(PROJECT_NAME)
-	@$(RYE_EXEC) isort --check src/$(PROJECT_NAME)
 .PHONY: lint
 
 
