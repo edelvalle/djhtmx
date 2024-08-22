@@ -1,9 +1,10 @@
 from functools import partial
 
-from django.urls import path
+from django.urls import path, re_path
 
 from . import json
 from .component import REGISTRY, Component
+from .consumer import Consumer
 from .executor import Executor, signer
 from .introspection import filter_parameters, parse_request_data
 from .tracing import sentry_request_transaction
@@ -53,3 +54,5 @@ urlpatterns += [
         name="djhtmx.legacy_endpoint",
     )
 ]
+
+ws_urlpatterns = [re_path("ws", Consumer.as_asgi(), name="djhtmx.ws")]

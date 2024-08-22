@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="{% static "todo.css" %}" />
     {% htmx-headers %}
   </head>
-  <body hx-boost="true">
+  <body hx-boost="true" hx-ext="ws" ws-connect="_htmx/ws">
     <section>
       {% block body %}
       {% endblock body %}

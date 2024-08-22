@@ -47,6 +47,7 @@ dev-dependencies = [
     "isort~=5.13.2",
     "ipdb~=0.13.13",
     "django-extensions~=3.2.3",
+    "uvicorn[standard]>=0.30.6",
 ]
 
 

@@ -77,6 +77,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "fision.wsgi.application"
 ASGI_APPLICATION = "fision.asgi.application"
+# CHANNEL_LAYERS = {"default": {'BACKEND': }}
 
 # Database
 # https://docs.djangoproject.com/en/2.2/ref/settings/#databases

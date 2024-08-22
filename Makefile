@@ -44,7 +44,7 @@ pyright:
 
 run: install
 	@$(RUN) python src/tests/manage.py migrate
-	@$(RUN) python src/tests/manage.py runserver
+	@cd src/tests; $(RUN) uvicorn --reload --reload-include="*.html" --reload-dir=../ fision.asgi:application
 .PHONY: run
 
 
