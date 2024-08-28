@@ -35,6 +35,11 @@ dependencies = [
 [project.urls]
 Repository="https://github.com/edelvalle/djhtmx"
 
+[project.optional-dependencies]
+sentry = [
+    "sentry-sdk[django]>=2.13.0,<3.0",
+]
+
 
 [build-system]
 requires = ["hatchling"]
