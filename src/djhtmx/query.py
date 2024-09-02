@@ -287,7 +287,7 @@ class QueryPatcher:
             raise TypeError(f"Invalid query string annotations in {component_cls}") from cause
 
 
-_VALID_QS_NAME_RX = re.compile(r"^[a-zA-Z\d][-a-zA-Z\d]*$")
+_VALID_QS_NAME_RX = re.compile(r"^[a-zA-Z\d][-_a-zA-Z\d]*$")
 _SEQUENCE_ANNOTATIONS = (
     list,
     set,
