@@ -4,7 +4,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from djhtmx.component import PydanticComponent, Query
+from djhtmx.component import Destroy, Emit, Focus, PydanticComponent, Query, Render
 
 from .models import Item
 
@@ -79,12 +79,7 @@ class ListHeader(PydanticComponent):
 
     def add(self, new_item: str):
         item = Item.objects.create(text=new_item)
-        self.controller.append(
-            "#todo-list",
-            TodoItem,
-            id=f"item-{item.id}",
-            item=item,
-        )
+        yield Render.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
 
 
 class TodoItem(PydanticComponent):
@@ -95,7 +90,7 @@ class TodoItem(PydanticComponent):
 
     def delete(self):
         self.item.delete()
-        self.controller.destroy()
+        yield Destroy(self.id)
 
     def completed(self, completed: bool = False):
         self.item.completed = completed
@@ -105,7 +100,7 @@ class TodoItem(PydanticComponent):
         if not self.item.completed:
             self.editing = not self.editing
         if self.editing:
-            self.controller.focus(f"#{self.id} input[name=text]")
+            yield Focus(f"#{self.id} input[name=text]")
 
     def save(self, text):
         self.item.text = text
@@ -132,5 +127,5 @@ class TodoFilter(PydanticComponent):
     query: t.Annotated[str, Query("q")] = ""
 
     def set_query(self, query: str = ""):
-        self.query = query = query.strip()
-        self.controller.emit(FilterChanged(query))
+        self.query = query.strip()
+        yield Emit(FilterChanged(self.query))

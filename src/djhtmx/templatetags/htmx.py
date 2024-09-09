@@ -1,5 +1,4 @@
 import typing as t
-from uuid import uuid4
 
 from django import template
 from django.core.signing import Signer
@@ -9,7 +8,7 @@ from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
 
 from .. import json, settings
-from ..component import REGISTRY, Component, PydanticComponent, Repository
+from ..component import REGISTRY, Component, PydanticComponent, Repository, generate_id
 
 register = template.Library()
 signer = Signer()
@@ -35,7 +34,7 @@ def htmx_headers(context):
 
 
 @register.simple_tag(takes_context=True)
-def htmx(context, _name: str, **state):
+def htmx(context, _name: str, _state: dict[str, t.Any] = None, **state):
     """Inserts an HTMX Component.
 
     Pass the component name and the initial state:
@@ -44,21 +43,17 @@ def htmx(context, _name: str, **state):
         {% htmx 'AmazinData' data=some_data %}
         ```
     """
-    repo = Repository.from_request(
-        context["request"],
-        states_by_id={},
-        subscriptions_by_id={},
-    )
+    state = _state or {} | state
+    repo = context.get("htmx_repo") or Repository.from_request(context["request"])
+
     if _name in REGISTRY:
         # PydanticComponent
+        repo = context.get("htmx_repo") or Repository.from_request(context["request"])
         component = repo.build(_name, state)
         return repo.render_html(component)
     else:
         # Legacy Component
-        if "id" in state:
-            id = state.pop("id")
-        else:
-            id = f"hx-{uuid4().hex}"
+        id = state.pop("id", None) or generate_id()
         component = Component._build(_name, context["request"], id, state)
         return mark_safe(component._render())
 
@@ -78,16 +73,13 @@ def hx_tag(context, swap: str = "outerHTML"):
     """
     component: Component | PydanticComponent = context["this"]
     if isinstance(component, PydanticComponent):
-        oob = context.get("hx_oob")
         attrs = {
             "id": component.id,
             "hx-swap": swap,
-            "hx-swap-oob": oob,
+            "hx-include": f"#{component.id} [name]",
             "data-hx-state": signer.sign(component.model_dump_json()),
             "data-hx-subscriptions": (
-                ",".join(subscriptions)
-                if (subscriptions := component._get_all_subscriptions())
-                else None
+                ",".join(subscriptions) if (subscriptions := component.subscriptions) else None
             ),
         }
         return format_html_attrs(attrs)
@@ -120,8 +112,7 @@ def on(
     context,
     _trigger,
     _event_handler=None,
-    hx_target: str | object | None = unset,
-    hx_include: str | object | None = unset,
+    hx_include: str = None,
     **kwargs,
 ):
     """Binds an event to a handler
@@ -163,13 +154,21 @@ def on(
             getattr(component, _event_handler, None)
         ), f"{type(component).__name__}.{_event_handler} event handler not found"
 
-    attrs = {
-        "hx-post": event_url(component, _event_handler),
-        "hx-trigger": _trigger,
-        "hx-target": f"#{component.id}" if hx_target is unset else hx_target,
-        "hx-include": (f"#{component.id} [name]" if hx_include is unset else hx_include),
-        "hx-vals": json.dumps(kwargs) if kwargs else None,
-    }
+    if isinstance(component, PydanticComponent):
+        attrs = {
+            "ws-send": _event_handler,
+            "hx-trigger": _trigger,
+            "hx-vals": json.dumps(kwargs) if kwargs else None,
+        }
+    else:
+        attrs = {
+            "hx-post": event_url(component, _event_handler),
+            "hx-trigger": _trigger,
+            "hx-target": f"#{component.id}",
+            "hx-vals": json.dumps(kwargs) if kwargs else None,
+        }
+    if hx_include:
+        attrs |= {"hx-include": hx_include}
     return format_html_attrs(attrs)
 
 
@@ -181,25 +180,14 @@ def format_html_attrs(attrs: dict[str, t.Any]):
     )
 
 
-def event_url(component: PydanticComponent | Component, event_handler: str):
-    if isinstance(component, PydanticComponent):
-        component_name = type(component).__name__
-        return reverse(
-            f"djhtmx.{component_name}",
-            kwargs={
-                "component_id": component.id,
-                "event_handler": event_handler,
-            },
-        )
-    else:
-        return reverse(
-            "djhtmx.legacy_endpoint",
-            kwargs={
-                "component_name": type(component).__name__,
-                "component_id": component.id,
-                "event_handler": event_handler,
-            },
-        )
+def event_url(component: Component, event_handler: str):
+    return reverse(
+        f"djhtmx.{type(component).__name__}",
+        kwargs={
+            "component_id": component.id,
+            "event_handler": event_handler,
+        },
+    )
 
 
 # Shortcuts and helpers

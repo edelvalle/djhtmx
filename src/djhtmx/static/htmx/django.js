@@ -1,30 +1,4 @@
 (function () {
-    document.body.addEventListener("htmx:afterSwap", (event) => {
-        let hxState = event.detail.xhr.getResponseHeader("HX-State");
-        if (hxState) {
-            let { component_id, state } = JSON.parse(hxState);
-            let element = document.getElementById(component_id);
-            if (element) element.dataset.hxState = state;
-        }
-    });
-
-    document.body.addEventListener("htmx:beforeRequest", (event) => {
-        let subscriptions = {};
-        let states = [];
-        document.querySelectorAll("[data-hx-state]").forEach((element) => {
-            let hxSubscriptions = element.dataset.hxSubscriptions;
-            if (hxSubscriptions !== undefined) {
-                subscriptions[element.id] = element.dataset.hxSubscriptions;
-            }
-            states.push(element.dataset.hxState);
-        });
-        event.detail.requestConfig.unfilteredParameters["__hx-states__"] =
-            states;
-        event.detail.requestConfig.unfilteredParameters[
-            "__hx-subscriptions__"
-        ] = subscriptions;
-    });
-
     document.body.addEventListener("htmx:configRequest", (event) => {
         const csrf_header = document
             .querySelector("meta[name=djang-csrf-header-name]")
@@ -33,31 +7,137 @@
             .querySelector("meta[name=djang-csrf-token]")
             .getAttribute("content");
         event.detail.headers[csrf_header] = csrf_token;
+
+        let element = event.detail.elt.closest("[data-hx-state]");
+        if (element) {
+            event.detail.headers["X-Component-State"] = element.dataset.hxState;
+        }
     });
 
-    document.addEventListener("hxDispatchEvent", (event) => {
-        event.detail.value.map(
-            ({ event, target, detail, bubbles, cancelable, composed }) => {
-                let el = document.querySelector(target);
-                if (typeof el != "undefined" && el != null) {
-                    // This setTimeout basically queues the dispatch of the event
-                    // to avoid dispatching events within events handlers.
-                    setTimeout(
-                        () =>
-                            el.dispatchEvent(
-                                new CustomEvent(event, {
-                                    detail,
-                                    bubbles,
-                                    cancelable,
-                                    composed,
-                                }),
-                            ),
-                        0,
-                    );
-                }
-            },
+    // WebSocket Management
+    let sentComponents = new Set();
+
+    function sendRemovedComponents(event) {
+        let removedComponents = Array.from(sentComponents).filter(
+            (id) => !document.getElementById(id),
         );
+        removedComponents.forEach((id) => sentComponents.delete(id));
+        if (removedComponents.length) {
+            event.detail.socketWrapper.send(
+                JSON.stringify({
+                    type: "removed",
+                    component_ids: removedComponents,
+                }),
+            );
+        }
+    }
+
+    function sendAddedComponents(event) {
+        let states = [];
+        let subscriptions = new Map();
+        let ids = new Set();
+
+        Array.from(document.querySelectorAll("[data-hx-state]"))
+            .filter((el) => !sentComponents.has(el.id))
+            .forEach((element) => {
+                let hxSubscriptions = element.dataset.hxSubscriptions;
+                if (hxSubscriptions !== undefined) {
+                    subscriptions[element.id] = element.dataset.hxSubscriptions;
+                }
+                states.push(element.dataset.hxState);
+                ids.add(element.id);
+            });
+        ids.forEach((id) => sentComponents.add(id));
+
+        if (ids.size) {
+            event.detail.socketWrapper.send(
+                JSON.stringify({
+                    type: "added",
+                    states,
+                    subscriptions,
+                }),
+            );
+        }
+    }
+
+    document.addEventListener("htmx:wsOpen", (event) => {
+        console.log("OPEN", event);
+        sentComponents.clear();
     });
+
+    document.addEventListener("htmx:wsClose", (event) => {
+        console.log("CLOSE", event);
+        sentComponents.clear();
+    });
+
+    document.addEventListener("htmx:wsConfigSend", (event) => {
+        sendRemovedComponents(event);
+        sendAddedComponents(event);
+        event.detail.headers["HX-Component-Id"] =
+            event.detail.elt.closest("[data-hx-state]").id;
+        event.detail.headers["HX-Component-Handler"] =
+            event.detail.elt.getAttribute("ws-send");
+    });
+
+    document.addEventListener("htmx:wsBeforeMessage", (event) => {
+        if (event.detail.message.startsWith("{")) {
+            let commandData = JSON.parse(event.detail.message);
+            event.preventDefault();
+            let { command } = commandData;
+            switch (command) {
+                case "destroy": {
+                    let { component_id } = commandData;
+                    document.getElementById(component_id)?.remove();
+                    break;
+                }
+                case "focus": {
+                    let { selector } = commandData;
+                    document.querySelector(selector)?.focus();
+                    break;
+                }
+                case "redirect": {
+                    let { url } = commandData;
+                    location.assign(url);
+                    break;
+                }
+                case "dispatch_event": {
+                    let = { target, detail, buubles, cancelable, composed } =
+                        commandData;
+                    document.querySelector(target)?.dispatchEvent(
+                        new CustomEvent(event, {
+                            detail,
+                            buubles,
+                            cancelable,
+                            composed,
+                        }),
+                    );
+                    break;
+                }
+                case "send_state": {
+                    let { component_id, state } = commandData;
+                    let component = document.getElementById(component_id);
+                    if (component) {
+                        component.dataset.hxState = state;
+                    }
+                    break;
+                }
+                case "push_url": {
+                    let { url } = commandData;
+                    history.pushState({}, document.title, url);
+                    break;
+                }
+
+                default:
+                    console.error(
+                        "Can't process command:",
+                        event.detail.message,
+                    );
+                    break;
+            }
+        }
+    });
+
+    document.addEventListener("htmx:wsAfterMessage", (event) => {});
 
     document.addEventListener("hxFocus", (event) => {
         event.detail.value.map((selector) => {
@@ -65,6 +145,24 @@
         });
     });
 })();
+
+function getStatesAndSubscriptions(elements) {
+    let states = [];
+    let subscriptions = new Map();
+    let ids = new Set();
+    if (elements === undefined) {
+        elements = document.querySelectorAll("[data-hx-state]");
+    }
+    elements.forEach((element) => {
+        let hxSubscriptions = element.dataset.hxSubscriptions;
+        if (hxSubscriptions !== undefined) {
+            subscriptions[element.id] = element.dataset.hxSubscriptions;
+        }
+        states.push(element.dataset.hxState);
+        ids.add(element.id);
+    });
+    return { ids, states, subscriptions };
+}
 
 // Local Variables:
 // js-indent-level: 4

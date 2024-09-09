@@ -1,8 +1,8 @@
+import hashlib
 import typing as t
+from uuid import uuid4
 
 from django.db import models
-
-from djhtmx.query import Query, QueryPatcher
 
 
 def get_model_subscriptions(
@@ -35,15 +35,33 @@ def get_model_subscriptions(
     return result
 
 
-def get_query_subscription(obj: Query | QueryPatcher | str) -> str:
-    "Return the subscription for a query-string object or name."
-    match obj:
-        case Query():
-            name = obj.name
-        case QueryPatcher():
-            name = obj.qs_arg
-        case str():
-            name = obj
-        case _:
-            raise TypeError("Invalid type calling get_query_subscription")
-    return f"querystring.{name}"
+def compact_hash(v: str) -> str:
+    """Return a SHA1 using a very base with 64+ symbols"""
+    h = hashlib.sha1()
+    h.update(v.encode("ascii"))
+    digest = h.digest()
+    return bytes_compact_digest(digest)
+
+
+def generate_id():
+    return f"hx-{bytes_compact_digest(uuid4().bytes)}"
+
+
+def bytes_compact_digest(digest: bytes):
+    # Convert the binary digest to an integer
+    num = int.from_bytes(digest, byteorder="big")
+
+    # Convert the integer to the custom base
+    base_len = len(_BASE)
+    encoded = []
+    while num > 0:
+        num, rem = divmod(num, base_len)
+        encoded.append(_BASE[rem])
+
+    return "".join(encoded)
+
+
+# The order of the base is random so that it doesn't match anything out there.
+# The symbols are chosen to avoid extra encoding in the URL and HTML, and but
+# put in plain CSS selectors.
+_BASE = "ZmBeUHhTgusXNW_Y1b05KPiFcQJD86joqnIRE7Lfkrdp3AOMCvltSwzVG9yxa42"

@@ -1,18 +1,105 @@
-import json
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, ParamSpec, TypeVar, cast
 
+from channels.db import database_sync_to_async as db  # type: ignore
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.http.request import QueryDict
+from pydantic import BaseModel, TypeAdapter
+
+from . import json
+from .component import (
+    Command,
+    Destroy,
+    DispatchEvent,
+    Focus,
+    PushURL,
+    Redirect,
+    Repository,
+    SendHtml,
+    SendState,
+    get_params,
+)
+
+
+class ComponentsRemoved(BaseModel):
+    type: Literal["removed"]
+    component_ids: list[str]
+
+
+class ComponentsAdded(BaseModel):
+    type: Literal["added"]
+    states: list[str]
+    subscriptions: dict[str, str]
+
+
+Event = ComponentsRemoved | ComponentsAdded
+EventAdapter = TypeAdapter(Event)
+
+if TYPE_CHECKING:
+    T = TypeVar("T")
+    P = ParamSpec("P")
+
+    def db(f: Callable[P, T]) -> Callable[P, Awaitable[T]]: ...
 
 
 class Consumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
-        print(self.scope)
         await self.accept()
+        self.repo = Repository(self.scope["user"], params=QueryDict(None, mutable=True))
 
-    def disconnect(self, close_code):
-        pass
+    async def disconnect(self, code):
+        await super().disconnect(code)
 
-    async def receive(self, text_data):
-        text_data_json = json.loads(text_data)
-        message = text_data_json["message"]
+    async def receive_json(self, event_data: dict[str, Any]):
+        if headers := event_data.pop("HEADERS", None):
+            url = headers["HX-Current-URL"]
+            component_id = headers["HX-Component-Id"]
+            event_handler = headers["HX-Component-Handler"]
+            params = get_params(url)
+            print("> Call:", component_id, event_handler)
+            self.repo.params.clear()
+            self.repo.params.update(params)  # type: ignore
 
-        await self.send(text_data=json.dumps({"message": message}))
+            # Prevents duplicate renders being sent to the client
+            sent_html = set()
+
+            # Command dispatching
+            for command in await db(
+                lambda: list(self.repo.dispatch_event(component_id, event_handler, event_data))
+            )():
+                match command:
+                    case SendHtml(html):
+                        if html not in sent_html:
+                            await self.send(html)
+                            sent_html.add(html)
+                    case (
+                        Destroy(_)
+                        | Redirect(_)
+                        | Focus(_)
+                        | DispatchEvent(_)
+                        | SendState(_)
+                        | PushURL(_)
+                    ):
+                        print("< Command:", command)
+                        await self.send_json(command)
+
+        else:
+            event: Event = cast(Event, EventAdapter.validate_python(event_data))
+            print("> Event:", event)
+            match event:
+                case ComponentsRemoved(component_ids=component_ids):
+                    for component_id in component_ids:
+                        self.repo.unregister_component(component_id)
+                case ComponentsAdded(states=states, subscriptions=subscriptions):
+                    await db(self.repo.add)(states, subscriptions)
+
+    async def send_commands(self, commands: list[Command]):
+        for command in commands:
+            await self.send_json(command)
+
+    @classmethod
+    async def decode_json(cls, text_data) -> dict[str, Any]:
+        return json.loads(text_data)
+
+    @classmethod
+    async def encode_json(cls, content) -> str:
+        return json.dumps(content)

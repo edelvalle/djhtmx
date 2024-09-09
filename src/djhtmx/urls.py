@@ -1,24 +1,15 @@
 from functools import partial
 
+from django.core.signing import Signer
 from django.urls import path, re_path
 
 from . import json
-from .component import REGISTRY, Component
+from .component import Component
 from .consumer import Consumer
-from .executor import Executor, signer
 from .introspection import filter_parameters, parse_request_data
 from .tracing import sentry_request_transaction
 
-
-def endpoint(request, component_name, component_id, event_handler):
-    with sentry_request_transaction(request, component_name, event_handler):
-        executor = Executor(
-            request,
-            component_name,
-            component_id,
-            event_handler,
-        )
-        return executor()
+signer = Signer()
 
 
 def legacy_endpoint(request, component_name, component_id, event_handler):
@@ -41,18 +32,13 @@ def legacy_endpoint(request, component_name, component_id, event_handler):
 urlpatterns = [
     path(
         f"{component_name}/<component_id>/<event_handler>",
-        partial(endpoint, component_name=component_name),
+        partial(legacy_endpoint, component_name=component_name),
         name=f"djhtmx.{component_name}",
     )
-    for component_name in REGISTRY
+    for component_name in Component._all
 ]
 
-urlpatterns += [
-    path(
-        "<component_name>/<component_id>/<event_handler>",
-        legacy_endpoint,
-        name="djhtmx.legacy_endpoint",
-    )
-]
 
-ws_urlpatterns = [re_path("ws", Consumer.as_asgi(), name="djhtmx.ws")]
+ws_urlpatterns = [
+    re_path("ws", Consumer.as_asgi(), name="djhtmx.ws"),  # type: ignore
+]

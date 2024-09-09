@@ -7,11 +7,11 @@ from channels.security.websocket import AllowedHostsOriginValidator
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fision.settings")
-django.setup()
+http_application = get_asgi_application()
 
 from djhtmx.urls import ws_urlpatterns
 
 application = ProtocolTypeRouter({
-    "http": get_asgi_application(),
+    "http": http_application,
     "websocket": AllowedHostsOriginValidator(AuthMiddlewareStack(URLRouter(ws_urlpatterns))),
 })
