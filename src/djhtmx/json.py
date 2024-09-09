@@ -3,11 +3,18 @@ import enum
 import json
 from typing import Generator
 
+import orjson
 from django.core.serializers import deserialize, serialize
 from django.core.serializers.base import DeserializedObject
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 from pydantic import BaseModel
+
+loads = orjson.loads
+
+
+def dumps(obj):
+    return orjson.dumps(obj, default).decode()
 
 
 def encode(instance: models.Model) -> str:
@@ -20,8 +27,15 @@ def decode(instance: str) -> models.Model:
     return obj.object
 
 
-class HtmxEncoder(DjangoJSONEncoder):
+class HtmxEncoder(json.JSONEncoder):
     def default(self, o):
+        return default(o)
+
+
+def default(o):
+    try:
+        DjangoJSONEncoder().default(o)
+    except TypeError as e:
         if hasattr(o, "__json__"):
             return o.__json__()
 
@@ -39,12 +53,4 @@ class HtmxEncoder(DjangoJSONEncoder):
 
         if isinstance(o, enum.Enum):
             return o.value
-
-        return super().default(o)
-
-
-loads = json.loads
-
-
-def dumps(obj, cls=HtmxEncoder, *args, **kwargs):
-    return json.dumps(obj, cls=cls, *args, **kwargs)
+        raise e
