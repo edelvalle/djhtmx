@@ -102,10 +102,8 @@ class QueryPatcher:
                     signal_name=f"querystring.{param_name}",
                 )
 
-    def get_update_for_state(self, params: QueryDict, state: dict[str, t.Any]):
-        if (param := params.get(self.param_name)) is not None and state.get(
-            self.field_name
-        ) != param:
+    def get_update_for_state(self, params: QueryDict):
+        if (param := params.get(self.param_name)) is not None:
             return {self.field_name: param}
         else:
             return {}

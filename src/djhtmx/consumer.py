@@ -59,18 +59,13 @@ class Consumer(AsyncJsonWebsocketConsumer):
             self.repo.params.clear()
             self.repo.params.update(params)  # type: ignore
 
-            # Prevents duplicate renders being sent to the client
-            sent_html = set()
-
             # Command dispatching
             for command in await db(
                 lambda: list(self.repo.dispatch_event(component_id, event_handler, event_data))
             )():
                 match command:
                     case SendHtml(html):
-                        if html not in sent_html:
-                            await self.send(html)
-                            sent_html.add(html)
+                        await self.send(html)
                     case (
                         Destroy(_)
                         | Redirect(_)

@@ -328,6 +328,7 @@ class Repository:
 
         # Keeps track of destroyed components to avoid rendering them
         destroyed_ids: set[str] = set()
+        sent_html = set()
 
         # Command loop
         while commands:
@@ -346,7 +347,6 @@ class Repository:
                                 or isinstance(command, Render)
                                 and command.component_id == component.id
                             )
-
                             commands.append(command)
 
                     if not component_was_rendered:
@@ -377,9 +377,10 @@ class Repository:
                     if template:
                         commands.append(SkipRender(component))
 
-                    print("Render", component.id)
                     html = self.render_html(component, oob=oob, template=template)
-                    yield SendHtml(html)
+                    if html not in sent_html:
+                        yield SendHtml(html)
+                        sent_html.add(html)
 
                 case Destroy(component_id) as command:
                     destroyed_ids.add(component_id)
@@ -390,8 +391,7 @@ class Repository:
                     for name in LISTENERS[type(event)]:
                         for component in self.get_components_by_name(name):
                             logger.debug("> AWAKED: %s", component)
-                            emited_commands = component._handle_event(event)  # type: ignore
-                            if emited_commands:
+                            if emited_commands := component._handle_event(event):  # type: ignore
                                 commands.extend(emited_commands)
                             commands.append(Render(component))
 
@@ -421,10 +421,12 @@ class Repository:
         """
         updated_params: set[str] = set()
         if patchers := _get_query_patchers(component.hx_name):
-            data = component.model_dump(include={p.field_name for p in patchers})
             for patcher in patchers:
                 updated_params.update(
-                    patcher.get_updates_for_params(data[patcher.field_name], self.params)
+                    patcher.get_updates_for_params(
+                        None if (v := getattr(component, patcher.field_name)) is None else str(v),
+                        self.params,
+                    )
                 )
         return updated_params
 
@@ -455,7 +457,7 @@ class Repository:
 
         # Patch it with whatever is the the GET params if needed
         for patcher in _get_query_patchers(component_name):
-            state |= patcher.get_update_for_state(self.params, state)
+            state |= patcher.get_update_for_state(self.params)
 
         # Build
         if component_id and (component := self.component_by_id.get(component_id)):
@@ -475,14 +477,15 @@ class Repository:
         return self.register_component(component)
 
     def get_components_by_name(self, name: str):
-        # awake sleeping components
+        # go over awaken components
+        for component in self.component_by_id.values():
+            if component.hx_name == name:
+                yield self.build(component.hx_name, {"id": component.id})
+
+        # go over asleep components
         for state in list(self.states_by_id.values()):
             if state["hx_name"] == name:
-                self.build(name, state)
-
-        return [
-            component for component in self.component_by_id.values() if component.hx_name == name
-        ]
+                yield self.build(name, state)
 
     def render_html(
         self,
