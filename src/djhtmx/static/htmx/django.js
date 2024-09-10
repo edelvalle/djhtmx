@@ -137,8 +137,6 @@
         }
     });
 
-    document.addEventListener("htmx:wsAfterMessage", (event) => {});
-
     document.addEventListener("hxFocus", (event) => {
         event.detail.value.map((selector) => {
             document.querySelector(selector).focus();
