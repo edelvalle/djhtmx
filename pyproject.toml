@@ -32,6 +32,7 @@ dependencies = [
    "xotl.tools>=3.1.1",
    "orjson>=3.10.7",
    "channels>=4.1.0",
+   "uuid6>=2024.7.10",
 ]
 
 

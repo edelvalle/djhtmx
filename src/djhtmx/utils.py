@@ -1,9 +1,9 @@
 import hashlib
 import typing as t
-from uuid import uuid4
 
 from channels.db import database_sync_to_async as db  # type: ignore
 from django.db import models
+from uuid6 import uuid7
 
 if t.TYPE_CHECKING:
     T = t.TypeVar("T")
@@ -51,7 +51,7 @@ def compact_hash(v: str) -> str:
 
 
 def generate_id():
-    return f"hx-{bytes_compact_digest(uuid4().bytes)}"
+    return f"hx-{uuid7().hex}"
 
 
 def bytes_compact_digest(digest: bytes):

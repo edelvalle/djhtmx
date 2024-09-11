@@ -15,7 +15,6 @@ from django.contrib.auth.models import AbstractUser, AnonymousUser
 from django.core.signing import Signer
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
-from django.db.transaction import atomic
 from django.dispatch.dispatcher import receiver
 from django.http import HttpRequest, HttpResponse, QueryDict
 from django.shortcuts import resolve_url
@@ -383,31 +382,31 @@ class Repository:
                     yield command
 
                 case Emit(event):
-                    for name in LISTENERS[type(event)]:
-                        for component in await db(list)(self.get_components_by_name(name)):
-                            logger.debug("> AWAKED: %s", component)
-                            if emited_commands := await db(component._handle_event)(event):  # type: ignore
-                                commands.extend(await db(list)(emited_commands))
-                            commands.append(Render(component))
+                    for component in await db(self.get_components_by_names)(LISTENERS[type(event)]):
+                        logger.debug("> AWAKED: %s", component)
+                        if emited_commands := await db(component._handle_event)(event):  # type: ignore
+                            commands.extend(await db(list)(emited_commands))
+                        commands.append(Render(component))
 
-                            if signals := self.update_params_from(component):
-                                yield PushURL.from_params(self.params)
-                                commands.extend(Signal(s) for s in signals)
+                        if signals := self.update_params_from(component):
+                            yield PushURL.from_params(self.params)
+                            commands.extend(Signal(s) for s in signals)
 
                 case Signal(signal):
-                    for component in await db(list)(self.get_components_subscribed_to(signal)):
+                    for component in await db(self.get_components_subscribed_to)(signal):
                         commands.append(Render(component))
 
                 case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
                     yield command
 
     def get_components_subscribed_to(self, signal: str) -> t.Iterable[PydanticComponent]:
-        for component_id in list(self.subscriptions[signal]):
-            yield self.get_component_by_id(component_id)
-
-        for component in self.component_by_id.values():
-            if component._match_subscription(signal):
-                yield self.get_component_by_id(component.id)
+        component_ids = list(self.subscriptions[signal])
+        component_ids.extend(
+            component.id
+            for component in self.component_by_id.values()
+            if component._match_subscription(signal)
+        )
+        return [self.get_component_by_id(c_id) for c_id in sorted(component_ids)]
 
     def update_params_from(self, component: PydanticComponent) -> set[str]:
         """Updates self.params based on the state of the component
@@ -471,16 +470,19 @@ class Repository:
 
         return self.register_component(component)
 
-    def get_components_by_name(self, name: str):
+    def get_components_by_names(self, names: t.Iterable[str]) -> t.Iterable[PydanticComponent]:
         # go over awaken components
-        for component in self.component_by_id.values():
-            if component.hx_name == name:
-                yield self.build(component.hx_name, {"id": component.id})
+        components = []
+        for name in names:
+            for component in self.component_by_id.values():
+                if component.hx_name == name:
+                    components.append(self.build(component.hx_name, {"id": component.id}))
 
-        # go over asleep components
-        for state in list(self.states_by_id.values()):
-            if state["hx_name"] == name:
-                yield self.build(name, state)
+            # go over asleep components
+            for state in list(self.states_by_id.values()):
+                if state["hx_name"] == name:
+                    components.append(self.build(name, state))
+        return sorted(components, key=lambda c: c.id)
 
     def render_html(
         self,
