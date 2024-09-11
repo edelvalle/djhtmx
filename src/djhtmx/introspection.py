@@ -108,7 +108,7 @@ def get_related_fields(model):
 # filtering
 
 
-def filter_parameters(f, kwargs):
+def filter_parameters(f: t.Callable, kwargs: dict[str, t.Any]):
     has_kwargs = any(
         param.kind == Parameter.VAR_KEYWORD for param in inspect.signature(f).parameters.values()
     )

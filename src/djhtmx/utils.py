@@ -2,7 +2,14 @@ import hashlib
 import typing as t
 from uuid import uuid4
 
+from channels.db import database_sync_to_async as db  # type: ignore
 from django.db import models
+
+if t.TYPE_CHECKING:
+    T = t.TypeVar("T")
+    P = t.ParamSpec("P")
+
+    def db(f: t.Callable[P, T]) -> t.Callable[P, t.Awaitable[T]]: ...
 
 
 def get_model_subscriptions(

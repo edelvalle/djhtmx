@@ -36,7 +36,7 @@ from .introspection import (
 )
 from .query import Query, QueryPatcher
 from .tracing import sentry_span
-from .utils import generate_id, get_model_subscriptions
+from .utils import db, generate_id, get_model_subscriptions
 
 __all__ = ("Component", "PydanticComponent", "Query", "ComponentNotFound")
 
@@ -293,13 +293,12 @@ class Repository:
         for subscription, component_ids in self.subscriptions.items():
             self.subscriptions[subscription].difference_update([component_id])
 
-    @atomic
-    def dispatch_event(
+    async def dispatch_event(
         self,
         component_id: str,
         event_handler: str,
         event_data: dict[str, t.Any],
-    ) -> t.Iterable[ProcessedCommand]:
+    ) -> t.AsyncIterable[ProcessedCommand]:
         commands: list[Command] = [Execute(component_id, event_handler, event_data)]
 
         # Listen to model signals during execution
@@ -335,12 +334,12 @@ class Repository:
             match commands.pop(0):
                 case Execute(component_id, event_handler, event_data):
                     # handle event
-                    component = self.get_component_by_id(component_id)
+                    component = await db(self.get_component_by_id)(component_id)
                     handler = getattr(component, event_handler)
                     handler_kwargs = filter_parameters(handler, event_data)
                     component_was_rendered = False
-                    if emited_commands := handler(**handler_kwargs):
-                        for command in emited_commands:
+                    if emited_commands := await db(handler)(**handler_kwargs):
+                        for command in await db(list)(emited_commands):
                             component_was_rendered = (
                                 component_was_rendered
                                 or isinstance(command, SkipRender)
@@ -370,14 +369,14 @@ class Repository:
                     # instantiate the component
                     if isinstance(component, tuple):
                         component_type, state = component
-                        component = self.build(component_type.__name__, state)
+                        component = await db(self.build)(component_type.__name__, state)
 
                     # why? because this is a partial render and the state of the object is not
                     # updated in the root tag, and it has to be up to date in case of disconnection
                     if template:
                         commands.append(SkipRender(component))
 
-                    html = self.render_html(component, oob=oob, template=template)
+                    html = await db(self.render_html)(component, oob=oob, template=template)
                     if html not in sent_html:
                         yield SendHtml(html)
                         sent_html.add(html)
@@ -389,10 +388,10 @@ class Repository:
 
                 case Emit(event):
                     for name in LISTENERS[type(event)]:
-                        for component in self.get_components_by_name(name):
+                        for component in await db(self.get_components_by_name)(name):
                             logger.debug("> AWAKED: %s", component)
-                            if emited_commands := component._handle_event(event):  # type: ignore
-                                commands.extend(emited_commands)
+                            if emited_commands := await db(component._handle_event)(event):  # type: ignore
+                                commands.extend(await db(list)(emited_commands))
                             commands.append(Render(component))
 
                             if signals := self.update_params_from(component):
@@ -400,19 +399,19 @@ class Repository:
                                 commands.extend(Signal(s) for s in signals)
 
                 case Signal(signal):
-                    for component_id in self.get_component_ids_subscribed_to(signal):
-                        commands.append(Render(self.get_component_by_id(component_id)))
+                    for component in await db(self.get_components_subscribed_to)(signal):
+                        commands.append(Render(component))
 
                 case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
                     yield command
 
-    def get_component_ids_subscribed_to(self, signal: str) -> t.Iterable[str]:
-        yield from list(self.subscriptions[signal])
-        yield from (
-            component.id
-            for component in self.component_by_id.values()
-            if component._match_subscription(signal)
-        )
+    def get_components_subscribed_to(self, signal: str) -> t.Iterable[PydanticComponent]:
+        for component_id in list(self.subscriptions[signal]):
+            yield self.get_component_by_id(component_id)
+
+        for component in self.component_by_id.values():
+            if component._match_subscription(signal):
+                yield self.get_component_by_id(component.id)
 
     def update_params_from(self, component: PydanticComponent) -> set[str]:
         """Updates self.params based on the state of the component

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, ParamSpec, TypeVar, cast
+from typing import Any, Literal, cast
 
 from channels.db import database_sync_to_async as db  # type: ignore
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -34,12 +34,6 @@ class ComponentsAdded(BaseModel):
 Event = ComponentsRemoved | ComponentsAdded
 EventAdapter = TypeAdapter(Event)
 
-if TYPE_CHECKING:
-    T = TypeVar("T")
-    P = ParamSpec("P")
-
-    def db(f: Callable[P, T]) -> Callable[P, Awaitable[T]]: ...
-
 
 class Consumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
@@ -60,9 +54,7 @@ class Consumer(AsyncJsonWebsocketConsumer):
             self.repo.params.update(params)  # type: ignore
 
             # Command dispatching
-            for command in await db(
-                lambda: list(self.repo.dispatch_event(component_id, event_handler, event_data))
-            )():
+            async for command in self.repo.dispatch_event(component_id, event_handler, event_data):
                 match command:
                     case SendHtml(html):
                         await self.send(html)
