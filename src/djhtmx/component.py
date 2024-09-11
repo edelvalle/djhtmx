@@ -66,10 +66,6 @@ def get_params(url: QueryDict | str | None) -> QueryDict:
         )
 
 
-class RequestWithRepo(HttpRequest):
-    djhtmx: Repository
-
-
 PyComp = t.TypeVar("PyComp", bound="PydanticComponent")
 
 
@@ -213,7 +209,7 @@ class Repository:
     @classmethod
     def from_request(
         cls,
-        request: RequestWithRepo,
+        request: HttpRequest,
     ) -> Repository:
         """Get or build the Repository from the request.
 
@@ -225,11 +221,11 @@ class Repository:
 
         """
         if (result := getattr(request, "djhtmx", None)) is None:
-            request.djhtmx = result = cls(
+            result = cls(
                 user=getattr(request, "user", AnonymousUser()),
                 params=get_params(request.GET),
             )
-
+            setattr(request, "djhtmx", result)
         return result
 
     @classmethod
