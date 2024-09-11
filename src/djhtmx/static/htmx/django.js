@@ -71,8 +71,21 @@
     });
 
     document.addEventListener("htmx:wsConfigSend", (event) => {
+        // add indicator
+        let indicatorSelector = event.detail.elt
+            .closest("[hx-indicator]")
+            ?.getAttribute("hx-indicator");
+        if (indicatorSelector) {
+            document
+                .querySelectorAll(indicatorSelector)
+                .forEach((el) => el.classList.add("htmx-request"));
+        }
+
+        // send current state
         sendRemovedComponents(event);
         sendAddedComponents(event);
+
+        // enrich event message
         event.detail.headers["HX-Component-Id"] =
             event.detail.elt.closest("[data-hx-state]").id;
         event.detail.headers["HX-Component-Handler"] =
@@ -80,6 +93,12 @@
     });
 
     document.addEventListener("htmx:wsBeforeMessage", (event) => {
+        // remove indicator
+        document
+            .querySelectorAll(".htmx-request")
+            .forEach((el) => el.classList.remove("htmx-request"));
+
+        // process message
         if (event.detail.message.startsWith("{")) {
             let commandData = JSON.parse(event.detail.message);
             event.preventDefault();
