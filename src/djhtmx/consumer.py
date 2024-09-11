@@ -1,6 +1,5 @@
 from typing import Any, Literal, cast
 
-from channels.db import database_sync_to_async as db  # type: ignore
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.http.request import QueryDict
 from pydantic import BaseModel, TypeAdapter
@@ -77,7 +76,7 @@ class Consumer(AsyncJsonWebsocketConsumer):
                     for component_id in component_ids:
                         self.repo.unregister_component(component_id)
                 case ComponentsAdded(states=states, subscriptions=subscriptions):
-                    await db(self.repo.add)(states, subscriptions)
+                    self.repo.add(states, subscriptions)
 
     async def send_commands(self, commands: list[Command]):
         for command in commands:
