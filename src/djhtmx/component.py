@@ -395,7 +395,7 @@ class Repository:
                                 commands.extend(Signal(s) for s in signals)
 
                 case Signal(signal):
-                    for component in await db(self.get_components_subscribed_to)(signal):
+                    for component in await db(list)(self.get_components_subscribed_to(signal)):
                         commands.append(Render(component))
 
                 case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
