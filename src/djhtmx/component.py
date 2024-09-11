@@ -384,7 +384,7 @@ class Repository:
 
                 case Emit(event):
                     for name in LISTENERS[type(event)]:
-                        for component in await db(self.get_components_by_name)(name):
+                        for component in await db(list)(self.get_components_by_name(name)):
                             logger.debug("> AWAKED: %s", component)
                             if emited_commands := await db(component._handle_event)(event):  # type: ignore
                                 commands.extend(await db(list)(emited_commands))
