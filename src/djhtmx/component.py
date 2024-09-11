@@ -582,9 +582,9 @@ class PydanticComponent(BaseModel):
                 )
 
         assert isinstance(cls._template_name, ModelPrivateAttr)
-        if (
-            isinstance(cls._template_name.default, str)
-            and basename(cls._template_name.default) != f"{component_name}.html"
+        if isinstance(cls._template_name.default, str) and (
+            basename(cls._template_name.default)
+            not in (f"{klass.__name__}.html" for klass in cls.__mro__)
         ):
             logger.warn(
                 "HTMX Component <%s> template name does not match the component name",
