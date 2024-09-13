@@ -125,7 +125,11 @@ def filter_parameters(f: t.Callable, kwargs: dict[str, t.Any]):
 # Decoder for client requests
 
 
-def parse_request_data(data: MultiValueDict[str, t.Any]):
+def parse_request_data(data: MultiValueDict[str, t.Any] | dict[str, t.Any]):
+    if not isinstance(data, MultiValueDict):
+        data = MultiValueDict({
+            key: value if isinstance(value, list) else [value] for key, value in data.items()
+        })
     return _parse_obj(_extract_data(data))
 
 

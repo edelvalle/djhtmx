@@ -32,6 +32,7 @@ from .introspection import (
     get_event_handler_event_types,
     get_function_parameters,
     get_related_fields,
+    parse_request_data,
 )
 from .query import Query, QueryPatcher
 from .tracing import sentry_span
@@ -331,7 +332,7 @@ class Repository:
                     # handle event
                     component = await db(self.get_component_by_id)(component_id)
                     handler = getattr(component, event_handler)
-                    handler_kwargs = filter_parameters(handler, event_data)
+                    handler_kwargs = filter_parameters(handler, parse_request_data(event_data))
                     component_was_rendered = False
                     if emited_commands := await db(handler)(**handler_kwargs):
                         for command in await db(list)(emited_commands):
