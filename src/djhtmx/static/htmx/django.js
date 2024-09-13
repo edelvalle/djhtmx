@@ -60,14 +60,23 @@
         }
     }
 
+    function removeHtmxIndicator() {
+        // remove indicator
+        document
+            .querySelectorAll(".htmx-request")
+            .forEach((el) => el.classList.remove("htmx-request"));
+    }
+
     document.addEventListener("htmx:wsOpen", (event) => {
         console.log("OPEN", event);
         sentComponents.clear();
+        removeHtmxIndicator();
     });
 
     document.addEventListener("htmx:wsClose", (event) => {
         console.log("CLOSE", event);
         sentComponents.clear();
+        removeHtmxIndicator();
     });
 
     document.addEventListener("htmx:wsConfigSend", (event) => {
@@ -93,10 +102,7 @@
     });
 
     document.addEventListener("htmx:wsBeforeMessage", (event) => {
-        // remove indicator
-        document
-            .querySelectorAll(".htmx-request")
-            .forEach((el) => el.classList.remove("htmx-request"));
+        removeHtmxIndicator();
 
         // process message
         if (event.detail.message.startsWith("{")) {
