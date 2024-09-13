@@ -89,18 +89,20 @@ def hx_tag(context, swap: str = "outerHTML"):
             'hx-post="{url}"',
             'hx-trigger="render"',
             'hx-headers="{headers}"',
+            'hx-include="#{id} [name]"',
         ]
 
         if context.get("hx_swap_oob"):
             html.append('hx-swap-oob="true"')
         else:
-            html.append(f'hx-swap="{swap}"')
+            html.append('hx-swap="{swap}"')
 
         component = t.cast(Component, context["this"])
         return format_html(
             " ".join(html),
             id=context["id"],
             url=event_url(component, "render"),
+            swap=swap,
             headers=json.dumps({
                 "X-Component-State": signer.sign(component._state_json),
             }),
