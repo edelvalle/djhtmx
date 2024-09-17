@@ -26,20 +26,6 @@ class Query:
     You can set `shared` to False, to make this a specific (by component id)
     param.  In this case the URL is `<name>__<ns>=value`.
 
-    The `ns` is the value of the component's attribute given by `ns_attr_name`
-    (defaults to "hx_name_scrambled").
-
-    If `auto_subscribe` is True (the default), the component is automatically
-    subscribed to changes in the query string.  Otherwise, changes in the
-    query string won't be signaled.
-
-    .. important:: This attribute MUST be part of the state of the component.
-
-    .. important:: If you're going to use non-shared parameters, you SHOULD
-       really provide a consistent `ns_attr_name`.  Notice that if the
-       `ns_attr_name` returns a shared value, you might get cross-components
-       shares.
-
     """
 
     name: str
