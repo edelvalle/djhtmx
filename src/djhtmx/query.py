@@ -119,12 +119,25 @@ class QueryPatcher:
             return {}
 
     def get_updates_for_params(self, value: str | None, params: QueryDict) -> list[str]:
-        if value == params.get(self.param_name):
+        # If we're setting the default value, let remove it from the query
+        # string completely, and trigger the signal if needed.
+        if value == self.default_value:
+            params.pop(self.param_name, None)
+            if self.param_name in params:
+                return [self.signal_name]
+            else:
+                return []
+
+        # Otherwise, let's serialize the value and only update it if it is
+        # different.
+        serialized_value = self.adapter.dump_python(value, mode="json")
+        if serialized_value == params.get(self.param_name):
             return []
-        elif value == self.default_value:
+
+        if value == self.default_value:
             params.pop(self.param_name, None)
         else:
-            params[self.param_name] = str(value)
+            params[self.param_name] = serialized_value
         return [self.signal_name]
 
 

@@ -424,7 +424,7 @@ class Repository:
             for patcher in patchers:
                 updated_params.update(
                     patcher.get_updates_for_params(
-                        None if (v := getattr(component, patcher.field_name)) is None else str(v),
+                        getattr(component, patcher.field_name, None),
                         self.params,
                     )
                 )
