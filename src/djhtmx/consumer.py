@@ -48,7 +48,6 @@ class Consumer(AsyncJsonWebsocketConsumer):
             component_id = headers["HX-Component-Id"]
             event_handler = headers["HX-Component-Handler"]
             params = get_params(url)
-            print("> Call:", component_id, event_handler)
             self.repo.params.clear()
             self.repo.params.update(params)  # type: ignore
 
@@ -70,7 +69,6 @@ class Consumer(AsyncJsonWebsocketConsumer):
 
         else:
             event: Event = cast(Event, EventAdapter.validate_python(event_data))
-            print("> Event:", event)
             match event:
                 case ComponentsRemoved(component_ids=component_ids):
                     for component_id in component_ids:
