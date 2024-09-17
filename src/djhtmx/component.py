@@ -330,7 +330,10 @@ class Repository:
 
         # Command loop
         while commands:
-            match commands.pop(0):
+            print()
+            command = commands.pop(0)
+            await db(print)(command)
+            match command:
                 case Execute(component_id, event_handler, event_data):
                     # handle event
                     component = await db(self.get_component_by_id)(component_id)

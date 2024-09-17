@@ -9,6 +9,7 @@ from datetime import date
 from inspect import Parameter
 from uuid import UUID
 
+from django.apps import apps
 from django.db import models
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer, TypeAdapter
@@ -23,14 +24,14 @@ class ModelRelatedField:
     related_model_name: str
 
 
-MODEL_RELATED_FIELDS: dict[t.Type[models.Model], tuple[ModelRelatedField, ...]] = {}
+MODEL_RELATED_FIELDS: dict[type[models.Model], tuple[ModelRelatedField, ...]] = {}
 
 
-def Model(model: t.Type[models.Model]):
+def Model(model: type[models.Model]):
     return t.Annotated[
-        t.Optional[model],
+        model,
         BeforeValidator(
-            lambda v: (v if isinstance(v, model) else model.objects.filter(pk=v).first())
+            lambda v: (v if isinstance(v, model) else model.objects.filter(pk=v).get())
         ),
         PlainSerializer(
             func=lambda v: v.pk,
@@ -39,12 +40,28 @@ def Model(model: t.Type[models.Model]):
     ]
 
 
+def QuerySet(qs: type[models.QuerySet]):
+    [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
+    return t.Annotated[
+        qs,
+        BeforeValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
+        PlainSerializer(
+            func=lambda v: (
+                [instance.pk for instance in v]
+                if v._result_cache
+                else list(v.values_list("pk", flat=True))
+            ),
+            return_type=str if (pk := model().pk) is None else type(pk),
+        ),
+    ]
+
+
 def annotate_model(annotation):
     if issubclass_safe(annotation, models.Model):
         return Model(annotation)
-    elif t.get_origin(annotation) is types.UnionType:
-        return t.Union[*(annotate_model(a) for a in t.get_args(annotation))]  # type:ignore
-    elif type(annotation).__name__ == "_TypedDictMeta":
+    elif issubclass_safe(annotation, models.QuerySet):
+        return QuerySet(annotation)
+    elif t.is_typeddict(annotation):
         return t.TypedDict(
             annotation.__name__,  # type: ignore
             {
@@ -52,6 +69,16 @@ def annotate_model(annotation):
                 for k, v in t.get_type_hints(annotation).items()
             },
         )
+    elif type_ := t.get_origin(annotation):
+        if type_ is types.UnionType:
+            type_ = t.Union
+        match t.get_args(annotation):
+            case ():
+                return type_
+            case (param,):
+                return type_[annotate_model(param)]  # type: ignore
+            case params:
+                return type_[*(annotate_model(p) for p in params)]  # type: ignore
     else:
         return annotation
 
