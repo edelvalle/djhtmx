@@ -162,6 +162,9 @@ class Render:
 class SendHtml:
     content: SafeString
 
+    # XXX: Just to debug...
+    debug_trace: str | None = None
+
 
 @dataclass(slots=True)
 class Emit:
@@ -374,7 +377,7 @@ class Repository:
 
                     html = await db(self.render_html)(component, oob=oob, template=template)
                     if html not in sent_html:
-                        yield SendHtml(html)
+                        yield SendHtml(html, debug_trace=f"{component.hx_name}({component.id})")
                         sent_html.add(html)
 
                 case Destroy(component_id) as command:
@@ -384,7 +387,7 @@ class Repository:
 
                 case Emit(event):
                     for component in await db(self.get_components_by_names)(LISTENERS[type(event)]):
-                        logger.debug("> AWAKED: %s", component)
+                        logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                         if emited_commands := await db(component._handle_event)(event):  # type: ignore
                             commands.extend(await db(list)(emited_commands))
                         commands.append(Render(component))
