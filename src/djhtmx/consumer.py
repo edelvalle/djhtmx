@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Literal, cast
 
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -48,13 +49,17 @@ class Consumer(AsyncJsonWebsocketConsumer):
             component_id = headers["HX-Component-Id"]
             event_handler = headers["HX-Component-Handler"]
             params = get_params(url)
+            logger.debug(">>>> Call: %s %s", component_id, event_handler)
             self.repo.params.clear()
             self.repo.params.update(params)  # type: ignore
 
             # Command dispatching
             async for command in self.repo.dispatch_event(component_id, event_handler, event_data):
                 match command:
-                    case SendHtml(html):
+                    case SendHtml(html, debug_trace):
+                        logger.debug(
+                            "< Command: %s", f"SendHtml[{debug_trace}](... {len(html)} ...)"
+                        )
                         await self.send(html)
                     case (
                         Destroy(_)
@@ -64,11 +69,12 @@ class Consumer(AsyncJsonWebsocketConsumer):
                         | SendState(_)
                         | PushURL(_)
                     ):
-                        print("< Command:", command)
+                        logger.debug("< Command: %s", command)
                         await self.send_json(command)
 
         else:
             event: Event = cast(Event, EventAdapter.validate_python(event_data))
+            logger.debug("> Event:", event)
             match event:
                 case ComponentsRemoved(component_ids=component_ids):
                     for component_id in component_ids:
@@ -87,3 +93,6 @@ class Consumer(AsyncJsonWebsocketConsumer):
     @classmethod
     async def encode_json(cls, content) -> str:
         return json.dumps(content)
+
+
+logger = logging.getLogger(__name__)
