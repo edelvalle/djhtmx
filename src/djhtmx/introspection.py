@@ -1,13 +1,17 @@
+import datetime
+import enum
 import inspect
 import types
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import date
 from inspect import Parameter
+from uuid import UUID
 
 from django.db import models
 from django.utils.datastructures import MultiValueDict
-from pydantic import BeforeValidator, PlainSerializer
+from pydantic import BeforeValidator, PlainSerializer, TypeAdapter
 
 # model
 
@@ -176,4 +180,58 @@ def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
     return set()
 
 
+def get_annotation_adapter(annotation):
+    """Return a TypeAdapter for the annotation."""
+    if annotation is bool:
+        return infallible_bool_adapter
+
+    return TypeAdapter(
+        t.Optional[annotate_model(annotation)]  # type: ignore
+    )
+
+
+# Infallible adapter for boolean values.  't' is True, everything else is
+# False.
+infallible_bool_adapter = TypeAdapter(
+    t.Annotated[
+        bool,
+        BeforeValidator(lambda v: True if v == "t" else False),
+        PlainSerializer(lambda v: "t" if v else "f"),
+    ]
+)
+
+
+def is_basic_type(ann):
+    """Returns True if the annotation is a simple type.
+
+    Simple types are:
+
+    - Simple Python types: ints, floats, strings, UUIDs, dates and datetimes, bools,
+      and the value None.
+
+    - Instances of a Django model (which will use the PK as a proxy)
+
+    - Instances of IntEnum or StrEnum.
+
+    """
+    return (
+        ann in _SIMPLE_TYPES
+        or issubclass_safe(ann, models.Model)
+        or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
+    )
+
+
+def is_union_of_basic(ann):
+    """Returns True Union of simple types (as is_simple_annotation)"""
+    if t.get_origin(ann) is types.UnionType:
+        return all(is_basic_type(arg) for arg in t.get_args(ann))
+    return False
+
+
+def is_simple_annotation(ann):
+    "Return True if the annotation is either simple or a Union of simple"
+    return is_basic_type(ann) or is_union_of_basic(ann)
+
+
 Unset = object()
+_SIMPLE_TYPES = (int, str, float, UUID, types.NoneType, date, datetime, bool)

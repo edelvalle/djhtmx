@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from django.http import QueryDict
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
+from djhtmx.introspection import get_annotation_adapter, is_simple_annotation
 from djhtmx.utils import compact_hash
 
 
@@ -63,7 +64,9 @@ class QueryPatcher:
     param_name: str
     signal_name: str
     auto_subscribe: bool
+
     default_value: Any
+    adapter: TypeAdapter[Any]
 
     @classmethod
     def for_component(cls, component: type[BaseModel]):
@@ -78,24 +81,40 @@ class QueryPatcher:
                     )
                 seen.add(name)
 
+                # Check the type annotation.  It must be something that can
+                # reasonably be put in the URL: basic types or union of basic
+                # types.
+                annotation = field.annotation
+                if not is_simple_annotation(annotation):
+                    raise TypeError(f"Invalid type annotation {annotation} for a query string")
+
                 # Convert parameter from `search_query` to `search-query`
                 param_name = name.replace("_", "-")
 
                 # Prefix with the component name if not shared
                 if not query.shared:
                     param_name = f"{param_name}-{compact_hash(component.__name__)}"
-
+                adapter = get_annotation_adapter(field.annotation)
                 yield cls(
                     field_name=field_name,
                     param_name=param_name,
                     signal_name=f"querystring.{param_name}",
                     auto_subscribe=query.auto_subscribe,
                     default_value=field.get_default(call_default_factory=True),
+                    adapter=adapter,
                 )
 
     def get_update_for_state(self, params: QueryDict):
-        if (param := params.get(self.param_name)) is not None:
-            return {self.field_name: param}
+        if (raw_param := params.get(self.param_name)) is not None:
+            # We need to perform the validation during patching, otherwise
+            # ill-formed values in the query will cause a Pydantic
+            # ValidationError, but we should just simply ignore invalid
+            # values.
+            try:
+                parsed_param = self.adapter.validate_json(raw_param)
+            except ValueError:
+                parsed_param = self.default_value
+            return {self.field_name: parsed_param}
         else:
             return {}
 
