@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-import datetime
 import re
-import types
-import typing as t
 from dataclasses import dataclass
-from datetime import date
-from uuid import UUID
 
 from django.http import QueryDict
 from pydantic import BaseModel
@@ -26,10 +21,15 @@ class Query:
     You can set `shared` to False, to make this a specific (by component id)
     param.  In this case the URL is `<name>__<ns>=value`.
 
+    If `auto_subscribe` is True (the default), the component is automatically
+    subscribed to changes in the query string.  Otherwise, changes in the
+    query string won't be signaled.
+
     """
 
     name: str
     shared: bool = True
+    auto_subscribe: bool = True
 
     def __post_init__(self):
         assert _VALID_QS_NAME_RX.match(self.name) is not None, self.name
@@ -61,6 +61,7 @@ class QueryPatcher:
     field_name: str
     param_name: str
     signal_name: str
+    auto_subscribe: bool
 
     @classmethod
     def for_component(cls, component: type[BaseModel]):
@@ -86,6 +87,7 @@ class QueryPatcher:
                     field_name=field_name,
                     param_name=param_name,
                     signal_name=f"querystring.{param_name}",
+                    auto_subscribe=query.auto_subscribe,
                 )
 
     def get_update_for_state(self, params: QueryDict):
@@ -103,4 +105,3 @@ class QueryPatcher:
 
 
 _VALID_QS_NAME_RX = re.compile(r"^[a-zA-Z_\d][-a-zA-Z_\d]*$")
-_SIMPLE_TYPES = (int, str, float, UUID, types.NoneType, date, datetime, bool)

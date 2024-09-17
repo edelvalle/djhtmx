@@ -412,7 +412,9 @@ class Repository:
     def update_params_from(self, component: PydanticComponent) -> set[str]:
         """Updates self.params based on the state of the component
 
-        Returns True if there was an update meaning that a PushURL has to be sent to the client
+        Return the set of signals that should be triggered as the result of
+        the update.
+
         """
         updated_params: set[str] = set()
         if patchers := _get_query_patchers(component.hx_name):
@@ -517,7 +519,11 @@ def _get_query_patchers(component_name: str) -> list[QueryPatcher]:
 
 @cache
 def _get_querystring_subscriptions(component_name: str) -> frozenset[str]:
-    return frozenset({patcher.signal_name for patcher in _get_query_patchers(component_name)})
+    return frozenset({
+        patcher.signal_name
+        for patcher in _get_query_patchers(component_name)
+        if patcher.auto_subscribe
+    })
 
 
 A = t.TypeVar("A")
