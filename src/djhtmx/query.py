@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from django.http import QueryDict
 from pydantic import BaseModel
@@ -62,6 +63,7 @@ class QueryPatcher:
     param_name: str
     signal_name: str
     auto_subscribe: bool
+    default_value: Any
 
     @classmethod
     def for_component(cls, component: type[BaseModel]):
@@ -88,6 +90,7 @@ class QueryPatcher:
                     param_name=param_name,
                     signal_name=f"querystring.{param_name}",
                     auto_subscribe=query.auto_subscribe,
+                    default_value=field.get_default(call_default_factory=True),
                 )
 
     def get_update_for_state(self, params: QueryDict):
@@ -99,9 +102,11 @@ class QueryPatcher:
     def get_updates_for_params(self, value: str | None, params: QueryDict) -> list[str]:
         if value == params.get(self.param_name):
             return []
+        elif value == self.default_value:
+            params.pop(self.param_name, None)
         else:
             params[self.param_name] = str(value)
-            return [self.signal_name]
+        return [self.signal_name]
 
 
 _VALID_QS_NAME_RX = re.compile(r"^[a-zA-Z_\d][-a-zA-Z_\d]*$")
