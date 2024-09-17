@@ -43,7 +43,7 @@ def get_model_subscriptions(
 
 
 def compact_hash(v: str) -> str:
-    """Return a SHA1 using a very base with 64+ symbols"""
+    """Return a SHA1 using a base with 64+ symbols"""
     h = hashlib.sha1()
     h.update(v.encode("ascii"))
     digest = h.digest()
@@ -69,6 +69,6 @@ def bytes_compact_digest(digest: bytes):
 
 
 # The order of the base is random so that it doesn't match anything out there.
-# The symbols are chosen to avoid extra encoding in the URL and HTML, and but
-# put in plain CSS selectors.
+# The symbols are chosen to avoid extra encoding in the URL and HTML, and
+# allowed in plain CSS selectors.
 _BASE = "ZmBeUHhTgusXNW_Y1b05KPiFcQJD86joqnIRE7Lfkrdp3AOMCvltSwzVG9yxa42"
