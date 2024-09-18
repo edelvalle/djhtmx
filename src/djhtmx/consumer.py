@@ -74,7 +74,7 @@ class Consumer(AsyncJsonWebsocketConsumer):
 
         else:
             event: Event = cast(Event, EventAdapter.validate_python(event_data))
-            logger.debug("> Event:", event)
+            logger.debug("> Event: %s", event)
             match event:
                 case ComponentsRemoved(component_ids=component_ids):
                     for component_id in component_ids:
