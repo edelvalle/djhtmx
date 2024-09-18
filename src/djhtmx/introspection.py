@@ -70,7 +70,7 @@ def annotate_model(annotation):
             },
         )
     elif type_ := t.get_origin(annotation):
-        if type_ is types.UnionType:
+        if type_ is types.UnionType or type_ is t.Union:
             type_ = t.Union
         match t.get_args(annotation):
             case ():
@@ -250,7 +250,8 @@ def is_basic_type(ann):
 
 def is_union_of_basic(ann):
     """Returns True Union of simple types (as is_simple_annotation)"""
-    if t.get_origin(ann) is types.UnionType:
+    type_ = t.get_origin(ann)
+    if type_ is types.UnionType or type_ is t.Union:
         return all(is_basic_type(arg) for arg in t.get_args(ann))
     return False
 
