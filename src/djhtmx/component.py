@@ -586,7 +586,7 @@ class PydanticComponent(BaseModel):
                 and not hasattr(cls, "_handle_event")
                 and not hasattr(cls, "subscriptions")
             ):
-                logger.warn(
+                logger.warning(
                     "HTMX Component <%s> has no event handlers, probably should not exist and be just a template",
                     FQN[cls],
                 )
@@ -596,7 +596,7 @@ class PydanticComponent(BaseModel):
             basename(cls._template_name.default)
             not in (f"{klass.__name__}.html" for klass in cls.__mro__)
         ):
-            logger.warn(
+            logger.warning(
                 "HTMX Component <%s> template name does not match the component name",
                 FQN[cls],
             )
