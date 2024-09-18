@@ -8,7 +8,6 @@ from django.http import QueryDict
 from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
-from requests.auth import parse_dict_header
 
 from djhtmx.introspection import get_annotation_adapter, is_simple_annotation
 from djhtmx.utils import compact_hash
