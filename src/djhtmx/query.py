@@ -88,6 +88,13 @@ class QueryPatcher:
                 if not is_simple_annotation(annotation):
                     raise TypeError(f"Invalid type annotation {annotation} for a query string")
 
+                # The field must have a default to be Query.
+                if field.default is PydanticUndefined and field.default_factory is None:
+                    raise TypeError(
+                        f"Field '{name}' of {component.__name__} must have "
+                        "a default or default_factory."
+                    )
+
                 # Convert parameter from `search_query` to `search-query`
                 param_name = name.replace("_", "-")
 
@@ -111,19 +118,19 @@ class QueryPatcher:
             # ValidationError, but we should just simply ignore invalid
             # values.
             try:
-                parsed_param = self.adapter.validate_json(raw_param)
+                parsed_param = self.adapter.validate_python(raw_param)
             except ValueError:
                 parsed_param = self.default_value
             return {self.field_name: parsed_param}
         else:
-            return {}
+            return {self.field_name: self.default_value}
 
-    def get_updates_for_params(self, value: str | None, params: QueryDict) -> list[str]:
+    def get_updates_for_params(self, value, params: QueryDict) -> list[str]:
         # If we're setting the default value, let remove it from the query
         # string completely, and trigger the signal if needed.
         if value == self.default_value:
-            params.pop(self.param_name, None)
             if self.param_name in params:
+                params.pop(self.param_name, None)
                 return [self.signal_name]
             else:
                 return []
@@ -133,12 +140,9 @@ class QueryPatcher:
         serialized_value = self.adapter.dump_python(value, mode="json")
         if serialized_value == params.get(self.param_name):
             return []
-
-        if value == self.default_value:
-            params.pop(self.param_name, None)
         else:
             params[self.param_name] = serialized_value
-        return [self.signal_name]
+            return [self.signal_name]
 
 
 _VALID_QS_NAME_RX = re.compile(r"^[a-zA-Z_\d][-a-zA-Z_\d]*$")
