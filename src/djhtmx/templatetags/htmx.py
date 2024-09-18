@@ -79,7 +79,9 @@ def hx_tag(context, swap: str = "outerHTML"):
             "hx-include": f"#{component.id} [name]",
             "data-hx-state": signer.sign(component.model_dump_json()),
             "data-hx-subscriptions": (
-                ",".join(subscriptions) if (subscriptions := component.subscriptions) else None
+                ",".join(subscriptions)
+                if (subscriptions := component._get_all_subscriptions())
+                else None
             ),
         }
         return format_html_attrs(attrs)

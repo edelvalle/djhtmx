@@ -411,7 +411,7 @@ class Repository:
         component_ids.extend(
             component.id
             for component in self.component_by_id.values()
-            if component._match_subscription(signal)
+            if signal in component._get_all_subscriptions()
         )
         return [self.get_component_by_id(c_id) for c_id in sorted(component_ids)]
 
@@ -643,10 +643,8 @@ class PydanticComponent(BaseModel):
     def subscriptions(self) -> set[str]:
         return set()
 
-    def _match_subscription(self, signal: str):
-        return (
-            signal in _get_querystring_subscriptions(self.hx_name) or signal in self.subscriptions
-        )
+    def _get_all_subscriptions(self) -> set[str]:
+        return self.subscriptions | _get_querystring_subscriptions(self.hx_name)
 
     def _get_template(self, template: str | None = None) -> t.Callable[..., SafeString]:
         return get_template(template or self._template_name)
