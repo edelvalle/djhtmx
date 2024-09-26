@@ -24,6 +24,7 @@ from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, validate_call
 from pydantic.fields import ModelPrivateAttr
 from typing_extensions import deprecated
+from uuid6 import uuid7
 
 from . import json
 from .introspection import (
@@ -209,6 +210,10 @@ class Repository:
 
     """
 
+    @staticmethod
+    def new_session_id():
+        return f"djhtmx:{uuid7().hex}"
+
     @classmethod
     def from_request(
         cls,
@@ -224,9 +229,15 @@ class Repository:
 
         """
         if (result := getattr(request, "djhtmx", None)) is None:
+            if signed_session := request.META.get("HTTP_HX_SESSION"):
+                session_id = signer.unsign(signed_session)
+            else:
+                session_id = cls.new_session_id()
+
             result = cls(
                 user=getattr(request, "user", AnonymousUser()),
-                params=get_params(request.GET),
+                session_id=session_id,
+                params=get_params(request),
             )
             setattr(request, "djhtmx", result)
         return result
@@ -240,6 +251,7 @@ class Repository:
     ):
         return cls(
             user=user,
+            session_id=cls.new_session_id(),
             params=get_params(None),
         )
 
@@ -268,9 +280,11 @@ class Repository:
     def __init__(
         self,
         user: AbstractUser | AnonymousUser,
+        session_id: str,
         params: QueryDict,
     ):
         self.user = user
+        self.session_id = session_id
         self.component_by_id: dict[str, PydanticComponent] = {}
         self.states_by_id: dict[str, dict[str, t.Any]] = {}
         self.subscriptions: dict[str, set[str]] = defaultdict(set)

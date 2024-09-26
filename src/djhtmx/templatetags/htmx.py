@@ -26,10 +26,12 @@ def htmx_headers(context):
 
     Use this tag inside your `<header></header>`.
     """
+    repo = Repository.from_request(context["request"])
     return {
         "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
         "SCRIPT_URLS": settings.SCRIPT_URLS,
         "csrf_token": context.get("csrf_token"),
+        "hx_session": repo.session_id,
     }
 
 
@@ -59,7 +61,7 @@ def htmx(context, _name: str, _state: dict[str, t.Any] = None, **state):
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
-def hx_tag(context, swap: str = "outerHTML"):
+def hx_tag(context):
     """Adds initialziation data to your root component tag.
 
     When your component starts, put it there:
@@ -75,7 +77,6 @@ def hx_tag(context, swap: str = "outerHTML"):
     if isinstance(component, PydanticComponent):
         attrs = {
             "id": component.id,
-            "hx-swap": swap,
             "hx-include": f"#{component.id} [name]",
             "data-hx-state": signer.sign(component.model_dump_json()),
             "data-hx-subscriptions": (
@@ -94,17 +95,11 @@ def hx_tag(context, swap: str = "outerHTML"):
             'hx-include="#{id} [name]"',
         ]
 
-        if context.get("hx_swap_oob"):
-            html.append('hx-swap-oob="true"')
-        else:
-            html.append('hx-swap="{swap}"')
-
         component = t.cast(Component, context["this"])
         return format_html(
             " ".join(html),
             id=context["id"],
             url=event_url(component, "render"),
-            swap=swap,
             headers=json.dumps({
                 "X-Component-State": signer.sign(component._state_json),
             }),
@@ -178,7 +173,7 @@ def on(
 
 def format_html_attrs(attrs: dict[str, t.Any]):
     return format_html_join(
-        " ",
+        "\n",
         '{}="{}"',
         [(k, v) for k, v in attrs.items() if v is not None],
     )

@@ -1,6 +1,8 @@
 from functools import partial
+from itertools import chain
 
 from django.core.signing import Signer
+from django.http.request import HttpRequest
 from django.urls import path, re_path
 
 from . import json
@@ -12,7 +14,13 @@ from .tracing import sentry_request_transaction
 signer = Signer()
 
 
-def legacy_endpoint(request, component_name, component_id, event_handler):
+# def endpoint(request: HttpRequest, component_name: str, component_id: str, event_handler: str):
+#     repo = Repository.from_request(request)
+
+
+def legacy_endpoint(
+    request: HttpRequest, component_name: str, component_id: str, event_handler: str
+):
     with sentry_request_transaction(request, component_name, event_handler):
         state = request.META.get("HTTP_X_COMPONENT_STATE", "{}")
         state = signer.unsign(state)
@@ -29,14 +37,26 @@ def legacy_endpoint(request, component_name, component_id, event_handler):
         return handler(**handler_kwargs) or component.render()
 
 
-urlpatterns = [
-    path(
-        f"{component_name}/<component_id>/<event_handler>",
-        partial(legacy_endpoint, component_name=component_name),
-        name=f"djhtmx.{component_name}",
+urlpatterns = list(
+    chain(
+        # (
+        #     path(
+        #         f"{component_name}/<component_id>/<event_handler>",
+        #         partial(endpoint, component_name=component_name),
+        #         name=f"djhtmx.{component_name}",
+        #     )
+        #     for component_name in REGISTRY
+        # ),
+        (
+            path(
+                f"{component_name}/<component_id>/<event_handler>",
+                partial(legacy_endpoint, component_name=component_name),
+                name=f"djhtmx.{component_name}",
+            )
+            for component_name in Component._all
+        ),
     )
-    for component_name in Component._all
-]
+)
 
 
 ws_urlpatterns = [
