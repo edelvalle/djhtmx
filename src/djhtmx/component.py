@@ -11,7 +11,7 @@ from os.path import basename
 from urllib.parse import urlparse
 
 from django.conf import settings
-from django.contrib.auth.models import AbstractUser, AnonymousUser
+from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.signing import Signer
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
@@ -245,7 +245,7 @@ class Repository:
     @classmethod
     def from_websocket(
         cls,
-        user: AbstractUser | AnonymousUser,
+        user: AbstractBaseUser | AnonymousUser,
         states: list[str],
         subscriptions: dict[str, str],
     ):
@@ -279,7 +279,7 @@ class Repository:
 
     def __init__(
         self,
-        user: AbstractUser | AnonymousUser,
+        user: AbstractBaseUser | AnonymousUser,
         session_id: str,
         params: QueryDict,
     ):
@@ -760,9 +760,9 @@ class Component:
         self._oob = []
 
     @cached_property
-    def user(self) -> AbstractUser | AnonymousUser:
+    def user(self) -> AbstractBaseUser | AnonymousUser:
         user = getattr(self.request, "user", None)
-        if user is None or not isinstance(user, AbstractUser):
+        if user is None or not isinstance(user, AbstractBaseUser):
             return AnonymousUser()
         return user
 
