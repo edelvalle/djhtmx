@@ -55,14 +55,25 @@ PYDANTIC_MODEL_METHODS = {
 _MAX_GENERATION = 50
 
 
-def get_params(url: QueryDict | str | None) -> QueryDict:
-    if isinstance(url, QueryDict):
+def get_params(obj: HttpRequest | QueryDict | str | None) -> QueryDict:
+    if isinstance(obj, HttpRequest):
+        is_htmx_request = json.loads(obj.META.get("HTTP_HX_REQUEST", "false"))
+        if is_htmx_request:
+            return QueryDict(
+                urlparse(obj.META["HTTP_HX_CURRENT_URL"]).query,
+                mutable=True,
+            )
+        else:
+            qd = QueryDict(None, mutable=True)
+            qd.update(obj.GET)
+            return qd
+    elif isinstance(obj, QueryDict):
         qd = QueryDict(None, mutable=True)
-        qd.update(url)  # type: ignore
+        qd.update(obj)  # type: ignore
         return qd
     else:
         return QueryDict(
-            query_string=urlparse(url).query if url else None,
+            query_string=urlparse(obj).query if obj else None,
             mutable=True,
         )
 
@@ -122,13 +133,7 @@ class SkipRender:
 class Render:
     component: "PydanticComponent" | tuple[type["PydanticComponent"], dict[str, t.Any]]
     template: str | None = None
-    oob: (
-        tuple[
-            t.Literal["beforebegin", "afterbegin", "beforeend", "afterend", "outerHTML"],
-            str,
-        ]
-        | None
-    ) = None
+    oob: str | None = None
 
     @property
     def component_id(self):
@@ -140,19 +145,19 @@ class Render:
 
     @classmethod
     def append(cls, target_: str, component_: type[PydanticComponent], **state):
-        return cls(component=(component_, state), template=None, oob=("beforeend", target_))
+        return cls(component=(component_, state), template=None, oob=f"beforeend: {target_}")
 
     @classmethod
     def prepend(cls, target_: str, component_: type[PydanticComponent], **state):
-        return cls(component=(component_, state), template=None, oob=("afterbegin", target_))
+        return cls(component=(component_, state), template=None, oob=f"afterbegin: {target_}")
 
     @classmethod
     def after(cls, target_: str, component_: type["PydanticComponent"], **state):
-        return cls(component=(component_, state), template=None, oob=("afterend", target_))
+        return cls(component=(component_, state), template=None, oob=f"afterend: {target_}")
 
     @classmethod
     def before(cls, target_: str, component_: type[PydanticComponent], **state):
-        return cls(component=(component_, state), template=None, oob=("beforeend", target_))
+        return cls(component=(component_, state), template=None, oob=f"beforeend: {target_}")
 
     @classmethod
     def update(cls, component: type[PydanticComponent], **state):
@@ -344,81 +349,86 @@ class Repository:
 
         # Command loop
         while commands:
-            print()
-            command = commands.pop(0)
-            await db(print)(command)
-            match command:
-                case Execute(component_id, event_handler, event_data):
-                    # handle event
-                    component = await db(self.get_component_by_id)(component_id)
-                    handler = getattr(component, event_handler)
-                    handler_kwargs = filter_parameters(handler, parse_request_data(event_data))
-                    component_was_rendered = False
-                    if emited_commands := await db(handler)(**handler_kwargs):
-                        for command in await db(list)(emited_commands):
-                            component_was_rendered = (
-                                component_was_rendered
-                                or isinstance(command, SkipRender)
-                                or isinstance(command, Render)
-                                and command.component_id == component.id
-                            )
-                            commands.append(command)
+            processed_commands = self._run_command(commands, destroyed_ids, sent_html)
+            while command := await db(next)(processed_commands, None):
+                yield command
 
-                    if not component_was_rendered:
-                        commands.append(Render(component))
+    def _run_command(
+        self, commands: list[Command], destroyed_ids: set[str], sent_html: set[str]
+    ) -> t.Generator[ProcessedCommand, None, None]:
+        command = commands.pop(0)
+        print()
+        print(command)
+        match command:
+            case Execute(component_id, event_handler, event_data):
+                # handle event
+                component = self.get_component_by_id(component_id)
+                handler = getattr(component, event_handler)
+                handler_kwargs = filter_parameters(handler, parse_request_data(event_data))
+                component_was_rendered = False
+                if emited_commands := handler(**handler_kwargs):
+                    for command in emited_commands:
+                        component_was_rendered = (
+                            component_was_rendered
+                            or isinstance(command, SkipRender)
+                            or isinstance(command, Render)
+                            and command.component_id == component.id
+                        )
+                        commands.append(command)
 
-                    if signals := self.update_params_from(component):
-                        yield PushURL.from_params(self.params)
-                        commands.extend(Signal(s) for s in signals)
+                if not component_was_rendered:
+                    commands.append(Render(component))
 
-                case SkipRender(component):
-                    yield SendState(
-                        component_id=component.id,
-                        state=signer.sign(component.model_dump_json()),
-                    )
+                if signals := self.update_params_from(component):
+                    yield PushURL.from_params(self.params)
+                    commands.extend(Signal(s) for s in signals)
 
-                case Render(component, template, oob) as command:
-                    # do not render destroyed components, skip
-                    if command.component_id in destroyed_ids:
-                        continue
+            case SkipRender(component):
+                yield SendState(
+                    component_id=component.id,
+                    state=signer.sign(component.model_dump_json()),
+                )
 
+            case Render(component, template, oob) as command:
+                # do not render destroyed components, skip
+                if command.component_id not in destroyed_ids:
                     # instantiate the component
                     if isinstance(component, tuple):
                         component_type, state = component
-                        component = await db(self.build)(component_type.__name__, state)
+                        component = self.build(component_type.__name__, state)
 
                     # why? because this is a partial render and the state of the object is not
                     # updated in the root tag, and it has to be up to date in case of disconnection
                     if template:
                         commands.append(SkipRender(component))
 
-                    html = await db(self.render_html)(component, oob=oob, template=template)
+                    html = self.render_html(component, oob=oob, template=template)
                     if html not in sent_html:
                         yield SendHtml(html, debug_trace=f"{component.hx_name}({component.id})")
                         sent_html.add(html)
 
-                case Destroy(component_id) as command:
-                    destroyed_ids.add(component_id)
-                    self.unregister_component(component_id)
-                    yield command
+            case Destroy(component_id) as command:
+                destroyed_ids.add(component_id)
+                self.unregister_component(component_id)
+                yield command
 
-                case Emit(event):
-                    for component in await db(self.get_components_by_names)(LISTENERS[type(event)]):
-                        logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
-                        if emited_commands := await db(component._handle_event)(event):  # type: ignore
-                            commands.extend(await db(list)(emited_commands))
-                        commands.append(Render(component))
+            case Emit(event):
+                for component in self.get_components_by_names(LISTENERS[type(event)]):
+                    logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
+                    if emited_commands := component._handle_event(event):  # type: ignore
+                        commands.extend(emited_commands)
+                    commands.append(Render(component))
 
-                        if signals := self.update_params_from(component):
-                            yield PushURL.from_params(self.params)
-                            commands.extend(Signal(s) for s in signals)
+                    if signals := self.update_params_from(component):
+                        yield PushURL.from_params(self.params)
+                        commands.extend(Signal(s) for s in signals)
 
-                case Signal(signal):
-                    for component in await db(self.get_components_subscribed_to)(signal):
-                        commands.append(Render(component))
+            case Signal(signal):
+                for component in self.get_components_subscribed_to(signal):
+                    commands.append(Render(component))
 
-                case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
-                    yield command
+            case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
+                yield command
 
     def get_components_subscribed_to(self, signal: str) -> t.Iterable[PydanticComponent]:
         component_ids = list(self.subscriptions[signal])
@@ -510,20 +520,15 @@ class Repository:
     def render_html(
         self,
         component: PydanticComponent,
-        oob: tuple[str, str] = None,
+        oob: str = None,
         template: str = None,
     ) -> SafeString:
-        where, target = oob if oob else (None, None)
-        html = [
-            format_html('<div hx-swap-oob="{where}: {target}">', where=where, target=target)
-            if oob
-            else "",
-            component._get_template(template)(
-                component._get_context() | {"htmx_repo": self},
-            ),
-            "</div>" if oob else "",
-        ]
-        return mark_safe("".join(filter(None, html)))
+        html = component._get_template(template)(component._get_context() | {"htmx_repo": self})
+        if oob:
+            html = mark_safe(
+                "".join([format_html('<div hx-swap-oob="{oob}">', oob=oob), html, "</div>"])
+            )
+        return mark_safe(html.strip())
 
 
 REGISTRY: dict[str, type[PydanticComponent]] = {}
@@ -650,7 +655,7 @@ class PydanticComponent(BaseModel):
 
     # State
     id: t.Annotated[str, Field(default_factory=generate_id)]
-    user: t.Annotated[AnonymousUser | AbstractUser, Field(exclude=True)]
+    user: t.Annotated[AnonymousUser | AbstractBaseUser, Field(exclude=True)]
     hx_name: str
 
     @property
