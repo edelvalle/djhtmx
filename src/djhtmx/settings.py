@@ -1,3 +1,4 @@
+import redis
 from django.conf import settings
 
 VERSION = "2.0.2"
@@ -10,3 +11,5 @@ SCRIPT_URLS = [
     f"htmx/{VERSION}/ext/ws.js",
     "htmx/django.js",
 ]
+
+conn = redis.from_url("redis://localhost/0")

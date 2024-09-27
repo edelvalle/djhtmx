@@ -4,11 +4,12 @@ from django import template
 from django.core.signing import Signer
 from django.template.base import Node, Parser, Token
 from django.urls import reverse
-from django.utils.html import format_html, format_html_join
+from django.utils.html import format_html_join
 from django.utils.safestring import mark_safe
 
 from .. import json, settings
-from ..component import REGISTRY, Component, PydanticComponent, Repository, generate_id
+from ..component import REGISTRY, Component, PydanticComponent, generate_id
+from ..repo import Repository
 
 register = template.Library()
 signer = Signer()
@@ -27,11 +28,12 @@ def htmx_headers(context):
     Use this tag inside your `<header></header>`.
     """
     repo = Repository.from_request(context["request"])
+    print(repo.session.id)
     return {
         "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
         "SCRIPT_URLS": settings.SCRIPT_URLS,
         "csrf_token": context.get("csrf_token"),
-        "hx_session": repo.session_id,
+        "hx_session": signer.sign(repo.session.id),
     }
 
 
@@ -45,9 +47,7 @@ def htmx(context, _name: str, _state: dict[str, t.Any] = None, **state):
         {% htmx 'AmazinData' data=some_data %}
         ```
     """
-    state = _state or {} | state
-    repo = context.get("htmx_repo") or Repository.from_request(context["request"])
-
+    state = (_state or {}) | state
     if _name in REGISTRY:
         # PydanticComponent
         repo = context.get("htmx_repo") or Repository.from_request(context["request"])
@@ -78,32 +78,27 @@ def hx_tag(context):
         attrs = {
             "id": component.id,
             "hx-include": f"#{component.id} [name]",
-            "data-hx-state": signer.sign(component.model_dump_json()),
-            "data-hx-subscriptions": (
-                ",".join(subscriptions)
-                if (subscriptions := component._get_all_subscriptions())
-                else None
-            ),
+            "hx-swap-oob": "true" if context.get("hx_oob") else None,
         }
-        return format_html_attrs(attrs)
     else:
-        html = [
-            'id="{id}"',
-            'hx-post="{url}"',
-            'hx-trigger="render"',
-            'hx-headers="{headers}"',
-            'hx-include="#{id} [name]"',
-        ]
-
         component = t.cast(Component, context["this"])
-        return format_html(
-            " ".join(html),
-            id=context["id"],
-            url=event_url(component, "render"),
-            headers=json.dumps({
+        attrs = {
+            "id": component.id,
+            "hx-target": "this",
+            "hx-boost": "false",
+            "hx-include": f"#{component.id} [name]",
+            "hx-post": event_url(component, "render"),
+            "hx-trigger": "render",
+            "hx-headers": json.dumps({
                 "X-Component-State": signer.sign(component._state_json),
             }),
-        )
+        }
+    return format_html_attrs(attrs)
+
+
+@register.simple_tag(takes_context=True)
+def oob(context):
+    return format_html_attrs({"hx-swap-oob": "true" if context.get("hx_oob") else None})
 
 
 @register.simple_tag(takes_context=True)
@@ -153,19 +148,14 @@ def on(
             getattr(component, _event_handler, None)
         ), f"{type(component).__name__}.{_event_handler} event handler not found"
 
+    attrs = {
+        "hx-post": event_url(component, _event_handler),
+        "hx-trigger": _trigger,
+        "hx-vals": json.dumps(kwargs) if kwargs else None,
+    }
     if isinstance(component, PydanticComponent):
-        attrs = {
-            "ws-send": _event_handler,
-            "hx-trigger": _trigger,
-            "hx-vals": json.dumps(kwargs) if kwargs else None,
-        }
-    else:
-        attrs = {
-            "hx-post": event_url(component, _event_handler),
-            "hx-trigger": _trigger,
-            "hx-target": f"#{component.id}",
-            "hx-vals": json.dumps(kwargs) if kwargs else None,
-        }
+        attrs |= {"hx-swap": "none"}
+
     if hx_include:
         attrs |= {"hx-include": hx_include}
     return format_html_attrs(attrs)
@@ -179,7 +169,7 @@ def format_html_attrs(attrs: dict[str, t.Any]):
     )
 
 
-def event_url(component: Component, event_handler: str):
+def event_url(component: PydanticComponent | Component, event_handler: str):
     return reverse(
         f"djhtmx.{type(component).__name__}",
         kwargs={
@@ -191,10 +181,16 @@ def event_url(component: Component, event_handler: str):
 
 # Shortcuts and helpers
 
+_json_script_escapes = {
+    ord(">"): "\\u003E",
+    ord("<"): "\\u003C",
+    ord("&"): "\\u0026",
+}
 
-@register.filter()
-def concat(prefix, suffix):
-    return f"{prefix}{suffix}"
+
+@register.filter(name="json")
+def to_json(obj):
+    return mark_safe(json.dumps(obj).translate(_json_script_escapes))
 
 
 @register.tag()

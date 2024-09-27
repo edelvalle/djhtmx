@@ -3,19 +3,62 @@ from itertools import chain
 
 from django.core.signing import Signer
 from django.http.request import HttpRequest
+from django.http.response import HttpResponse
 from django.urls import path, re_path
+from django.utils.html import format_html
 
 from . import json
-from .component import Component
+from .component import REGISTRY, Component, Destroy, DispatchEvent, Focus, Redirect, Triggers
 from .consumer import Consumer
 from .introspection import filter_parameters, parse_request_data
+from .repo import PushURL, Repository, SendHtml
 from .tracing import sentry_request_transaction
 
 signer = Signer()
 
 
-# def endpoint(request: HttpRequest, component_name: str, component_id: str, event_handler: str):
-#     repo = Repository.from_request(request)
+def endpoint(request: HttpRequest, component_name: str, component_id: str, event_handler: str):
+    repo = Repository.from_request(request)
+    content: list[str] = []
+    headers: dict[str, str] = {}
+    triggers = Triggers()
+
+    for command in repo.dispatch_event(
+        component_id,
+        event_handler,
+        parse_request_data(request.POST),
+    ):
+        # Command loop
+        match command:
+            case Destroy(component_id):
+                content.append(
+                    format_html(
+                        '<div hx-swap-oob="outerHtml:#{component_id}"></div>',
+                        component_id=component_id,
+                    )
+                )
+            case Redirect(url):
+                headers["HX-Redirect"] = url
+            case Focus(selector):
+                triggers.after_settle("hxFocus", selector)
+            case DispatchEvent(event, target, detail, bubbles, cancelable, composed):
+                triggers.after_settle(
+                    "hxDispatchEvent",
+                    {
+                        "event": event,
+                        "target": target,
+                        "detail": detail,
+                        "bubbles": bubbles,
+                        "cancelable": cancelable,
+                        "composed": composed,
+                    },
+                )
+            case SendHtml(html):
+                content.append(html)
+            case PushURL(url):
+                headers["HX-Push-Url"] = url
+
+    return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
 
 
 def legacy_endpoint(
@@ -39,14 +82,14 @@ def legacy_endpoint(
 
 urlpatterns = list(
     chain(
-        # (
-        #     path(
-        #         f"{component_name}/<component_id>/<event_handler>",
-        #         partial(endpoint, component_name=component_name),
-        #         name=f"djhtmx.{component_name}",
-        #     )
-        #     for component_name in REGISTRY
-        # ),
+        (
+            path(
+                f"{component_name}/<component_id>/<event_handler>",
+                partial(endpoint, component_name=component_name),
+                name=f"djhtmx.{component_name}",
+            )
+            for component_name in REGISTRY
+        ),
         (
             path(
                 f"{component_name}/<component_id>/<event_handler>",

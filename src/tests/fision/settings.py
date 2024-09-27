@@ -166,5 +166,10 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False,
         },
+        "redis": {
+            "handlers": ["fision.console"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
     },
 }

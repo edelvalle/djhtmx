@@ -1,23 +1,14 @@
 import logging
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
-from django.http.request import QueryDict
 from pydantic import BaseModel, TypeAdapter
 
 from . import json
-from .component import (
-    Command,
-    Destroy,
-    DispatchEvent,
-    Focus,
-    PushURL,
-    Redirect,
-    Repository,
-    SendHtml,
-    SendState,
-    get_params,
-)
+from .component import Command, Destroy, DispatchEvent, Focus, Redirect
+from .introspection import parse_request_data
+from .repo import PushURL, Repository, SendHtml
+from .utils import get_params
 
 
 class ComponentsRemoved(BaseModel):
@@ -38,7 +29,7 @@ EventAdapter = TypeAdapter(Event)
 class Consumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         await self.accept()
-        self.repo = Repository(self.scope["user"], params=QueryDict(None, mutable=True))
+        self.repo = Repository.from_websocket(self.scope["user"])
 
     async def disconnect(self, code):
         await super().disconnect(code)
@@ -52,35 +43,19 @@ class Consumer(AsyncJsonWebsocketConsumer):
             logger.debug(">>>> Call: %s %s", component_id, event_handler)
             self.repo.params.clear()
             self.repo.params.update(params)  # type: ignore
-
             # Command dispatching
-            async for command in self.repo.dispatch_event(component_id, event_handler, event_data):
+            async for command in self.repo.adispatch_event(
+                component_id, event_handler, parse_request_data(event_data)
+            ):
                 match command:
                     case SendHtml(html, debug_trace):
                         logger.debug(
                             "< Command: %s", f"SendHtml[{debug_trace}](... {len(html)} ...)"
                         )
                         await self.send(html)
-                    case (
-                        Destroy(_)
-                        | Redirect(_)
-                        | Focus(_)
-                        | DispatchEvent(_)
-                        | SendState(_)
-                        | PushURL(_)
-                    ):
+                    case Destroy(_) | Redirect(_) | Focus(_) | DispatchEvent(_) | PushURL(_):
                         logger.debug("< Command: %s", command)
                         await self.send_json(command)
-
-        else:
-            event: Event = cast(Event, EventAdapter.validate_python(event_data))
-            logger.debug("> Event: %s", event)
-            match event:
-                case ComponentsRemoved(component_ids=component_ids):
-                    for component_id in component_ids:
-                        self.repo.unregister_component(component_id)
-                case ComponentsAdded(states=states, subscriptions=subscriptions):
-                    self.repo.add(states, subscriptions)
 
     async def send_commands(self, commands: list[Command]):
         for command in commands:

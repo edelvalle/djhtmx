@@ -6,12 +6,12 @@
         const csrf_token = document
             .querySelector("meta[name=django-csrf-token]")
             .getAttribute("content");
-        event.detail.headers[csrf_header] = csrf_token;
+        const hx_session = document
+            .querySelector("meta[name=hx-session]")
+            .getAttribute("content");
 
-        let element = event.detail.elt.closest("[data-hx-state]");
-        if (element) {
-            event.detail.headers["X-Component-State"] = element.dataset.hxState;
-        }
+        event.detail.headers[csrf_header] = csrf_token;
+        event.detail.headers["HX-Session"] = hx_session;
     });
 
     // WebSocket Management
@@ -168,25 +168,6 @@
         });
     });
 })();
-
-function getStatesAndSubscriptions(elements) {
-    let states = [];
-    let subscriptions = new Map();
-    let ids = new Set();
-    if (elements === undefined) {
-        elements = document.querySelectorAll("[data-hx-state]");
-    }
-    elements.forEach((element) => {
-        let hxSubscriptions = element.dataset.hxSubscriptions;
-        if (hxSubscriptions !== undefined) {
-            subscriptions[element.id] = element.dataset.hxSubscriptions;
-        }
-        states.push(element.dataset.hxState);
-        ids.add(element.id);
-    });
-    return { ids, states, subscriptions };
-}
-
 // Local Variables:
 // js-indent-level: 4
 // End:
