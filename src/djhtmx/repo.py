@@ -16,10 +16,13 @@ from django.utils.safestring import SafeString, mark_safe
 from uuid6 import uuid7
 
 from . import json
+from .command_queue import CommandQueue
 from .component import (
     LISTENERS,
     REGISTRY,
+    BuildAndRender,
     Command,
+    ComponentNotFound,
     Destroy,
     DispatchEvent,
     Emit,
@@ -32,13 +35,7 @@ from .component import (
     SkipRender,
     _get_query_patchers,
 )
-from .introspection import (
-    Unset,
-    UnsetType,
-    filter_parameters,
-    get_related_fields,
-    parse_request_data,
-)
+from .introspection import Unset, UnsetType, filter_parameters, get_related_fields
 from .settings import conn
 from .utils import db, get_model_subscriptions, get_params
 
@@ -179,7 +176,7 @@ class Repository:
         event_handler: str,
         event_data: dict[str, t.Any],
     ) -> t.AsyncIterable[ProcessedCommand]:
-        commands: list[Command] = [Execute(component_id, event_handler, event_data)]
+        commands = CommandQueue([Execute(component_id, event_handler, event_data)])
 
         # Listen to model signals during execution
         @receiver(post_save, weak=True)
@@ -205,13 +202,9 @@ class Repository:
 
             commands.extend([Signal(name) for name in signals])
 
-        # Keeps track of destroyed components to avoid rendering them
-        destroyed_ids: set[str] = set()
-        sent_html = set()
-
         # Command loop
         while commands:
-            processed_commands = self._run_command(commands, destroyed_ids, sent_html)
+            processed_commands = self._run_command(commands)
             while command := await db(next)(processed_commands, None):
                 yield command
 
@@ -221,7 +214,7 @@ class Repository:
         event_handler: str,
         event_data: dict[str, t.Any],
     ) -> t.Iterable[ProcessedCommand]:
-        commands: list[Command] = [Execute(component_id, event_handler, event_data)]
+        commands = CommandQueue([Execute(component_id, event_handler, event_data)])
 
         # Listen to model signals during execution
         @receiver(post_save, weak=True)
@@ -247,19 +240,13 @@ class Repository:
 
             commands.extend([Signal(name) for name in signals])
 
-        # Keeps track of destroyed components to avoid rendering them
-        destroyed_ids: set[str] = set()
-        sent_html = set()
-
         # Command loop
         while commands:
-            for command in self._run_command(commands, destroyed_ids, sent_html):
+            for command in self._run_command(commands):
                 yield command
 
-    def _run_command(
-        self, commands: list[Command], destroyed_ids: set[str], sent_html: set[str]
-    ) -> t.Generator[ProcessedCommand, None, None]:
-        command = commands.pop(0)
+    def _run_command(self, commands: CommandQueue) -> t.Generator[ProcessedCommand, None, None]:
+        command = commands.pop()
         print()
         print(command)
         match command:
@@ -268,63 +255,32 @@ class Repository:
                 component = self.get_component_by_id(component_id)
                 handler = getattr(component, event_handler)
                 handler_kwargs = filter_parameters(handler, event_data)
-                component_was_rendered = False
-                if emited_commands := handler(**handler_kwargs):
-                    for command in emited_commands:
-                        component_was_rendered = (
-                            component_was_rendered
-                            or isinstance(command, SkipRender)
-                            or isinstance(command, Render)
-                            and command.component_id == component.id
-                        )
-                        commands.append(command)
-
-                if not component_was_rendered:
-                    commands.append(Render(component))
-
-                if signals := self.update_params_from(component):
-                    yield PushURL.from_params(self.params)
-                    commands.extend(Signal(s) for s in signals)
+                emited_commands = handler(**handler_kwargs)
+                yield from self._process_emited_commands(component, emited_commands, commands)
 
             case SkipRender(component):
                 self.session.store(component)
 
-            case Render(component, template, oob) as command:
-                # do not render destroyed components, skip
-                if command.component_id not in destroyed_ids:
-                    # instantiate the component
-                    if isinstance(component, tuple):
-                        component_type, state = component
-                        component = self.build(component_type.__name__, state)
+            case BuildAndRender(component_type, state, oob):
+                component = self.build(component_type.__name__, state)
+                commands.append(Render(component, oob=oob))
 
-                    # why? because this is a partial render and the state of the object is not
-                    # updated in the root tag, and it has to be up to date in case of disconnection
-                    if template:
-                        commands.append(SkipRender(component))
-
-                    html = self.render_html(component, oob, template=template)
-                    if html not in sent_html:
-                        yield SendHtml(
-                            html,
-                            debug_trace=f"{component.hx_name}({component.id})",
-                        )
-                        sent_html.add(html)
+            case Render(component, template, oob):
+                html = self.render_html(component, oob=oob, template=template)
+                yield SendHtml(
+                    html,
+                    debug_trace=f"{component.hx_name}({component.id})",
+                )
 
             case Destroy(component_id) as command:
-                destroyed_ids.add(component_id)
                 self.unregister_component(component_id)
                 yield command
 
             case Emit(event):
                 for component in self.get_components_by_names(LISTENERS[type(event)]):
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
-                    if emited_commands := component._handle_event(event):  # type: ignore
-                        commands.extend(emited_commands)
-                    commands.append(Render(component))
-
-                    if signals := self.update_params_from(component):
-                        yield PushURL.from_params(self.params)
-                        commands.extend(Signal(s) for s in signals)
+                    emited_commands = component._handle_event(event)  # type: ignore
+                    yield from self._process_emited_commands(component, emited_commands, commands)
 
             case Signal(signal):
                 for component in self.get_components_subscribed_to(signal):
@@ -332,6 +288,26 @@ class Repository:
 
             case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
                 yield command
+
+    def _process_emited_commands(
+        self,
+        component: PydanticComponent,
+        emmited_commands: t.Iterable[Command] | None,
+        commands: CommandQueue,
+    ) -> t.Iterable[ProcessedCommand]:
+        component_was_rendered = False
+        for command in emmited_commands or []:
+            component_was_rendered = component_was_rendered or (
+                isinstance(command, (SkipRender, Render)) and command.component.id == component.id
+            )
+            commands.append(command)
+
+        if not component_was_rendered:
+            commands.append(Render(component))
+
+        if signals := self.update_params_from(component):
+            yield PushURL.from_params(self.params)
+            commands.extend(Signal(s) for s in signals)
 
     def get_components_subscribed_to(self, signal: str) -> t.Iterable[PydanticComponent]:
         component_ids = list(self.session.get_component_ids_subscribed_to(signal))
@@ -369,34 +345,37 @@ class Repository:
         If the `component_id` cannot be found, raise a KeyError.
 
         """
-        if state := self.session.get_state(component_id):
-            name = state["hx_name"]
-            return self.build(name, state)
+        if component := self.component_by_id.get(component_id):
+            return self.build(component.hx_name, {"id": component_id})
+        elif state := self.session.get_state(component_id):
+            return self.build(state["hx_name"], {"id": component_id})
         else:
-            name = self.component_by_id[component_id].hx_name
-            return self.build(name, {"id": component_id})
+            raise ComponentNotFound(f"Component with id {component_id} not found")
 
     def build(self, component_name: str, state: dict[str, t.Any]):
         """Build (or update) a component's state."""
-        # Take state from stored state
-        if component_id := state.pop("id", None):
-            state = self.session.pop_state(component_id) | state
-
-            # Remove from the static subscriptions
-            self.session.remove_component_from_subscriptions(component_id)
 
         # Patch it with whatever is the the GET params if needed
         for patcher in _get_query_patchers(component_name):
             state |= patcher.get_update_for_state(self.params)
 
-        # Build
-        if component_id and (component := self.component_by_id.get(component_id)):
-            if state:
-                # some state was passed to the component, so it has to be updated
-                component = component.model_validate(
-                    component.model_dump() | state | {"user": self.user, "id": component_id}
-                )
+        # Build if has ID already
+        if component_id := state.pop("id", None):
+            component = self.component_by_id.get(component_id)
+            if component:
+                if state:
+                    # some state was passed to the component, so it has to be updated
+                    component = component.model_validate(
+                        component.model_dump() | state | {"user": self.user, "id": component_id}
+                    )
+            else:
+                # Is stored?
+                state = (self.session.get_state(component_id) or {}) | state
         else:
+            # Never been built
+            component = None
+
+        if component is None:
             kwargs = (
                 state
                 | {"hx_name": component_name, "user": self.user}
@@ -408,17 +387,10 @@ class Repository:
 
     def get_components_by_names(self, names: t.Iterable[str]) -> t.Iterable[PydanticComponent]:
         # go over awaken components
-        components = []
         for name in names:
-            for component in self.component_by_id.values():
-                if component.hx_name == name:
-                    components.append(self.build(component.hx_name, {"id": component.id}))
-
-            # go over asleep components
             for state in self.session.get_all_states():
                 if state["hx_name"] == name:
-                    components.append(self.build(name, state))
-        return sorted(components, key=lambda c: c.id)
+                    yield self.build(name, {"id": state["id"]})
 
     def render_html(
         self,
@@ -450,11 +422,10 @@ class Session:
     ttl: int = 3600
 
     def unregister_component(self, component_id: str):
-        conn.hdel(f"{self.id}:states", component_id)
-        self.remove_component_from_subscriptions(component_id)
-
-    def remove_component_from_subscriptions(self, component_id: str):
         with conn.pipeline() as pipe:
+            # delete state
+            pipe.hdel(f"{self.id}:states", component_id)
+            # delete from subscriptions
             for key in conn.keys(f"{self.id}:subs:*"):  # type: ignore
                 pipe.srem(key, component_id)
             pipe.execute()
@@ -468,17 +439,6 @@ class Session:
             return state
         else:
             return None
-
-    def pop_state(self, component_id: str) -> dict[str, t.Any]:
-        if not isinstance(state := self.cache[component_id], UnsetType):
-            return state or {}
-        elif state := conn.hget(f"{self.id}:states", component_id):
-            state = json.loads(state)  # type: ignore
-            self.cache[component_id] = None
-            return state
-        else:
-            self.cache[component_id] = None
-            return {}
 
     def get_component_ids_subscribed_to(self, signal: str) -> list[str]:
         _, keys = conn.sscan(f"{self.id}:subs:{signal}")  # type: ignore

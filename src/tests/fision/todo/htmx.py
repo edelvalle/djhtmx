@@ -4,7 +4,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from djhtmx.component import Destroy, Emit, Focus, PydanticComponent, Query, Render
+from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, PydanticComponent, Query, Render
 
 from .models import Item
 
@@ -79,7 +79,7 @@ class ListHeader(PydanticComponent):
 
     def add(self, new_item: str):
         item = Item.objects.create(text=new_item)
-        yield Render.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
+        yield BuildAndRender.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
 
 
 class TodoItem(PydanticComponent):

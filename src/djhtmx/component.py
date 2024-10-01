@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as dataclass_field
@@ -79,38 +80,38 @@ class SkipRender:
 
 
 @dataclass(slots=True)
-class Render:
-    component: "PydanticComponent" | tuple[type["PydanticComponent"], dict[str, t.Any]]
-    template: str | None = None
+class BuildAndRender:
+    component: type["PydanticComponent"]
+    state: dict[str, t.Any]
     oob: str = "true"
-
-    @property
-    def component_id(self):
-        if isinstance(self.component, tuple):
-            _, state = self.component
-            return state.get("id")
-        else:
-            return self.component.id
 
     @classmethod
     def append(cls, target_: str, component_: type[PydanticComponent], **state):
-        return cls(component=(component_, state), template=None, oob=f"beforeend: {target_}")
+        return cls(component=component_, state=state, oob=f"beforeend: {target_}")
 
     @classmethod
     def prepend(cls, target_: str, component_: type[PydanticComponent], **state):
-        return cls(component=(component_, state), template=None, oob=f"afterbegin: {target_}")
+        return cls(component=component_, state=state, oob=f"afterbegin: {target_}")
 
     @classmethod
-    def after(cls, target_: str, component_: type["PydanticComponent"], **state):
-        return cls(component=(component_, state), template=None, oob=f"afterend: {target_}")
+    def after(cls, target_: str, component_: type[PydanticComponent], **state):
+        return cls(component=component_, state=state, oob=f"afterend: {target_}")
 
     @classmethod
     def before(cls, target_: str, component_: type[PydanticComponent], **state):
-        return cls(component=(component_, state), template=None, oob=f"beforeend: {target_}")
+        return cls(component=component_, state=state, oob=f"beforeend: {target_}")
 
     @classmethod
     def update(cls, component: type[PydanticComponent], **state):
-        return cls(component=(component, state))
+        return cls(component=component, state=state)
+
+
+@dataclass(slots=True)
+class Render:
+    component: PydanticComponent
+    template: str | None = None
+    oob: str = "true"
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 
 @dataclass(slots=True)
@@ -123,7 +124,18 @@ class Signal:
     name: str
 
 
-Command = Destroy | Redirect | Focus | DispatchEvent | SkipRender | Render | Emit | Signal | Execute
+Command = (
+    Destroy
+    | Redirect
+    | Focus
+    | DispatchEvent
+    | SkipRender
+    | BuildAndRender
+    | Render
+    | Emit
+    | Signal
+    | Execute
+)
 
 
 RenderFunction = t.Callable[[Context | dict[str, t.Any] | None], SafeString]
