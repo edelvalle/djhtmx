@@ -42,7 +42,7 @@ def default(o):
         if isinstance(o, models.Model):
             return o.pk
 
-        if isinstance(o, (Generator, set)):
+        if isinstance(o, (Generator, set, frozenset)):
             return list(o)
 
         if BaseModel and isinstance(o, BaseModel):
