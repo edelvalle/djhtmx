@@ -3,6 +3,7 @@ import typing as t
 from django import template
 from django.core.signing import Signer
 from django.template.base import Node, Parser, Token
+from django.template.context import Context
 from django.urls import reverse
 from django.utils.html import format_html_join
 from django.utils.safestring import mark_safe
@@ -61,7 +62,7 @@ def htmx(context, _name: str, _state: dict[str, t.Any] = None, **state):
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
-def hx_tag(context):
+def hx_tag(context: Context):
     """Adds initialziation data to your root component tag.
 
     When your component starts, put it there:
@@ -75,10 +76,12 @@ def hx_tag(context):
     """
     component: Component | PydanticComponent = context["this"]
     if isinstance(component, PydanticComponent):
+        oob = context.get("hx_oob")
+        context["hx_oob"] = False
         attrs = {
             "id": component.id,
             "hx-include": f"#{component.id} [name]",
-            "hx-swap-oob": "true" if context.get("hx_oob") else None,
+            "hx-swap-oob": "true" if oob else None,
         }
     else:
         component = t.cast(Component, context["this"])
@@ -97,8 +100,10 @@ def hx_tag(context):
 
 
 @register.simple_tag(takes_context=True)
-def oob(context):
-    return format_html_attrs({"hx-swap-oob": "true" if context.get("hx_oob") else None})
+def oob(context: Context):
+    oob = context.get("hx_oob")
+    context["hx_oob"] = False
+    return format_html_attrs({"hx-swap-oob": "true" if oob else None})
 
 
 @register.simple_tag(takes_context=True)
@@ -188,8 +193,8 @@ _json_script_escapes = {
 }
 
 
-@register.filter(name="json")
-def to_json(obj):
+@register.filter(name="safe_json")
+def safe_json(obj):
     return mark_safe(json.dumps(obj).translate(_json_script_escapes))
 
 
