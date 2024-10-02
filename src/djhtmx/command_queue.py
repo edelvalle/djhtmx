@@ -69,8 +69,6 @@ class CommandQueue:
                         for ahead_command in self._commands[i + 1 :]
                     ):
                         new_commands.append(command)
-                    else:
-                        print("SKIP", command)
 
         self._commands = new_commands
 
