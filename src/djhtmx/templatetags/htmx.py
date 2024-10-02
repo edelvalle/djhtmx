@@ -28,13 +28,17 @@ def htmx_headers(context):
 
     Use this tag inside your `<header></header>`.
     """
-    repo = Repository.from_request(context["request"])
-    return {
-        "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
-        "SCRIPT_URLS": settings.SCRIPT_URLS,
-        "csrf_token": context.get("csrf_token"),
-        "hx_session": signer.sign(repo.session.id),
-    }
+    if request := context.get("request"):
+        repo = Repository.from_request(request)
+        return {
+            "enabled": True,
+            "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
+            "SCRIPT_URLS": settings.SCRIPT_URLS,
+            "csrf_token": context.get("csrf_token"),
+            "hx_session": signer.sign(repo.session.id),
+        }
+    else:
+        return {"enabled": False}
 
 
 @register.simple_tag(takes_context=True)
