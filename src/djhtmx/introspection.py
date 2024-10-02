@@ -195,16 +195,15 @@ def _parse_obj(data: t.Iterable[tuple[list[str], t.Any]], output=None) -> dict[s
 
 def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
     "Extract the types of the annotations of parameter 'event'."
-    event = inspect.signature(f).parameters["event"]
-    if t.get_origin(event.annotation) is types.UnionType:
+    event = t.get_type_hints(f)["event"]
+    if t.get_origin(event) is types.UnionType:
         return {
-            arg
-            for arg in t.get_args(event.annotation)
-            if isinstance(arg, type) and arg is not types.NoneType
+            arg for arg in t.get_args(event) if isinstance(arg, type) and arg is not types.NoneType
         }
-    elif isinstance(event.annotation, type):
-        return {event.annotation}
-    return set()
+    elif isinstance(event, type):
+        return {event}
+    else:
+        return set()
 
 
 def get_annotation_adapter(annotation):
