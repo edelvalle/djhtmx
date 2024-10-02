@@ -29,7 +29,6 @@ def htmx_headers(context):
     Use this tag inside your `<header></header>`.
     """
     repo = Repository.from_request(context["request"])
-    print(repo.session.id)
     return {
         "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
         "SCRIPT_URLS": settings.SCRIPT_URLS,

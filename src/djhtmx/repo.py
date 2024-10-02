@@ -247,8 +247,7 @@ class Repository:
 
     def _run_command(self, commands: CommandQueue) -> t.Generator[ProcessedCommand, None, None]:
         command = commands.pop()
-        print()
-        print(command)
+        logger.debug("COMMAND: %s", command)
         match command:
             case Execute(component_id, event_handler, event_data):
                 # handle event
@@ -278,13 +277,13 @@ class Repository:
 
             case Emit(event):
                 for component in self.get_components_by_names(LISTENERS[type(event)]):
-                    print("AWAKED", component.hx_name, component.id)
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     emited_commands = component._handle_event(event)  # type: ignore
                     yield from self._process_emited_commands(component, emited_commands, commands)
 
             case Signal(signal):
                 for component in self.get_components_subscribed_to(signal):
+                    logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     commands.append(Render(component))
 
             case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
