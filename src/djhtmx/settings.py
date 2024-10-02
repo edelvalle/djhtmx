@@ -12,4 +12,4 @@ SCRIPT_URLS = [
     "htmx/django.js",
 ]
 
-conn = redis.from_url("redis://localhost/0")
+conn = redis.from_url(getattr(settings, "DJHTMX_REDIS_URL", "redis://localhost/0"))
