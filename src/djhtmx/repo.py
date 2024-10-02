@@ -98,15 +98,18 @@ class Repository:
         if (result := getattr(request, "djhtmx", None)) is None:
             if signed_session := request.META.get("HTTP_HX_SESSION"):
                 session_id = signer.unsign(signed_session)
-                session_is_new = bool(request.META.get("HTTP_HX_BOOSTED"))
+                reset_session = bool(request.META.get("HTTP_HX_BOOSTED"))
             else:
                 session_id = cls.new_session_id()
-                session_is_new = True
+                reset_session = True
+
+            session = Session(session_id)
+            if reset_session:
+                session.reset()
 
             result = cls(
                 user=getattr(request, "user", AnonymousUser()),
-                session_id=session_id,
-                session_is_new=session_is_new,
+                session=session,
                 params=get_params(request),
             )
             setattr(request, "djhtmx", result)
@@ -119,8 +122,7 @@ class Repository:
     ):
         return cls(
             user=user,
-            session_id=cls.new_session_id(),  # TODO: take the session from the websocket url
-            session_is_new=False,
+            session=Session(cls.new_session_id()),  # TODO: take the session from the websocket url
             params=get_params(None),
         )
 
@@ -149,13 +151,11 @@ class Repository:
     def __init__(
         self,
         user: AbstractBaseUser | AnonymousUser,
-        session_id: str,
-        session_is_new: bool,
+        session: Session,
         params: QueryDict,
     ):
         self.user = user
-        self.session = Session(session_id)
-        self.session_is_new = session_is_new  # used to know if to render the components oob or not
+        self.session = session
         self.params = params
         self.component_by_id: dict[str, PydanticComponent] = {}
 
@@ -278,6 +278,7 @@ class Repository:
 
             case Emit(event):
                 for component in self.get_components_by_names(LISTENERS[type(event)]):
+                    print("AWAKED", component.hx_name, component.id)
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     emited_commands = component._handle_event(event)  # type: ignore
                     yield from self._process_emited_commands(component, emited_commands, commands)
@@ -421,6 +422,9 @@ class Session:
     )
     ttl: int = 3600
 
+    def reset(self):
+        conn.delete(*conn.keys(f"{self.id}:*"))  # type: ignore
+
     def unregister_component(self, component_id: str):
         with conn.pipeline() as pipe:
             # delete state
@@ -457,9 +461,9 @@ class Session:
                 pipe.sadd(f"{self.id}:subs:{signal}", component.id)
             pipe.execute()
 
-    def __del__(self) -> None:
+    def __del__(self):
+        print("Expire", self.id)
         with conn.pipeline() as pipe:
-            pipe.expire(f"{self.id}:states", self.ttl)
-            for key in conn.keys(f"{self.id}:subs:*"):  # type: ignore
+            for key in conn.keys(f"{self.id}:*"):  # type: ignore
                 pipe.expire(key, self.ttl)
             pipe.execute()
