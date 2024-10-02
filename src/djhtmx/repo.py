@@ -422,7 +422,8 @@ class Session:
     ttl: int = 3600
 
     def reset(self):
-        conn.delete(*conn.keys(f"{self.id}:*"))  # type: ignore
+        if keys := conn.keys(f"{self.id}:*"):
+            conn.delete(*keys)  # type: ignore
 
     def unregister_component(self, component_id: str):
         with conn.pipeline() as pipe:
