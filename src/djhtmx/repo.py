@@ -419,7 +419,6 @@ class Session:
     cache: defaultdict[str, dict[str, t.Any] | None | UnsetType] = Field(
         default_factory=lambda: defaultdict(lambda: Unset)
     )
-    ttl: int = 3600
 
     def reset(self):
         if keys := conn.keys(f"{self.id}:*"):
@@ -461,9 +460,11 @@ class Session:
                 pipe.sadd(f"{self.id}:subs:{signal}", component.id)
             pipe.execute()
 
-    def __del__(self):
-        print("Expire", self.id)
+    def set_ttl(self, ttl: int = 3600):
         with conn.pipeline() as pipe:
             for key in conn.keys(f"{self.id}:*"):  # type: ignore
-                pipe.expire(key, self.ttl)
+                pipe.expire(key, ttl)
             pipe.execute()
+
+    def __del__(self):
+        self.set_ttl()
