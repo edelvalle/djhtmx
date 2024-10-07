@@ -157,18 +157,12 @@ class Repository:
         self.user = user
         self.session = session
         self.params = params
-        self.component_by_id: dict[str, PydanticComponent] = {}
 
     # Component life cycle & management
-
-    def register_component(self, component: PydanticComponent) -> PydanticComponent:
-        self.component_by_id[component.id] = component
-        return component
 
     def unregister_component(self, component_id: str):
         # delete component state
         self.session.unregister_component(component_id)
-        self.component_by_id.pop(component_id, None)
 
     async def adispatch_event(
         self,
@@ -310,13 +304,10 @@ class Repository:
             commands.extend(Signal(s) for s in signals)
 
     def get_components_subscribed_to(self, signal: str) -> t.Iterable[PydanticComponent]:
-        component_ids = list(self.session.get_component_ids_subscribed_to(signal))
-        component_ids.extend(
-            component.id
-            for component in self.component_by_id.values()
-            if signal in component._get_all_subscriptions()
+        return (
+            self.get_component_by_id(c_id)
+            for c_id in sorted(self.session.get_component_ids_subscribed_to(signal))
         )
-        return [self.get_component_by_id(c_id) for c_id in sorted(component_ids)]
 
     def update_params_from(self, component: PydanticComponent) -> set[str]:
         """Updates self.params based on the state of the component
@@ -345,45 +336,26 @@ class Repository:
         If the `component_id` cannot be found, raise a KeyError.
 
         """
-        if component := self.component_by_id.get(component_id):
-            return self.build(component.hx_name, {"id": component_id})
-        elif state := self.session.get_state(component_id):
-            return self.build(state["hx_name"], {"id": component_id})
+        if state := self.session.get_state(component_id):
+            return self.build(state["hx_name"], state, retrieve_state=False)
         else:
             raise ComponentNotFound(f"Component with id {component_id} not found")
 
-    def build(self, component_name: str, state: dict[str, t.Any]):
+    def build(self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True):
         """Build (or update) a component's state."""
+
+        # Retrieve state from storage
+        if retrieve_state and (component_id := state.get("id")):
+            state = (self.session.get_state(component_id) or {}) | state
 
         # Patch it with whatever is the the GET params if needed
         for patcher in _get_query_patchers(component_name):
             state |= patcher.get_update_for_state(self.params)
 
-        # Build if has ID already
-        if component_id := state.pop("id", None):
-            component = self.component_by_id.get(component_id)
-            if component:
-                if state:
-                    # some state was passed to the component, so it has to be updated
-                    component = component.model_validate(
-                        component.model_dump() | state | {"user": self.user, "id": component_id}
-                    )
-            else:
-                # Is stored?
-                state = (self.session.get_state(component_id) or {}) | state
-        else:
-            # Never been built
-            component = None
+        # Inject component name and user
+        kwargs = state | {"hx_name": component_name, "user": self.user}
 
-        if component is None:
-            kwargs = (
-                state
-                | {"hx_name": component_name, "user": self.user}
-                | ({"id": component_id} if component_id else {})
-            )
-            component = REGISTRY[component_name](**kwargs)
-
-        return self.register_component(component)
+        return REGISTRY[component_name](**kwargs)
 
     def get_components_by_names(self, names: t.Iterable[str]) -> t.Iterable[PydanticComponent]:
         # go over awaken components
@@ -453,9 +425,9 @@ class Session:
             yield state
 
     def store(self, component: PydanticComponent):
-        state = self.cache[component.id] = component.model_dump()
+        self.cache[component.id] = component.model_dump()
         with conn.pipeline() as pipe:
-            pipe.hset(f"{self.id}:states", component.id, json.dumps(state))
+            pipe.hset(f"{self.id}:states", component.id, component.model_dump_json())
             for signal in component._get_all_subscriptions():
                 pipe.sadd(f"{self.id}:subs:{signal}", component.id)
             pipe.execute()

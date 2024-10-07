@@ -4,7 +4,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, PydanticComponent, Query, Render
+from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, PydanticComponent, Query
 
 from .models import Item
 
