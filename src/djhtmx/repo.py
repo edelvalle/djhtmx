@@ -24,7 +24,7 @@ from .component import (
     Command,
     ComponentNotFound,
     Destroy,
-    DispatchEvent,
+    DispatchDOMEvent,
     Emit,
     Execute,
     Focus,
@@ -35,7 +35,7 @@ from .component import (
     SkipRender,
     _get_query_patchers,
 )
-from .introspection import Unset, UnsetType, filter_parameters, get_related_fields
+from .introspection import Unset, filter_parameters, get_related_fields
 from .settings import conn
 from .utils import db, get_model_subscriptions, get_params
 
@@ -62,7 +62,7 @@ class PushURL:
         return cls("?" + params.urlencode())
 
 
-ProcessedCommand = Destroy | Redirect | Focus | DispatchEvent | SendHtml | PushURL
+ProcessedCommand = Destroy | Redirect | Focus | DispatchDOMEvent | SendHtml | PushURL
 
 
 class Repository:
@@ -280,7 +280,7 @@ class Repository:
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     commands.append(Render(component))
 
-            case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
+            case Redirect(_) | Focus(_) | DispatchDOMEvent(_) as command:
                 yield command
 
     def _process_emited_commands(
@@ -388,9 +388,7 @@ class Repository:
 @dataclass(slots=True)
 class Session:
     id: str
-    cache: defaultdict[str, dict[str, t.Any] | None | UnsetType] = Field(
-        default_factory=lambda: defaultdict(lambda: Unset)
-    )
+    cache: dict[str, dict[str, t.Any] | None] = Field(default_factory=dict)
 
     def reset(self):
         if keys := conn.keys(f"{self.id}:*"):
@@ -406,8 +404,8 @@ class Session:
             pipe.execute()
 
     def get_state(self, component_id: str) -> dict[str, t.Any] | None:
-        if not isinstance(state := self.cache[component_id], UnsetType):
-            return state
+        if (state := self.cache.get(component_id, Unset)) is not Unset:
+            return state  # type: ignore
         elif state := conn.hget(f"{self.id}:states", component_id):
             state = json.loads(state)  # type: ignore
             self.cache[component_id] = state

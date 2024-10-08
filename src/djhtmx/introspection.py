@@ -260,9 +260,5 @@ def is_simple_annotation(ann):
     return is_basic_type(ann) or is_union_of_basic(ann)
 
 
-class UnsetType:
-    pass
-
-
-Unset = UnsetType()
+Unset = object()
 _SIMPLE_TYPES = (int, str, float, UUID, types.NoneType, date, datetime, bool)
