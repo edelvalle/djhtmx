@@ -5,7 +5,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from pydantic import BaseModel, TypeAdapter
 
 from . import json
-from .component import Command, Destroy, DispatchEvent, Focus, Redirect
+from .component import Command, Destroy, DispatchDOMEvent, Focus, Redirect
 from .introspection import parse_request_data
 from .repo import PushURL, Repository, SendHtml
 from .utils import get_params
@@ -53,7 +53,7 @@ class Consumer(AsyncJsonWebsocketConsumer):
                             "< Command: %s", f"SendHtml[{debug_trace}](... {len(html)} ...)"
                         )
                         await self.send(html)
-                    case Destroy(_) | Redirect(_) | Focus(_) | DispatchEvent(_) | PushURL(_):
+                    case Destroy(_) | Redirect(_) | Focus(_) | DispatchDOMEvent(_) | PushURL(_):
                         logger.debug("< Command: %s", command)
                         await self.send_json(command)
 

@@ -4,7 +4,7 @@ from .component import (
     BuildAndRender,
     Command,
     Destroy,
-    DispatchEvent,
+    DispatchDOMEvent,
     Emit,
     Execute,
     Focus,
@@ -47,7 +47,7 @@ class CommandQueue:
                     | SkipRender()
                     | Focus()
                     | Redirect()
-                    | DispatchEvent() as command
+                    | DispatchDOMEvent() as command
                 ):
                     new_commands.append(command)
 
@@ -92,5 +92,5 @@ class CommandQueue:
                     return 6, component.id, timestamp
                 else:
                     return 7, component.id, timestamp
-            case Focus() | Redirect() | DispatchEvent():
+            case Focus() | Redirect() | DispatchDOMEvent():
                 return 8, "", 0

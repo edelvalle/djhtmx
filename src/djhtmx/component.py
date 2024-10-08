@@ -36,12 +36,16 @@ class ComponentNotFound(LookupError):
 
 @dataclass(slots=True)
 class Destroy:
+    "Destroys the given component in the browser and in the caches."
+
     component_id: str
     command: t.Literal["destroy"] = "destroy"
 
 
 @dataclass(slots=True)
 class Redirect:
+    "Executes a browser redirection to the given URL."
+
     url: str
     command: t.Literal["redirect"] = "redirect"
 
@@ -52,6 +56,8 @@ class Redirect:
 
 @dataclass(slots=True)
 class Focus:
+    "Executes a '.focus()' on the browser element that matches `selector`"
+
     selector: str
     command: t.Literal["focus"] = "focus"
 
@@ -64,7 +70,9 @@ class Execute:
 
 
 @dataclass(slots=True)
-class DispatchEvent:
+class DispatchDOMEvent:
+    "Dispatches a DOM CustomEvent in the given target."
+
     target: str
     event: str
     detail: t.Any
@@ -76,6 +84,8 @@ class DispatchEvent:
 
 @dataclass(slots=True)
 class SkipRender:
+    "Instruct the HTMX engine to avoid the render of the component."
+
     component: "PydanticComponent"
 
 
@@ -116,11 +126,15 @@ class Render:
 
 @dataclass(slots=True)
 class Emit:
+    "Emit a backend-only event."
+
     event: t.Any
 
 
 @dataclass(slots=True)
 class Signal:
+    "Emit a backend-only signal."
+
     name: str
 
 
@@ -128,7 +142,7 @@ Command = (
     Destroy
     | Redirect
     | Focus
-    | DispatchEvent
+    | DispatchDOMEvent
     | SkipRender
     | BuildAndRender
     | Render

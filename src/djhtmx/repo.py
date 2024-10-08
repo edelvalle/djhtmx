@@ -24,7 +24,7 @@ from .component import (
     Command,
     ComponentNotFound,
     Destroy,
-    DispatchEvent,
+    DispatchDOMEvent,
     Emit,
     Execute,
     Focus,
@@ -62,7 +62,7 @@ class PushURL:
         return cls("?" + params.urlencode())
 
 
-ProcessedCommand = Destroy | Redirect | Focus | DispatchEvent | SendHtml | PushURL
+ProcessedCommand = Destroy | Redirect | Focus | DispatchDOMEvent | SendHtml | PushURL
 
 
 class Repository:
@@ -280,7 +280,7 @@ class Repository:
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     commands.append(Render(component))
 
-            case Redirect(_) | Focus(_) | DispatchEvent(_) as command:
+            case Redirect(_) | Focus(_) | DispatchDOMEvent(_) as command:
                 yield command
 
     def _process_emited_commands(

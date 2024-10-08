@@ -8,7 +8,7 @@ from django.urls import path, re_path
 from django.utils.html import format_html
 
 from . import json
-from .component import REGISTRY, Component, Destroy, DispatchEvent, Focus, Redirect, Triggers
+from .component import REGISTRY, Component, Destroy, DispatchDOMEvent, Focus, Redirect, Triggers
 from .consumer import Consumer
 from .introspection import filter_parameters, parse_request_data
 from .repo import PushURL, Repository, SendHtml
@@ -41,7 +41,7 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                 headers["HX-Redirect"] = url
             case Focus(selector):
                 triggers.after_settle("hxFocus", selector)
-            case DispatchEvent(event, target, detail, bubbles, cancelable, composed):
+            case DispatchDOMEvent(event, target, detail, bubbles, cancelable, composed):
                 triggers.after_settle(
                     "hxDispatchEvent",
                     {
