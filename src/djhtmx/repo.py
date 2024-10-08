@@ -35,7 +35,7 @@ from .component import (
     SkipRender,
     _get_query_patchers,
 )
-from .introspection import Unset, UnsetType, filter_parameters, get_related_fields
+from .introspection import Unset, filter_parameters, get_related_fields
 from .settings import conn
 from .utils import db, get_model_subscriptions, get_params
 
@@ -388,9 +388,7 @@ class Repository:
 @dataclass(slots=True)
 class Session:
     id: str
-    cache: defaultdict[str, dict[str, t.Any] | None | UnsetType] = Field(
-        default_factory=lambda: defaultdict(lambda: Unset)
-    )
+    cache: dict[str, dict[str, t.Any] | None] = Field(default_factory=dict)
 
     def reset(self):
         if keys := conn.keys(f"{self.id}:*"):
@@ -406,8 +404,8 @@ class Session:
             pipe.execute()
 
     def get_state(self, component_id: str) -> dict[str, t.Any] | None:
-        if not isinstance(state := self.cache[component_id], UnsetType):
-            return state
+        if (state := self.cache.get(component_id, Unset)) is not Unset:
+            return state  # type: ignore
         elif state := conn.hget(f"{self.id}:states", component_id):
             state = json.loads(state)  # type: ignore
             self.cache[component_id] = state
