@@ -76,17 +76,17 @@ class CommandQueue:
     def _priority(command: Command) -> tuple[int, str, int]:
         match command:
             case Execute():
-                return 0, "None", 0
-            case Signal():
-                return 1, "None", 0
-            case Emit():
-                return 2, "None", 0
+                return 0, "", 0
+            case Signal(_, timestamp):
+                return 1, "", timestamp
+            case Emit(_, timestamp):
+                return 2, "", timestamp
             case Destroy():
-                return 3, "None", 0
+                return 3, "", 0
             case SkipRender():
-                return 4, "None", 0
-            case BuildAndRender():
-                return 5, "None", 0
+                return 4, "", 0
+            case BuildAndRender(_, _, _, timestamp):
+                return 5, "", timestamp
             case Render(component, template, _, timestamp):
                 if template:
                     return 6, component.id, timestamp

@@ -162,6 +162,30 @@
         }
     });
 
+    document.addEventListener("hxDispatchDOMEvent", (event) => {
+        event.detail.value.map(
+            ({ event, target, detail, bubbles, cancelable, composed }) => {
+                let el = document.querySelector(target);
+                if (typeof el != "undefined" && el != null) {
+                    // This setTimeout basically queues the dispatch of the event
+                    // to avoid dispatching events within events handlers.
+                    setTimeout(
+                        () =>
+                            el.dispatchEvent(
+                                new CustomEvent(event, {
+                                    detail,
+                                    bubbles,
+                                    cancelable,
+                                    composed,
+                                }),
+                            ),
+                        0,
+                    );
+                }
+            },
+        );
+    });
+
     document.addEventListener("hxFocus", (event) => {
         event.detail.value.map((selector) => {
             document.querySelector(selector).focus();

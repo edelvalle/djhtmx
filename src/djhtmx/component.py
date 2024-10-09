@@ -79,7 +79,7 @@ class DispatchDOMEvent:
     bubbles: bool = False
     cancelable: bool = False
     composed: bool = False
-    command: t.Literal["dispatch_event"] = "dispatch_event"
+    command: t.Literal["dispatch_dom_event"] = "dispatch_dom_event"
 
 
 @dataclass(slots=True)
@@ -94,6 +94,7 @@ class BuildAndRender:
     component: type["PydanticComponent"]
     state: dict[str, t.Any]
     oob: str = "true"
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
     @classmethod
     def append(cls, target_: str, component_: type[PydanticComponent], **state):
@@ -129,6 +130,7 @@ class Emit:
     "Emit a backend-only event."
 
     event: t.Any
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 
 @dataclass(slots=True)
@@ -136,6 +138,7 @@ class Signal:
     "Emit a backend-only signal."
 
     name: str
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 
 Command = (

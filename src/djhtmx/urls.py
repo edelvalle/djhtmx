@@ -43,7 +43,7 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                 triggers.after_settle("hxFocus", selector)
             case DispatchDOMEvent(event, target, detail, bubbles, cancelable, composed):
                 triggers.after_settle(
-                    "hxDispatchEvent",
+                    "hxDispatchDOMEvent",
                     {
                         "event": event,
                         "target": target,
