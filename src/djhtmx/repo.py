@@ -4,6 +4,7 @@ import logging
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as Field
+from itertools import chain
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.signing import Signer
@@ -194,7 +195,8 @@ class Repository:
                 signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"
                 signals.update((signal, f"{signal}.{action}"))
 
-            commands.extend([Signal(name) for name in signals])
+            if signals:
+                commands.append(Signal(signals))
 
         # Command loop
         while commands:
@@ -232,7 +234,8 @@ class Repository:
                 signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"
                 signals.update((signal, f"{signal}.{action}"))
 
-            commands.extend([Signal(name) for name in signals])
+            if signals:
+                commands.append(Signal(signals))
 
         # Command loop
         while commands:
@@ -275,8 +278,8 @@ class Repository:
                     emited_commands = component._handle_event(event)  # type: ignore
                     yield from self._process_emited_commands(component, emited_commands, commands)
 
-            case Signal(signal):
-                for component in self.get_components_subscribed_to(signal):
+            case Signal(signals):
+                for component in self.get_components_subscribed_to(signals):
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     commands.append(Render(component))
 
@@ -301,13 +304,14 @@ class Repository:
 
         if signals := self.update_params_from(component):
             yield PushURL.from_params(self.params)
-            commands.extend(Signal(s) for s in signals)
+            commands.append(Signal(signals))
 
-    def get_components_subscribed_to(self, signal: str) -> t.Iterable[PydanticComponent]:
         self.session.store(component)
+
+    def get_components_subscribed_to(self, signals: set[str]) -> t.Iterable[PydanticComponent]:
         return (
             self.get_component_by_id(c_id)
-            for c_id in sorted(self.session.get_component_ids_subscribed_to(signal))
+            for c_id in sorted(self.session.get_component_ids_subscribed_to(signals))
         )
 
     def update_params_from(self, component: PydanticComponent) -> set[str]:
@@ -414,9 +418,13 @@ class Session:
         else:
             return None
 
-    def get_component_ids_subscribed_to(self, signal: str) -> list[str]:
-        _, keys = conn.sscan(f"{self.id}:subs:{signal}")  # type: ignore
-        return [k.decode() for k in keys]
+    def get_component_ids_subscribed_to(self, signals: set[str]) -> set[str]:
+        with conn.pipeline() as pipe:
+            for signal in signals:
+                pipe.sscan(f"{self.id}:subs:{signal}")
+            return set(
+                chain.from_iterable((k.decode() for k in keys) for (_, keys) in pipe.execute())
+            )
 
     def get_all_states(self) -> t.Iterable[dict[str, t.Any]]:
         for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
@@ -424,12 +432,14 @@ class Session:
             yield state
 
     def store(self, component: PydanticComponent):
-        self.cache[component.id] = component.model_dump()
-        with conn.pipeline() as pipe:
-            pipe.hset(f"{self.id}:states", component.id, component.model_dump_json())
-            for signal in component._get_all_subscriptions():
-                pipe.sadd(f"{self.id}:subs:{signal}", component.id)
-            pipe.execute()
+        model_dump = component.model_dump()
+        if self.cache.get(component.id) != model_dump:
+            self.cache[component.id] = model_dump
+            with conn.pipeline() as pipe:
+                pipe.hset(f"{self.id}:states", component.id, component.model_dump_json())
+                for signal in component._get_all_subscriptions():
+                    pipe.sadd(f"{self.id}:subs:{signal}", component.id)
+                pipe.execute()
 
     def set_ttl(self, ttl: int = 3600):
         with conn.pipeline() as pipe:

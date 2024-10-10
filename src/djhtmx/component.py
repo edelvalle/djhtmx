@@ -9,6 +9,7 @@ from dataclasses import dataclass, field as dataclass_field
 from functools import cache, cached_property
 from itertools import chain
 from os.path import basename
+from pprint import pformat
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
@@ -137,7 +138,7 @@ class Emit:
 class Signal:
     "Emit a backend-only signal."
 
-    name: str
+    names: set[str]
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 
@@ -289,6 +290,9 @@ class PydanticComponent(BaseModel):
     id: t.Annotated[str, Field(default_factory=generate_id)]
     user: t.Annotated[AnonymousUser | AbstractBaseUser, Field(exclude=True)]
     hx_name: str
+
+    def __repr__(self) -> str:
+        return f"{self.hx_name}(\n{pformat(self.model_dump(exclude={'hx_name'}))})\n"
 
     @property
     def subscriptions(self) -> set[str]:
