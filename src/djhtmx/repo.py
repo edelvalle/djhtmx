@@ -375,7 +375,6 @@ class Repository:
         oob: str = None,
         template: str = None,
     ) -> SafeString:
-        # rendering the component means that it will be sent to the UI, the state has to be stored
         self.session.store(component)
 
         html = mark_safe(
@@ -383,7 +382,9 @@ class Repository:
                 component._get_context() | {"htmx_repo": self, "hx_oob": oob == "true"}
             ).strip()
         )
-        if oob and oob != "true":
+
+        # if performing some kind of append, the component has to be wrapped
+        if oob != "true":
             html = mark_safe(
                 "".join([format_html('<div hx-swap-oob="{oob}">', oob=oob), html, "</div>"])
             )
