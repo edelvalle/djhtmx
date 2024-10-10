@@ -304,6 +304,7 @@ class Repository:
             commands.extend(Signal(s) for s in signals)
 
     def get_components_subscribed_to(self, signal: str) -> t.Iterable[PydanticComponent]:
+        self.session.store(component)
         return (
             self.get_component_by_id(c_id)
             for c_id in sorted(self.session.get_component_ids_subscribed_to(signal))
