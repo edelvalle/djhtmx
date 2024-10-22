@@ -9,7 +9,6 @@ from dataclasses import dataclass, field as dataclass_field
 from functools import cache, cached_property
 from itertools import chain
 from os.path import basename
-from pprint import pformat
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
@@ -292,7 +291,7 @@ class PydanticComponent(BaseModel):
     hx_name: str
 
     def __repr__(self) -> str:
-        return f"{self.hx_name}(\n{pformat(self.model_dump(exclude={'hx_name'}))})\n"
+        return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
 
     @property
     def subscriptions(self) -> set[str]:
