@@ -290,6 +290,7 @@ class PydanticComponent(BaseModel):
     id: t.Annotated[str, Field(default_factory=generate_id)]
     user: t.Annotated[AnonymousUser | AbstractBaseUser, Field(exclude=True)]
     hx_name: str
+    hx_options: t.Annotated[frozenset[str], Field(default_factory=frozenset)]
 
     def __repr__(self) -> str:
         return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
@@ -298,7 +299,8 @@ class PydanticComponent(BaseModel):
     def subscriptions(self) -> set[str]:
         return set()
 
-    def render(self): ...
+    def render(self):
+        pass
 
     def _get_all_subscriptions(self) -> set[str]:
         return self.subscriptions | _get_querystring_subscriptions(self.hx_name)

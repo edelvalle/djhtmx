@@ -40,20 +40,29 @@ def htmx_headers(context):
 
 
 @register.simple_tag(takes_context=True)
-def htmx(context, _name: str, _state: dict[str, t.Any] = None, **state):
+def htmx(context, *args, **state):
     """Inserts an HTMX Component.
 
     Pass the component name and the initial state:
 
-        ```html
-        {% htmx 'AmazinData' data=some_data %}
-        ```
+    ```html
+        {% htmx [options] 'AmazinData' [state] data=some_data %}
+    ```
+
+    The options are a variable list of strings.  The current implementation
+    allows: 'lazy'.
+
+    ```html
+        {% htmx 'lazy' 'AmazinData' [_state] data=some_data %}
+    ```
+
     """
+    options, _name, _state = _parse_htmx_args(*args)
     state = (_state or {}) | state
     if _name in REGISTRY:
         # PydanticComponent
         repo = context.get("htmx_repo") or Repository.from_request(context["request"])
-        component = repo.build(_name, state)
+        component = repo.build(_name, state, hx_options=options)
         return repo.render_html(component)
     else:
         # Legacy Component
@@ -62,20 +71,32 @@ def htmx(context, _name: str, _state: dict[str, t.Any] = None, **state):
         return mark_safe(component._render())
 
 
-@register.simple_tag(takes_context=True)
-def htmx_lazy(context, _name: str, _state: dict[str, t.Any] = None, **state):
-    """Inserts an HTMX Component.
+def _parse_htmx_args(*args):
+    """Parse the args of '{% htmx ... %} to extract options from name and
+    state.
 
-    Pass the component name and the initial state:
+    >>> _parse_htmx_args('TodoItem')
+    ((), 'TodoItem', None)
 
-        ```html
-        {% htmx 'AmazinData' data=some_data %}
-        ```
+    >>> _parse_htmx_args('lazy', 'ws', 'TodoItem')
+    (('lazy', 'ws'), 'TodoItem', None)
+
+    >>> _parse_htmx_args('lazy', 'ws', 'TodoItem', {})
+    (('lazy', 'ws'), 'TodoItem', {})
+
     """
-    state = (_state or {}) | state
-    repo = context.get("htmx_repo") or Repository.from_request(context["request"])
-    component = repo.build(_name, state)
-    return repo.render_html_lazy(component)
+    try:
+        *options, name, state = args
+    except ValueError:
+        *options, name = args
+        state = None
+    if state is not None and not isinstance(state, dict):
+        options = tuple(options) + (name, )
+        name = state
+        state = None
+    assert isinstance(name, str)
+    assert state is None or isinstance(state, dict)
+    return tuple(options), name, state
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
