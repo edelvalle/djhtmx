@@ -6,12 +6,8 @@
         const csrf_token = document
             .querySelector("meta[name=django-csrf-token]")
             .getAttribute("content");
-        const hx_session = document
-            .querySelector("meta[name=hx-session]")
-            .getAttribute("content");
 
         event.detail.headers[csrf_header] = csrf_token;
-        event.detail.headers["HX-Session"] = hx_session;
     });
 
     // WebSocket Management

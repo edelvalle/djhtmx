@@ -28,14 +28,12 @@ def htmx_headers(context):
 
     Use this tag inside your `<header></header>`.
     """
-    if request := context.get("request"):
-        repo = Repository.from_request(request)
+    if context.get("request"):
         return {
             "enabled": True,
             "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
             "SCRIPT_URLS": settings.SCRIPT_URLS,
             "csrf_token": context.get("csrf_token"),
-            "hx_session": signer.sign(repo.session.id),
         }
     else:
         return {"enabled": False}
@@ -107,7 +105,6 @@ def hx_tag(context: Context):
             context["hx_oob"] = False
             attrs = {
                 "id": component.id,
-                "hx-include": f"#{component.id} [name]",
                 "hx-swap-oob": "true" if oob else None,
             }
     else:
@@ -116,7 +113,6 @@ def hx_tag(context: Context):
             "id": component.id,
             "hx-target": "this",
             "hx-boost": "false",
-            "hx-include": f"#{component.id} [name]",
             "hx-post": event_url(component, "render"),
             "hx-trigger": "render",
             "hx-headers": json.dumps({
@@ -184,12 +180,13 @@ def on(
         "hx-post": event_url(component, _event_handler),
         "hx-trigger": _trigger,
         "hx-vals": json.dumps(kwargs) if kwargs else None,
+        "hx-include": hx_include or f"#{component.id} [name]",
     }
     if isinstance(component, PydanticComponent):
-        attrs |= {"hx-swap": "none"}
-
-    if hx_include:
-        attrs |= {"hx-include": hx_include}
+        attrs |= {
+            "hx-swap": "none",
+            "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
+        }
     return format_html_attrs(attrs)
 
 

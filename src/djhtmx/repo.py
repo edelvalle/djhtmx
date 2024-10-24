@@ -4,6 +4,7 @@ import logging
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as Field
+from functools import cached_property
 from itertools import chain
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
@@ -99,14 +100,10 @@ class Repository:
         if (result := getattr(request, "djhtmx", None)) is None:
             if signed_session := request.META.get("HTTP_HX_SESSION"):
                 session_id = signer.unsign(signed_session)
-                reset_session = bool(request.META.get("HTTP_HX_BOOSTED"))
             else:
                 session_id = cls.new_session_id()
-                reset_session = True
 
             session = Session(session_id)
-            if reset_session:
-                session.reset()
 
             result = cls(
                 user=getattr(request, "user", AnonymousUser()),
@@ -157,6 +154,7 @@ class Repository:
     ):
         self.user = user
         self.session = session
+        self.session_signed_id = signer.sign(session.id)
         self.params = params
 
     # Component life cycle & management
@@ -403,10 +401,6 @@ class Repository:
 class Session:
     id: str
     cache: dict[str, dict[str, t.Any] | None] = Field(default_factory=dict)
-
-    def reset(self):
-        if keys := conn.keys(f"{self.id}:*"):
-            conn.delete(*keys)  # type: ignore
 
     def unregister_component(self, component_id: str):
         with conn.pipeline() as pipe:
