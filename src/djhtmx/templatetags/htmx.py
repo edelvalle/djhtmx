@@ -94,7 +94,7 @@ def hx_tag(context: Context):
         }
         if context.get("hx_lazy"):
             context["hx_lazy"] = False
-            jitter = random.randint(500, 1000)
+            jitter = random.randint(100, 1000)
             attrs |= {
                 "hx-trigger": f"revealed delay:{jitter}ms",
                 "hx-get": event_url(component, "render"),
