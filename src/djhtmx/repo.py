@@ -296,6 +296,14 @@ class Repository:
             component_was_rendered = component_was_rendered or (
                 isinstance(command, (SkipRender, Render)) and command.component.id == component.id
             )
+            if (
+                component_was_rendered
+                and during_execute
+                and isinstance(command, Render)
+                and command.lazy is None
+            ):
+                # make partial updates not lazy during_execute
+                command.lazy = False
             commands.append(command)
 
         if not component_was_rendered:

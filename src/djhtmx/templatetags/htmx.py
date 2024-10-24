@@ -40,7 +40,14 @@ def htmx_headers(context):
 
 
 @register.simple_tag(takes_context=True)
-def htmx(context, _name: str, lazy: t.Literal["once"] | bool = False, **state):
+def htmx(
+    context,
+    _name: str,
+    _state: dict[str, t.Any] = None,
+    *,
+    lazy: t.Literal["once"] | bool = False,
+    **state,
+):
     """Inserts an HTMX Component.
 
     Pass the component name and the initial state:
@@ -49,9 +56,10 @@ def htmx(context, _name: str, lazy: t.Literal["once"] | bool = False, **state):
         {% htmx 'AmazinData' data=some_data %}
         ```
     """
-    state = state | {"lazy": lazy is True}
+    state = (_state or {}) | state
     if _name in REGISTRY:
         # PydanticComponent
+        state |= {"lazy": lazy is True}
         repo = context.get("htmx_repo") or Repository.from_request(context["request"])
         component = repo.build(_name, state)
         return repo.render_html(component, lazy=lazy if isinstance(lazy, bool) else False)
