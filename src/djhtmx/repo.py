@@ -4,7 +4,6 @@ import logging
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as Field
-from functools import cached_property
 from itertools import chain
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
@@ -250,7 +249,9 @@ class Repository:
                 handler = getattr(component, event_handler)
                 handler_kwargs = filter_parameters(handler, event_data)
                 emited_commands = handler(**handler_kwargs)
-                yield from self._process_emited_commands(component, emited_commands, commands)
+                yield from self._process_emited_commands(
+                    component, emited_commands, commands, during_execute=True
+                )
 
             case SkipRender(component):
                 self.session.store(component)
@@ -259,12 +260,9 @@ class Repository:
                 component = self.build(component_type.__name__, state)
                 commands.append(Render(component, oob=oob))
 
-            case Render(component, template, oob):
-                html = self.render_html(component, oob=oob, template=template)
-                yield SendHtml(
-                    html,
-                    debug_trace=f"{component.hx_name}({component.id})",
-                )
+            case Render(component, template, oob, lazy):
+                html = self.render_html(component, oob=oob, template=template, lazy=lazy)
+                yield SendHtml(html, debug_trace=f"{component.hx_name}({component.id})")
 
             case Destroy(component_id) as command:
                 self.unregister_component(component_id)
@@ -274,7 +272,9 @@ class Repository:
                 for component in self.get_components_by_names(LISTENERS[type(event)]):
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     emited_commands = component._handle_event(event)  # type: ignore
-                    yield from self._process_emited_commands(component, emited_commands, commands)
+                    yield from self._process_emited_commands(
+                        component, emited_commands, commands, during_execute=False
+                    )
 
             case Signal(signals):
                 for component in self.get_components_subscribed_to(signals):
@@ -289,6 +289,7 @@ class Repository:
         component: PydanticComponent,
         emmited_commands: t.Iterable[Command] | None,
         commands: CommandQueue,
+        during_execute: bool,
     ) -> t.Iterable[ProcessedCommand]:
         component_was_rendered = False
         for command in emmited_commands or []:
@@ -298,7 +299,7 @@ class Repository:
             commands.append(command)
 
         if not component_was_rendered:
-            commands.append(Render(component))
+            commands.append(Render(component, lazy=False if during_execute else component.lazy))
 
         if signals := self.update_params_from(component):
             yield PushURL.from_params(self.params)
@@ -372,14 +373,28 @@ class Repository:
         component: PydanticComponent,
         oob: str = None,
         template: str = None,
+        lazy: bool | None = None,
     ) -> SafeString:
+        lazy = component.lazy if lazy is None else lazy
         self.session.store(component)
 
-        html = mark_safe(
-            component._get_template(template)(
-                component._get_context() | {"htmx_repo": self, "hx_oob": oob == "true"}
-            ).strip()
-        )
+        if lazy:
+            html = component._get_template(component._template_name_lazy)({
+                "htmx_repo": self,
+                "hx_oob": oob == "true",
+                "hx_lazy": True,
+                "this": component,
+            })
+        else:
+            html = component._get_template(template)(
+                component._get_context()
+                | {
+                    "htmx_repo": self,
+                    "hx_oob": oob == "true",
+                }
+            )
+
+        html = mark_safe(html.strip())
 
         # if performing some kind of append, the component has to be wrapped
         if oob and oob != "true":
@@ -387,14 +402,6 @@ class Repository:
                 "".join([format_html('<div hx-swap-oob="{oob}">', oob=oob), html, "</div>"])
             )
         return html
-
-    def render_html_lazy(self, component: PydanticComponent):
-        self.session.store(component)
-        return mark_safe(
-            component._get_template(component._template_name_lazy)(
-                component.model_dump() | {"htmx_repo": self, "hx_lazy": True, "this": component}
-            ).strip()
-        )
 
 
 @dataclass(slots=True)

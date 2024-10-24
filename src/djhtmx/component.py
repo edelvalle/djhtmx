@@ -122,6 +122,7 @@ class Render:
     component: PydanticComponent
     template: str | None = None
     oob: str = "true"
+    lazy: bool | None = None
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 
@@ -290,6 +291,7 @@ class PydanticComponent(BaseModel):
     id: t.Annotated[str, Field(default_factory=generate_id)]
     user: t.Annotated[AnonymousUser | AbstractBaseUser, Field(exclude=True)]
     hx_name: str
+    lazy: bool = False
 
     def __repr__(self) -> str:
         return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"

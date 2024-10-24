@@ -52,16 +52,20 @@ class CommandQueue:
                     new_commands.append(command)
 
                 case Destroy(component_id) as command:
+                    # Register destroyed ids
                     self._destroyed_ids.add(component_id)
                     new_commands.append(command)
 
                 case BuildAndRender(_, state, _) as command:
+                    # Remove BuildAndRender of destroyed ids
                     if not (
                         (component_id := state.get("id")) and component_id in self._destroyed_ids
                     ):
                         new_commands.append(command)
 
                 case Render(component) as command:
+                    # Remove Render of destroyed ids
+                    # Let the latest Render of the same component survive, kill the rest
                     if component.id not in self._destroyed_ids and not any(
                         isinstance(ahead_command, Render)
                         and ahead_command.component.id == component.id
@@ -87,7 +91,7 @@ class CommandQueue:
                 return 4, "", 0
             case BuildAndRender(_, _, _, timestamp):
                 return 5, "", timestamp
-            case Render(component, template, _, timestamp):
+            case Render(component, template, _, _, timestamp):
                 if template:
                     return 6, component.id, timestamp
                 else:

@@ -40,7 +40,7 @@ def htmx_headers(context):
 
 
 @register.simple_tag(takes_context=True)
-def htmx(context, _name: str, _state: dict[str, t.Any] = None, **state):
+def htmx(context, _name: str, lazy: t.Literal["once"] | bool = False, **state):
     """Inserts an HTMX Component.
 
     Pass the component name and the initial state:
@@ -49,33 +49,17 @@ def htmx(context, _name: str, _state: dict[str, t.Any] = None, **state):
         {% htmx 'AmazinData' data=some_data %}
         ```
     """
-    state = (_state or {}) | state
+    state = state | {"lazy": lazy is True}
     if _name in REGISTRY:
         # PydanticComponent
         repo = context.get("htmx_repo") or Repository.from_request(context["request"])
         component = repo.build(_name, state)
-        return repo.render_html(component)
+        return repo.render_html(component, lazy=lazy if isinstance(lazy, bool) else False)
     else:
         # Legacy Component
         id = state.pop("id", None) or generate_id()
         component = Component._build(_name, context["request"], id, state)
         return mark_safe(component._render())
-
-
-@register.simple_tag(takes_context=True)
-def htmx_lazy(context, _name: str, _state: dict[str, t.Any] = None, **state):
-    """Inserts an HTMX Component.
-
-    Pass the component name and the initial state:
-
-        ```html
-        {% htmx 'AmazinData' data=some_data %}
-        ```
-    """
-    state = (_state or {}) | state
-    repo = context.get("htmx_repo") or Repository.from_request(context["request"])
-    component = repo.build(_name, state)
-    return repo.render_html_lazy(component)
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
@@ -93,22 +77,20 @@ def hx_tag(context: Context):
     """
     component: Component | PydanticComponent = context["this"]
     if isinstance(component, PydanticComponent):
+        oob = context.get("hx_oob")
+        context["hx_oob"] = False
+        attrs = {
+            "id": component.id,
+            "hx-swap-oob": "true" if oob else None,
+        }
         if context.get("hx_lazy"):
             context["hx_lazy"] = False
-            attrs = {
-                "id": component.id,
+            attrs |= {
                 "hx-trigger": "load",
                 "hx-get": event_url(component, "render"),
-            }
-        else:
-            oob = context.get("hx_oob")
-            context["hx_oob"] = False
-            attrs = {
-                "id": component.id,
-                "hx-swap-oob": "true" if oob else None,
+                "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
             }
     else:
-        component = t.cast(Component, context["this"])
         attrs = {
             "id": component.id,
             "hx-target": "this",

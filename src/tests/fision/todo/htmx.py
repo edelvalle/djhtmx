@@ -118,6 +118,11 @@ class TodoCounter(PydanticComponent):
 
     query: t.Annotated[str, Query("q")] = ""
 
+    def render(self):
+        from time import sleep
+
+        sleep(1)
+
     @property
     def subscriptions(self) -> set[str]:
         return {"todo.item"}

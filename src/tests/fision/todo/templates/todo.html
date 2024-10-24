@@ -3,5 +3,5 @@
 {% load htmx %}
 
 {% block body %}
-  {% htmx_lazy 'TodoList' showing=showing %}
+  {% htmx 'TodoList' lazy='once' showing=showing %}
 {% endblock body %}
