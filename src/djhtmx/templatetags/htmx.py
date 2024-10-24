@@ -1,3 +1,4 @@
+import random
 import typing as t
 
 from django import template
@@ -93,8 +94,9 @@ def hx_tag(context: Context):
         }
         if context.get("hx_lazy"):
             context["hx_lazy"] = False
+            jitter = random.randint(500, 1000)
             attrs |= {
-                "hx-trigger": "load",
+                "hx-trigger": f"revealed delay:{jitter}ms",
                 "hx-get": event_url(component, "render"),
                 "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
             }
