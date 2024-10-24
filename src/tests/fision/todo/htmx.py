@@ -88,6 +88,11 @@ class TodoItem(PydanticComponent):
     item: Item
     editing: bool = False
 
+    def render(self):
+        from time import sleep
+
+        sleep(2)
+
     def delete(self):
         self.item.delete()
         yield Destroy(self.id)

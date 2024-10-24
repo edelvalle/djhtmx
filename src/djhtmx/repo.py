@@ -390,6 +390,14 @@ class Repository:
             )
         return html
 
+    def render_html_lazy(self, component: PydanticComponent):
+        self.session.store(component)
+        return mark_safe(
+            component._get_template(component._template_name_lazy)(
+                component.model_dump() | {"htmx_repo": self, "hx_lazy": True, "this": component}
+            ).strip()
+        )
+
 
 @dataclass(slots=True)
 class Session:

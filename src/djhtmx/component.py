@@ -207,6 +207,7 @@ def get_template(template: str) -> RenderFunction:
 
 class PydanticComponent(BaseModel):
     _template_name: str = ...  # type: ignore
+    _template_name_lazy: str = "htmx/lazy.html"
 
     # fields to exclude from component state during serialization
     model_config = ConfigDict(
@@ -296,6 +297,8 @@ class PydanticComponent(BaseModel):
     @property
     def subscriptions(self) -> set[str]:
         return set()
+
+    def render(self): ...
 
     def _get_all_subscriptions(self) -> set[str]:
         return self.subscriptions | _get_querystring_subscriptions(self.hx_name)
