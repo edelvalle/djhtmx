@@ -344,7 +344,13 @@ class Repository:
         else:
             raise ComponentNotFound(f"Component with id {component_id} not found")
 
-    def build(self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True):
+    def build(
+        self,
+        component_name: str,
+        state: dict[str, t.Any],
+        retrieve_state: bool = True,
+        hx_options: t.Iterable[str] = (),
+    ):
         """Build (or update) a component's state."""
 
         # Retrieve state from storage
@@ -355,8 +361,14 @@ class Repository:
         for patcher in _get_query_patchers(component_name):
             state |= patcher.get_update_for_state(self.params)
 
+        previous_options = frozenset(state.get("hx_options", frozenset()))
+
         # Inject component name and user
-        kwargs = state | {"hx_name": component_name, "user": self.user}
+        kwargs = state | {
+            "hx_name": component_name,
+            "user": self.user,
+            "hx_options": previous_options | frozenset(hx_options),
+        }
 
         return REGISTRY[component_name](**kwargs)
 
@@ -370,11 +382,21 @@ class Repository:
     def render_html(
         self,
         component: PydanticComponent,
-        oob: str = None,
-        template: str = None,
+        oob: str | None = None,
+        template: str | None = None,
     ) -> SafeString:
         self.session.store(component)
+        if "lazy" in component.hx_options:
+            return self._render_html_lazy(component)
+        else:
+            return self._render_html(component, oob=oob, template=template)
 
+    def _render_html(
+        self,
+        component: PydanticComponent,
+        oob: str | None = None,
+        template: str | None = None,
+    ) -> SafeString:
         html = mark_safe(
             component._get_template(template)(
                 component._get_context() | {"htmx_repo": self, "hx_oob": oob == "true"}
@@ -388,8 +410,7 @@ class Repository:
             )
         return html
 
-    def render_html_lazy(self, component: PydanticComponent):
-        self.session.store(component)
+    def _render_html_lazy(self, component: PydanticComponent):
         return mark_safe(
             component._get_template(component._template_name_lazy)(
                 component.model_dump() | {"htmx_repo": self, "hx_lazy": True, "this": component}
