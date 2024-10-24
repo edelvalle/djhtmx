@@ -384,7 +384,7 @@ class Repository:
         )
 
         # if performing some kind of append, the component has to be wrapped
-        if oob != "true":
+        if oob and oob != "true":
             html = mark_safe(
                 "".join([format_html('<div hx-swap-oob="{oob}">', oob=oob), html, "</div>"])
             )
