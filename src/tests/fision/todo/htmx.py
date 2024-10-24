@@ -1,3 +1,4 @@
+import random
 import typing as t
 from dataclasses import dataclass
 from enum import StrEnum
@@ -91,7 +92,7 @@ class TodoItem(PydanticComponent):
     def render(self):
         from time import sleep
 
-        sleep(2)
+        sleep(random.random() * 2 + 0.1)
 
     def delete(self):
         self.item.delete()
@@ -121,7 +122,7 @@ class TodoCounter(PydanticComponent):
     def render(self):
         from time import sleep
 
-        sleep(1)
+        sleep(random.random() * 3 + 0.5)
 
     @property
     def subscriptions(self) -> set[str]:
