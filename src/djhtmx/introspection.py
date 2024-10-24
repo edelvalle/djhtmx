@@ -1,15 +1,18 @@
-import dataclasses
+import datetime
+import enum
 import inspect
 import types
 import typing as t
 from collections import defaultdict
-from dataclasses import MISSING, dataclass
+from dataclasses import dataclass
+from datetime import date
 from inspect import Parameter
+from uuid import UUID
 
+from django.apps import apps
 from django.db import models
 from django.utils.datastructures import MultiValueDict
-from pydantic import BeforeValidator, PlainSerializer
-from pydantic.fields import FieldInfo
+from pydantic import BeforeValidator, PlainSerializer, TypeAdapter
 
 # model
 
@@ -21,14 +24,14 @@ class ModelRelatedField:
     related_model_name: str
 
 
-MODEL_RELATED_FIELDS: dict[t.Type[models.Model], tuple[ModelRelatedField, ...]] = {}
+MODEL_RELATED_FIELDS: dict[type[models.Model], tuple[ModelRelatedField, ...]] = {}
 
 
-def Model(model: t.Type[models.Model]):
+def Model(model: type[models.Model]):
     return t.Annotated[
-        t.Optional[model],
+        model,
         BeforeValidator(
-            lambda v: (v if isinstance(v, model) else model.objects.filter(pk=v).first())
+            lambda v: (v if isinstance(v, model) else model.objects.filter(pk=v).get())
         ),
         PlainSerializer(
             func=lambda v: v.pk,
@@ -37,12 +40,28 @@ def Model(model: t.Type[models.Model]):
     ]
 
 
+def QuerySet(qs: type[models.QuerySet]):
+    [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
+    return t.Annotated[
+        qs,
+        BeforeValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
+        PlainSerializer(
+            func=lambda v: (
+                [instance.pk for instance in v]
+                if v._result_cache
+                else list(v.values_list("pk", flat=True))
+            ),
+            return_type=str if (pk := model().pk) is None else type(pk),
+        ),
+    ]
+
+
 def annotate_model(annotation):
     if issubclass_safe(annotation, models.Model):
         return Model(annotation)
-    elif t.get_origin(annotation) is types.UnionType:
-        return t.Union[*(annotate_model(a) for a in t.get_args(annotation))]  # type:ignore
-    elif type(annotation).__name__ == "_TypedDictMeta":
+    elif issubclass_safe(annotation, models.QuerySet):
+        return QuerySet(annotation)
+    elif t.is_typeddict(annotation):
         return t.TypedDict(
             annotation.__name__,  # type: ignore
             {
@@ -50,6 +69,16 @@ def annotate_model(annotation):
                 for k, v in t.get_type_hints(annotation).items()
             },
         )
+    elif type_ := t.get_origin(annotation):
+        if type_ is types.UnionType or type_ is t.Union:
+            type_ = t.Union
+        match t.get_args(annotation):
+            case ():
+                return type_
+            case (param,):
+                return type_[annotate_model(param)]  # type: ignore
+            case params:
+                return type_[*(annotate_model(p) for p in params)]  # type: ignore
     else:
         return annotation
 
@@ -110,7 +139,7 @@ def get_related_fields(model):
 # filtering
 
 
-def filter_parameters(f, kwargs):
+def filter_parameters(f: t.Callable, kwargs: dict[str, t.Any]):
     has_kwargs = any(
         param.kind == Parameter.VAR_KEYWORD for param in inspect.signature(f).parameters.values()
     )
@@ -127,7 +156,11 @@ def filter_parameters(f, kwargs):
 # Decoder for client requests
 
 
-def parse_request_data(data: MultiValueDict[str, t.Any]):
+def parse_request_data(data: MultiValueDict[str, t.Any] | dict[str, t.Any]):
+    if not isinstance(data, MultiValueDict):
+        data = MultiValueDict({
+            key: value if isinstance(value, list) else [value] for key, value in data.items()
+        })
     return _parse_obj(_extract_data(data))
 
 
@@ -162,36 +195,70 @@ def _parse_obj(data: t.Iterable[tuple[list[str], t.Any]], output=None) -> dict[s
 
 def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
     "Extract the types of the annotations of parameter 'event'."
-    event = inspect.signature(f).parameters["event"]
-    if t.get_origin(event.annotation) is types.UnionType:
+    event = t.get_type_hints(f)["event"]
+    if t.get_origin(event) is types.UnionType:
         return {
-            arg
-            for arg in t.get_args(event.annotation)
-            if isinstance(arg, type) and arg is not types.NoneType
+            arg for arg in t.get_args(event) if isinstance(arg, type) and arg is not types.NoneType
         }
-    elif isinstance(event.annotation, type):
-        return {event.annotation}
-    return set()
-
-
-def get_field_info(cls, name, ann_type) -> FieldInfo:
-    default = getattr(cls, name, Unset)
-    if isinstance(default, FieldInfo):
-        return default
-
-    if isinstance(default, dataclasses.Field):
-        default_factory = default.default_factory
-        default = default.default
-        if default is dataclasses.MISSING and default_factory is not MISSING:
-            default = default_factory()
-
-        if default is dataclasses.MISSING:
-            default = Unset
-
-    if default is Unset:
-        return FieldInfo.from_annotation(ann_type)
+    elif isinstance(event, type):
+        return {event}
     else:
-        return FieldInfo.from_annotated_attribute(ann_type, default)
+        return set()
+
+
+def get_annotation_adapter(annotation):
+    """Return a TypeAdapter for the annotation."""
+    if annotation is bool:
+        return infallible_bool_adapter
+
+    return TypeAdapter(
+        t.Optional[annotate_model(annotation)]  # type: ignore
+    )
+
+
+# Infallible adapter for boolean values.  't' is True, everything else is
+# False.
+infallible_bool_adapter = TypeAdapter(
+    t.Annotated[
+        bool,
+        BeforeValidator(lambda v: True if v == "t" else False),
+        PlainSerializer(lambda v: "t" if v else "f"),
+    ]
+)
+
+
+def is_basic_type(ann):
+    """Returns True if the annotation is a simple type.
+
+    Simple types are:
+
+    - Simple Python types: ints, floats, strings, UUIDs, dates and datetimes, bools,
+      and the value None.
+
+    - Instances of a Django model (which will use the PK as a proxy)
+
+    - Instances of IntEnum or StrEnum.
+
+    """
+    return (
+        ann in _SIMPLE_TYPES
+        or issubclass_safe(ann, models.Model)
+        or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
+    )
+
+
+def is_union_of_basic(ann):
+    """Returns True Union of simple types (as is_simple_annotation)"""
+    type_ = t.get_origin(ann)
+    if type_ is types.UnionType or type_ is t.Union:
+        return all(is_basic_type(arg) for arg in t.get_args(ann))
+    return False
+
+
+def is_simple_annotation(ann):
+    "Return True if the annotation is either simple or a Union of simple"
+    return is_basic_type(ann) or is_union_of_basic(ann)
 
 
 Unset = object()
+_SIMPLE_TYPES = (int, str, float, UUID, types.NoneType, date, datetime, bool)

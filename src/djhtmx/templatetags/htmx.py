@@ -1,15 +1,16 @@
 import typing as t
-from uuid import uuid4
 
 from django import template
 from django.core.signing import Signer
 from django.template.base import Node, Parser, Token
+from django.template.context import Context
 from django.urls import reverse
-from django.utils.html import format_html, format_html_join
+from django.utils.html import format_html_join
 from django.utils.safestring import mark_safe
 
 from .. import json, settings
-from ..component import REGISTRY, Component, PydanticComponent, Repository
+from ..component import REGISTRY, Component, PydanticComponent, generate_id
+from ..repo import Repository
 
 register = template.Library()
 signer = Signer()
@@ -27,15 +28,26 @@ def htmx_headers(context):
 
     Use this tag inside your `<header></header>`.
     """
-    return {
-        "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
-        "SCRIPT_URLS": settings.SCRIPT_URLS,
-        "csrf_token": context.get("csrf_token"),
-    }
+    if context.get("request"):
+        return {
+            "enabled": True,
+            "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
+            "SCRIPT_URLS": settings.SCRIPT_URLS,
+            "csrf_token": context.get("csrf_token"),
+        }
+    else:
+        return {"enabled": False}
 
 
 @register.simple_tag(takes_context=True)
-def htmx(context, _name: str, **state):
+def htmx(
+    context,
+    _name: str,
+    _state: dict[str, t.Any] = None,
+    *,
+    lazy: t.Literal["once"] | bool = False,
+    **state,
+):
     """Inserts an HTMX Component.
 
     Pass the component name and the initial state:
@@ -44,27 +56,22 @@ def htmx(context, _name: str, **state):
         {% htmx 'AmazinData' data=some_data %}
         ```
     """
-    repo = Repository.from_request(
-        context["request"],
-        states_by_id={},
-        subscriptions_by_id={},
-    )
+    state = (_state or {}) | state
     if _name in REGISTRY:
         # PydanticComponent
+        state |= {"lazy": lazy is True}
+        repo = context.get("htmx_repo") or Repository.from_request(context["request"])
         component = repo.build(_name, state)
-        return repo.render_html(component)
+        return repo.render_html(component, lazy=lazy if isinstance(lazy, bool) else False)
     else:
         # Legacy Component
-        if "id" in state:
-            id = state.pop("id")
-        else:
-            id = f"hx-{uuid4().hex}"
+        id = state.pop("id", None) or generate_id()
         component = Component._build(_name, context["request"], id, state)
         return mark_safe(component._render())
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
-def hx_tag(context, swap: str = "outerHTML"):
+def hx_tag(context: Context):
     """Adds initialziation data to your root component tag.
 
     When your component starts, put it there:
@@ -79,40 +86,37 @@ def hx_tag(context, swap: str = "outerHTML"):
     component: Component | PydanticComponent = context["this"]
     if isinstance(component, PydanticComponent):
         oob = context.get("hx_oob")
+        context["hx_oob"] = False
         attrs = {
             "id": component.id,
-            "hx-swap": swap,
-            "hx-swap-oob": oob,
-            "data-hx-state": signer.sign(component.model_dump_json()),
-            "data-hx-subscriptions": (
-                ",".join(subscriptions)
-                if (subscriptions := component._get_all_subscriptions())
-                else None
-            ),
+            "hx-swap-oob": "true" if oob else None,
         }
-        return format_html_attrs(attrs)
+        if context.get("hx_lazy"):
+            context["hx_lazy"] = False
+            attrs |= {
+                "hx-trigger": "load",
+                "hx-get": event_url(component, "render"),
+                "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
+            }
     else:
-        html = [
-            'id="{id}"',
-            'hx-post="{url}"',
-            'hx-trigger="render"',
-            'hx-headers="{headers}"',
-        ]
-
-        if context.get("hx_swap_oob"):
-            html.append('hx-swap-oob="true"')
-        else:
-            html.append(f'hx-swap="{swap}"')
-
-        component = t.cast(Component, context["this"])
-        return format_html(
-            " ".join(html),
-            id=context["id"],
-            url=event_url(component, "render"),
-            headers=json.dumps({
+        attrs = {
+            "id": component.id,
+            "hx-target": "this",
+            "hx-boost": "false",
+            "hx-post": event_url(component, "render"),
+            "hx-trigger": "render",
+            "hx-headers": json.dumps({
                 "X-Component-State": signer.sign(component._state_json),
             }),
-        )
+        }
+    return format_html_attrs(attrs)
+
+
+@register.simple_tag(takes_context=True)
+def oob(context: Context):
+    oob = context.get("hx_oob")
+    context["hx_oob"] = False
+    return format_html_attrs({"hx-swap-oob": "true" if oob else None})
 
 
 @register.simple_tag(takes_context=True)
@@ -120,8 +124,7 @@ def on(
     context,
     _trigger,
     _event_handler=None,
-    hx_target: str | object | None = unset,
-    hx_include: str | object | None = unset,
+    hx_include: str = None,
     **kwargs,
 ):
     """Binds an event to a handler
@@ -166,48 +169,47 @@ def on(
     attrs = {
         "hx-post": event_url(component, _event_handler),
         "hx-trigger": _trigger,
-        "hx-target": f"#{component.id}" if hx_target is unset else hx_target,
-        "hx-include": (f"#{component.id} [name]" if hx_include is unset else hx_include),
         "hx-vals": json.dumps(kwargs) if kwargs else None,
+        "hx-include": hx_include or f"#{component.id} [name]",
     }
+    if isinstance(component, PydanticComponent):
+        attrs |= {
+            "hx-swap": "none",
+            "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
+        }
     return format_html_attrs(attrs)
 
 
 def format_html_attrs(attrs: dict[str, t.Any]):
     return format_html_join(
-        " ",
+        "\n",
         '{}="{}"',
         [(k, v) for k, v in attrs.items() if v is not None],
     )
 
 
 def event_url(component: PydanticComponent | Component, event_handler: str):
-    if isinstance(component, PydanticComponent):
-        component_name = type(component).__name__
-        return reverse(
-            f"djhtmx.{component_name}",
-            kwargs={
-                "component_id": component.id,
-                "event_handler": event_handler,
-            },
-        )
-    else:
-        return reverse(
-            "djhtmx.legacy_endpoint",
-            kwargs={
-                "component_name": type(component).__name__,
-                "component_id": component.id,
-                "event_handler": event_handler,
-            },
-        )
+    return reverse(
+        f"djhtmx.{type(component).__name__}",
+        kwargs={
+            "component_id": component.id,
+            "event_handler": event_handler,
+        },
+    )
 
 
 # Shortcuts and helpers
 
+_json_script_escapes = {
+    ord(">"): "\\u003E",
+    ord("<"): "\\u003C",
+    ord("&"): "\\u0026",
+}
 
-@register.filter()
-def concat(prefix, suffix):
-    return f"{prefix}{suffix}"
+
+@register.filter(name="safe_json")
+def safe_json(obj):
+    return mark_safe(json.dumps(obj).translate(_json_script_escapes))
 
 
 @register.tag()

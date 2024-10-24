@@ -4,7 +4,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from djhtmx.component import PydanticComponent, Query
+from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, PydanticComponent, Query
 
 from .models import Item
 
@@ -25,11 +25,11 @@ class FilterChanged:
     query: str
 
 
-class BaseToggleFilter(PydanticComponent):
+class BaseToggleFilter(PydanticComponent, public=False):
     showing: t.Annotated[Showing, Query("showing"), Field(default=Showing.ALL)]
 
 
-class BaseQueryFilter(PydanticComponent):
+class BaseQueryFilter(PydanticComponent, public=False):
     query: str = ""
 
     def _handle_event(self, event: FilterChanged):
@@ -37,7 +37,7 @@ class BaseQueryFilter(PydanticComponent):
 
 
 class TodoList(BaseToggleFilter, BaseQueryFilter):
-    _template_name = "todo/list.html"
+    _template_name = "todo/TodoList.html"
 
     @property
     def queryset(self):
@@ -72,30 +72,30 @@ class TodoList(BaseToggleFilter, BaseQueryFilter):
 
 
 class ListHeader(PydanticComponent):
-    _template_name = "todo/list_header.html"
+    _template_name = "todo/ListHeader.html"
 
     def _handle_event(self, event: ItemsCleared | int):
         pass
 
     def add(self, new_item: str):
         item = Item.objects.create(text=new_item)
-        self.controller.append(
-            "#todo-list",
-            TodoItem,
-            id=f"item-{item.id}",
-            item=item,
-        )
+        yield BuildAndRender.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
 
 
 class TodoItem(PydanticComponent):
-    _template_name = "todo/item.html"
+    _template_name = "todo/TodoItem.html"
 
     item: Item
     editing: bool = False
 
+    def render(self):
+        from time import sleep
+
+        sleep(2)
+
     def delete(self):
         self.item.delete()
-        self.controller.destroy()
+        yield Destroy(self.id)
 
     def completed(self, completed: bool = False):
         self.item.completed = completed
@@ -105,7 +105,7 @@ class TodoItem(PydanticComponent):
         if not self.item.completed:
             self.editing = not self.editing
         if self.editing:
-            self.controller.focus(f"#{self.id} input[name=text]")
+            yield Focus(f"#{self.id} input[name=text]")
 
     def save(self, text):
         self.item.text = text
@@ -114,9 +114,14 @@ class TodoItem(PydanticComponent):
 
 
 class TodoCounter(PydanticComponent):
-    _template_name = "todo/counter.html"
+    _template_name = "todo/TodoCounter.html"
 
     query: t.Annotated[str, Query("q")] = ""
+
+    def render(self):
+        from time import sleep
+
+        sleep(1)
 
     @property
     def subscriptions(self) -> set[str]:
@@ -128,9 +133,9 @@ class TodoCounter(PydanticComponent):
 
 
 class TodoFilter(PydanticComponent):
-    _template_name = "todo/filter.html"
+    _template_name = "todo/TodoFilter.html"
     query: t.Annotated[str, Query("q")] = ""
 
     def set_query(self, query: str = ""):
-        self.query = query = query.strip()
-        self.controller.emit(FilterChanged(query))
+        self.query = query.strip()
+        yield Emit(FilterChanged(self.query))

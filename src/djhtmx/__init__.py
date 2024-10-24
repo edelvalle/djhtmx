@@ -10,8 +10,6 @@ class Middleware:
     def __call__(self, request: HttpRequest) -> HttpResponse:
         """Ensure the Repository gets deallocated"""
         response = self.get_response(request)
-        if repo := getattr(request, "djhtmx", None):
-            repo.unlink()
+        if hasattr(request, "djhtmx"):
             delattr(request, "djhtmx")
-
         return response
