@@ -208,7 +208,7 @@ def get_template(template: str) -> RenderFunction:
 
 class PydanticComponent(BaseModel):
     _template_name: str = ...  # type: ignore
-    _template_name_lazy: str = "htmx/lazy.html"
+    _template_name_lazy: str = settings.DJHTMX_DEFAULT_LOADING_TEMPLATE
 
     # fields to exclude from component state during serialization
     model_config = ConfigDict(

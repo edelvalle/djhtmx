@@ -12,4 +12,6 @@ SCRIPT_URLS = [
     "htmx/django.js",
 ]
 
+DJHTMX_DEFAULT_LOADING_TEMPLATE = "htmx/lazy.html"
+
 conn = redis.from_url(getattr(settings, "DJHTMX_REDIS_URL", "redis://localhost/0"))
