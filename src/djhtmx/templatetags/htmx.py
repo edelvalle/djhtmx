@@ -1,3 +1,4 @@
+import random
 import typing as t
 
 from django import template
@@ -5,7 +6,7 @@ from django.core.signing import Signer
 from django.template.base import Node, Parser, Token
 from django.template.context import Context
 from django.urls import reverse
-from django.utils.html import format_html_join
+from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
 
 from .. import json, settings
@@ -37,6 +38,33 @@ def htmx_headers(context):
         }
     else:
         return {"enabled": False}
+
+
+@register.filter(name="add_delay_jitter")
+def add_delay_jitter(event, arg=None):
+    """Add a random `delay:{jitter}ms` to an event.
+
+    The optional argument is the bound of the jitter.  By default is "100,
+    1000" (ms).  The format is always a string with one or two numbers.  If
+    the format is not right, fallback to the default.
+
+    Example usage:
+
+    ```
+      <div {% on 'load'|add_htmx_jitter:'2000, 30000' 'render' %} ></div>
+    ```
+
+    """
+    if not arg:
+        arg = "100, 1000"
+    try:
+        min_arg, max_arg = arg.split(",", 1)
+        min_ = int(min_arg.strip())
+        max_ = int(max_arg.strip())
+    except ValueError:
+        min_, max_ = 100, 1000
+    jitter = random.randint(min_, max_)
+    return format_html(f"{event} {{}}", f"delay:{jitter}ms")
 
 
 @register.simple_tag(takes_context=True)
@@ -93,8 +121,9 @@ def hx_tag(context: Context):
         }
         if context.get("hx_lazy"):
             context["hx_lazy"] = False
+            jitter = random.randint(100, 1000)
             attrs |= {
-                "hx-trigger": "load",
+                "hx-trigger": f"revealed delay:{jitter}ms",
                 "hx-get": event_url(component, "render"),
                 "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
             }
