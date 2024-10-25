@@ -96,7 +96,7 @@ class Repository:
         to the request.
 
         """
-        if (result := getattr(request, "djhtmx", None)) is None:
+        if (result := getattr(request, "htmx_repo", None)) is None:
             if signed_session := request.META.get("HTTP_HX_SESSION"):
                 session_id = signer.unsign(signed_session)
             else:
@@ -109,7 +109,7 @@ class Repository:
                 session=session,
                 params=get_params(request),
             )
-            setattr(request, "djhtmx", result)
+            setattr(request, "htmx_repo", result)
         return result
 
     @classmethod
@@ -381,33 +381,33 @@ class Repository:
         component: PydanticComponent,
         oob: str = None,
         template: str = None,
-        lazy: bool | None = None,
+        lazy: bool = None,
     ) -> SafeString:
         lazy = component.lazy if lazy is None else lazy
         self.session.store(component)
 
-        if lazy:
-            html = component._get_template(component._template_name_lazy)({
-                "htmx_repo": self,
-                "hx_oob": oob == "true",
-                "hx_lazy": True,
-                "this": component,
-            })
-        else:
-            html = component._get_template(template)(
-                component._get_context()
-                | {
-                    "htmx_repo": self,
-                    "hx_oob": oob == "true",
-                }
-            )
+        context = {
+            "htmx_repo": self,
+            "hx_oob": oob == "true",
+            "this": component,
+        }
 
-        html = mark_safe(html.strip())
+        if lazy:
+            template = template or component._template_name_lazy
+            context |= {"hx_lazy": True}
+        else:
+            context = component._get_context() | context
+
+        html = mark_safe(component._get_template(template)(context).strip())
 
         # if performing some kind of append, the component has to be wrapped
         if oob and oob != "true":
             html = mark_safe(
-                "".join([format_html('<div hx-swap-oob="{oob}">', oob=oob), html, "</div>"])
+                "".join([
+                    format_html('<div hx-swap-oob="{oob}">', oob=oob),
+                    html,
+                    "</div>",
+                ])
             )
         return html
 

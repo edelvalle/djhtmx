@@ -6,14 +6,14 @@ import time
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as dataclass_field
-from functools import cache, cached_property
+from functools import cache
 from itertools import chain
 from os.path import basename
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.db import models
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpResponse
 from django.shortcuts import resolve_url
 from django.template import Context, loader
 from django.utils.safestring import SafeString, mark_safe
@@ -368,6 +368,10 @@ class Component:
     })
 
     def __init_subclass__(cls, name=None, public=True):
+        logger.warning(
+            "Deprecated <%s>, migrate to the new style components",
+            f"{cls.__module__}.{cls.__name__}",
+        )
         if public:
             name = name or cls.__name__
             Component._all[name] = cls
@@ -389,27 +393,20 @@ class Component:
         return super().__init_subclass__()
 
     @classmethod
-    def _build(cls, _component_name, request, id, state):
+    def _build(cls, _component_name, user, id, state):
         if _component_name not in cls._all:
             raise ComponentNotFound(
                 f"Could not find requested component '{_component_name}'. Did you load the component?"
             )
-        return cls._all[_component_name](**dict(state, id=id, request=request))
+        return cls._all[_component_name](**dict(state, id=id, user=user))
 
-    def __init__(self, request: HttpRequest, id: str | None = None):
-        self.request = request
+    def __init__(self, user: AbstractBaseUser | AnonymousUser, id: str | None = None):
+        self.user = user
         self.id = id
         self._destroyed = False
         self._headers = {}
         self._triggers = Triggers()
         self._oob = []
-
-    @cached_property
-    def user(self) -> AbstractBaseUser | AnonymousUser:
-        user = getattr(self.request, "user", None)
-        if user is None or not isinstance(user, AbstractBaseUser):
-            return AnonymousUser()
-        return user
 
     @property
     def _state_json(self) -> str:
@@ -460,7 +457,12 @@ class Component:
         """
         pass
 
-    def _render(self, hx_swap_oob=False, template: str | None = None):
+    def _render(
+        self,
+        hx_swap_oob=False,
+        template: str = None,
+        context: dict[str, t.Any] = None,
+    ):
         with sentry_span(f"{self._fqn}._render"):
             with sentry_span(f"{self._fqn}.before_render"):
                 self.before_render()
@@ -470,8 +472,7 @@ class Component:
                 html = mark_safe(
                     self._get_template(template)
                     .render(
-                        self._get_context(hx_swap_oob),
-                        request=self.request,
+                        self._get_context(hx_swap_oob) | (context or {}),
                     )
                     .strip()
                 )
@@ -487,7 +488,7 @@ class Component:
             return html
 
     def _also_render(self, component, **kwargs):
-        self._oob.append(component(request=self.request, **kwargs))
+        self._oob.append(component(user=self.user, **kwargs))
 
     def _get_template(self, template: str | None = None):
         if template:
