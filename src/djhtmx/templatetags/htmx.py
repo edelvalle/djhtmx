@@ -11,6 +11,7 @@ from django.utils.safestring import mark_safe
 
 from .. import json, settings
 from ..component import REGISTRY, Component, PydanticComponent, generate_id
+from ..repo import Repository
 
 register = template.Library()
 signer = Signer()
@@ -84,10 +85,10 @@ def htmx(
         ```
     """
     state = (_state or {}) | state
+    repo: Repository = context["htmx_repo"]
     if _name in REGISTRY:
         # PydanticComponent
         state |= {"lazy": lazy is True}
-        repo = context["htmx_repo"]
         component = repo.build(_name, state)
         return repo.render_html(
             component,
@@ -96,8 +97,8 @@ def htmx(
     else:
         # Legacy Component
         id = state.pop("id", None) or generate_id()
-        component = Component._build(_name, context["user"], id, state)
-        return mark_safe(component._render(context={"htmx_repo": context["htmx_repo"]}))
+        component = Component._build(_name, repo, id, state)
+        return mark_safe(component._render())
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")

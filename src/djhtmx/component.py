@@ -393,15 +393,16 @@ class Component:
         return super().__init_subclass__()
 
     @classmethod
-    def _build(cls, _component_name, user, id, state):
+    def _build(cls, _component_name, htmx_repo, id, state):
         if _component_name not in cls._all:
             raise ComponentNotFound(
                 f"Could not find requested component '{_component_name}'. Did you load the component?"
             )
-        return cls._all[_component_name](**dict(state, id=id, user=user))
+        return cls._all[_component_name](**dict(state, id=id, htmx_repo=htmx_repo))
 
-    def __init__(self, user: AbstractBaseUser | AnonymousUser, id: str | None = None):
-        self.user = user
+    def __init__(self, htmx_repo, id: str | None = None):
+        self.htmx_repo = htmx_repo
+        self.user = htmx_repo.user
         self.id = id
         self._destroyed = False
         self._headers = {}
@@ -461,7 +462,6 @@ class Component:
         self,
         hx_swap_oob=False,
         template: str = None,
-        context: dict[str, t.Any] = None,
     ):
         with sentry_span(f"{self._fqn}._render"):
             with sentry_span(f"{self._fqn}.before_render"):
@@ -472,7 +472,7 @@ class Component:
                 html = mark_safe(
                     self._get_template(template)
                     .render(
-                        self._get_context(hx_swap_oob) | (context or {}),
+                        self._get_context(hx_swap_oob),
                     )
                     .strip()
                 )
