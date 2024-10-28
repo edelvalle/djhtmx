@@ -10,6 +10,7 @@ class Middleware:
     def __call__(self, request: HttpRequest) -> HttpResponse:
         """Ensure the Repository gets deallocated"""
         response = self.get_response(request)
-        if hasattr(request, "htmx_repo"):
+        if repo := getattr(request, "htmx_repo", None):
+            repo.set_ttl()
             delattr(request, "htmx_repo")
         return response
