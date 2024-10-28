@@ -10,7 +10,6 @@ from functools import cache
 from itertools import chain
 from os.path import basename
 
-from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.db import models
 from django.http import HttpResponse
@@ -21,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, validate_call
 from pydantic.fields import ModelPrivateAttr
 from typing_extensions import deprecated
 
-from . import json
+from . import json, settings
 from .introspection import annotate_model, get_event_handler_event_types, get_function_parameters
 from .query import Query, QueryPatcher
 from .tracing import sentry_span
@@ -208,7 +207,7 @@ def get_template(template: str) -> RenderFunction:
 
 class PydanticComponent(BaseModel):
     _template_name: str = ...  # type: ignore
-    _template_name_lazy: str = settings.DJHTMX_DEFAULT_LOADING_TEMPLATE
+    _template_name_lazy: str = settings.DEFAULT_LAZY_TEMPLATE
 
     # fields to exclude from component state during serialization
     model_config = ConfigDict(
