@@ -394,7 +394,7 @@ class Repository:
 
         if lazy:
             template = template or component._template_name_lazy
-            context |= {"hx_lazy": True}
+            context |= {"hx_lazy": True} | component._get_lazy_context()
         else:
             context = component._get_context() | context
 

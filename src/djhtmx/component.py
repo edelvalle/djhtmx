@@ -307,6 +307,9 @@ class PydanticComponent(BaseModel):
     def _get_template(self, template: str | None = None) -> t.Callable[..., SafeString]:
         return get_template(template or self._template_name)
 
+    def _get_lazy_context(self):
+        return {}
+
     def _get_context(self):
         with sentry_span(f"{FQN[type(self)]}._get_context"):
             return {
