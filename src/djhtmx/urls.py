@@ -22,47 +22,48 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
     if "HTTP_HX_SESSION" not in request.META:
         return HttpResponse("Missing header HX-Session", status=HTTPStatus.BAD_REQUEST)
 
-    repo = Repository.from_request(request)
-    content: list[str] = []
-    headers: dict[str, str] = {}
-    triggers = Triggers()
+    with sentry_request_transaction(request, component_name, event_handler):
+        repo = Repository.from_request(request)
+        content: list[str] = []
+        headers: dict[str, str] = {}
+        triggers = Triggers()
 
-    for command in repo.dispatch_event(
-        component_id,
-        event_handler,
-        parse_request_data(request.POST),
-    ):
-        # Command loop
-        match command:
-            case Destroy(component_id):
-                content.append(
-                    format_html(
-                        '<div hx-swap-oob="outerHtml:#{component_id}"></div>',
-                        component_id=component_id,
+        for command in repo.dispatch_event(
+            component_id,
+            event_handler,
+            parse_request_data(request.POST),
+        ):
+            # Command loop
+            match command:
+                case Destroy(component_id):
+                    content.append(
+                        format_html(
+                            '<div hx-swap-oob="outerHtml:#{component_id}"></div>',
+                            component_id=component_id,
+                        )
                     )
-                )
-            case Redirect(url):
-                headers["HX-Redirect"] = url
-            case Focus(selector):
-                triggers.after_settle("hxFocus", selector)
-            case DispatchDOMEvent(event, target, detail, bubbles, cancelable, composed):
-                triggers.after_settle(
-                    "hxDispatchDOMEvent",
-                    {
-                        "event": event,
-                        "target": target,
-                        "detail": detail,
-                        "bubbles": bubbles,
-                        "cancelable": cancelable,
-                        "composed": composed,
-                    },
-                )
-            case SendHtml(html):
-                content.append(html)
-            case PushURL(url):
-                headers["HX-Push-Url"] = url
+                case Redirect(url):
+                    headers["HX-Redirect"] = url
+                case Focus(selector):
+                    triggers.after_settle("hxFocus", selector)
+                case DispatchDOMEvent(event, target, detail, bubbles, cancelable, composed):
+                    triggers.after_settle(
+                        "hxDispatchDOMEvent",
+                        {
+                            "event": event,
+                            "target": target,
+                            "detail": detail,
+                            "bubbles": bubbles,
+                            "cancelable": cancelable,
+                            "composed": composed,
+                        },
+                    )
+                case SendHtml(html):
+                    content.append(html)
+                case PushURL(url):
+                    headers["HX-Push-Url"] = url
 
-    return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
+        return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
 
 
 def legacy_endpoint(
