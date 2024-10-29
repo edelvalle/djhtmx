@@ -1,4 +1,5 @@
 from functools import partial
+from http import HTTPStatus
 from itertools import chain
 
 from django.core.signing import Signer
@@ -18,6 +19,9 @@ signer = Signer()
 
 
 def endpoint(request: HttpRequest, component_name: str, component_id: str, event_handler: str):
+    if "HTTP_HX_SESSION" not in request.META:
+        return HttpResponse("Missing header HX-Session", status=HTTPStatus.BAD_REQUEST)
+
     repo = Repository.from_request(request)
     content: list[str] = []
     headers: dict[str, str] = {}
