@@ -32,12 +32,21 @@ def htmx_headers(context):
     if context.get("request"):
         return {
             "enabled": True,
-            "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
             "SCRIPT_URLS": settings.SCRIPT_URLS,
-            "csrf_token": context.get("csrf_token"),
         }
     else:
         return {"enabled": False}
+
+
+@register.simple_tag(takes_context=True, name="hx-body")
+def hx_body(context: Context):
+    repo: Repository = context["htmx_repo"]
+    return format_html_attrs({
+        "hx-headers": json.dumps({
+            "HX-Session": repo.session_signed_id,
+            settings.CSRF_HEADER_NAME: str(context["csrf_token"]),
+        }),
+    })
 
 
 @register.filter(name="add_delay_jitter")
@@ -128,7 +137,6 @@ def hx_tag(context: Context):
             attrs |= {
                 "hx-trigger": f"revealed delay:{jitter}ms",
                 "hx-get": event_url(component, "render"),
-                "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
             }
     else:
         attrs = {
@@ -205,10 +213,7 @@ def on(
         "hx-include": hx_include or f"#{component.id} [name]",
     }
     if isinstance(component, PydanticComponent):
-        attrs |= {
-            "hx-swap": "none",
-            "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
-        }
+        attrs |= {"hx-swap": "none"}
     return format_html_attrs(attrs)
 
 

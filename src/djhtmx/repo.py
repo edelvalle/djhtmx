@@ -97,7 +97,9 @@ class Repository:
 
         """
         if (result := getattr(request, "htmx_repo", None)) is None:
-            if signed_session := request.META.get("HTTP_HX_SESSION"):
+            if (signed_session := request.META.get("HTTP_HX_SESSION")) and not bool(
+                request.META.get("HTTP_HX_BOOSTED")
+            ):
                 session_id = signer.unsign(signed_session)
             else:
                 session_id = cls.new_session_id()
@@ -283,6 +285,7 @@ class Repository:
 
             case Redirect(_) | Focus(_) | DispatchDOMEvent(_) as command:
                 yield command
+        self.session.set_ttl()
 
     def _process_emited_commands(
         self,
@@ -351,7 +354,9 @@ class Repository:
         if state := self.session.get_state(component_id):
             return self.build(state["hx_name"], state, retrieve_state=False)
         else:
-            raise ComponentNotFound(f"Component with id {component_id} not found")
+            raise ComponentNotFound(
+                f"Component with id {component_id} not found in session {self.session.id}"
+            )
 
     def build(self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True):
         """Build (or update) a component's state."""
@@ -464,6 +469,3 @@ class Session:
             for key in conn.keys(f"{self.id}:*"):  # type: ignore
                 pipe.expire(key, ttl)
             pipe.execute()
-
-    def __del__(self):
-        self.set_ttl()
