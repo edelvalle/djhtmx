@@ -40,13 +40,16 @@ def htmx_headers(context):
 
 @register.simple_tag(takes_context=True, name="hx-body")
 def hx_body(context: Context):
-    repo: Repository = context["htmx_repo"]
-    return format_html_attrs({
-        "hx-headers": json.dumps({
-            "HX-Session": repo.session_signed_id,
-            settings.CSRF_HEADER_NAME: str(context["csrf_token"]),
-        }),
-    })
+    repo: Repository | None = context.get("htmx_repo")
+    if repo:
+        return format_html_attrs({
+            "hx-headers": json.dumps({
+                "HX-Session": repo.session_signed_id,
+                settings.CSRF_HEADER_NAME: str(context["csrf_token"]),
+            }),
+        })
+    else:
+        return ""
 
 
 @register.filter(name="add_delay_jitter")
