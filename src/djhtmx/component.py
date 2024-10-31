@@ -7,6 +7,7 @@ import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as dataclass_field
 from functools import cache
+from inspect import Parameter
 from itertools import chain
 from os.path import basename
 
@@ -379,7 +380,9 @@ class Component:
             Component._all[name] = cls
             cls._name = name
 
-        cls._fields = get_function_parameters(cls.__init__, exclude={"self"})
+        cls._fields = tuple(
+            get_function_parameters(cls.__init__, exclude_kinds=(Parameter.VAR_KEYWORD,))
+        )
 
         for attr_name in dict(vars(cls)):
             attr = getattr(cls, attr_name)

@@ -6,7 +6,8 @@ import typing as t
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
-from inspect import Parameter
+from functools import cache
+from inspect import Parameter, _ParameterKind
 from uuid import UUID
 
 from django.apps import apps
@@ -100,20 +101,19 @@ def issubclass_safe(o, types):
 # for state of old components
 
 
+@cache
 def get_function_parameters(
-    function: t.Callable, exclude: set[str] | None = None
-) -> tuple[str, ...]:
-    exclude = exclude or set()
-    return tuple(
+    function: t.Callable,
+    exclude_kinds: tuple[_ParameterKind, ...] = (),
+) -> set[str]:
+    return set(
         param.name
         for param in inspect.signature(function).parameters.values()
-        if param.name not in exclude and param.kind != Parameter.VAR_KEYWORD
+        if param.name != "self" and param.kind not in exclude_kinds
     )
 
 
-# for signals and subscriptions
-
-
+@cache
 def get_related_fields(model):
     related_fields = MODEL_RELATED_FIELDS.get(model)
     if related_fields is None:

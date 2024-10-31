@@ -11,6 +11,7 @@ from django.utils.safestring import mark_safe
 
 from .. import json, settings
 from ..component import REGISTRY, Component, PydanticComponent, generate_id
+from ..introspection import get_function_parameters
 from ..repo import Repository
 
 register = template.Library()
@@ -209,11 +210,15 @@ def on(
             getattr(component, _event_handler, None)
         ), f"{type(component).__name__}.{_event_handler} event handler not found"
 
+    implicit_params = (
+        get_function_parameters(getattr(component, _event_handler)) - set(kwargs)
+    ) or None
+
     attrs = {
         "hx-post": event_url(component, _event_handler),
         "hx-trigger": _trigger,
         "hx-vals": json.dumps(kwargs) if kwargs else None,
-        "hx-include": hx_include or f"#{component.id} [name]",
+        "hx-include": hx_include or implicit_params and f"#{component.id} [name]",
     }
     if isinstance(component, PydanticComponent):
         attrs |= {"hx-swap": "none"}
