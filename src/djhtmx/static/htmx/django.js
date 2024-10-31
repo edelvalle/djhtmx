@@ -1,4 +1,29 @@
 (function () {
+    // HX-Boost does not update body attributes nor classes by default.
+    // https://github.com/bigskysoftware/htmx/issues/1384
+    htmx.on("htmx:afterSwap", function (evt) {
+        if (evt.detail.target.tagName !== "BODY") {
+            return;
+        }
+
+        const parser = new DOMParser();
+        const parsedResponse = parser.parseFromString(
+            evt.detail.xhr.response,
+            "text/html",
+        );
+        const bodyAttributes =
+            parsedResponse.getElementsByTagName("body")[0].attributes;
+        const targetEl = evt.detail.target;
+
+        Object.values(targetEl.attributes).forEach(({ name }) =>
+            targetEl.removeAttribute(name),
+        );
+
+        for (const attribute of bodyAttributes) {
+            evt.detail.target.setAttribute(attribute.name, attribute.value);
+        }
+    });
+
     // WebSocket Management
     let sentComponents = new Set();
 
