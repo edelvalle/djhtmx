@@ -1,6 +1,8 @@
 {% load static %}
 
 {% if enabled %}
+  <meta name="django-csrf-header-name" content="{{ CSRF_HEADER_NAME }}" />
+  <meta name="django-csrf-token" content="{{ csrf_token }}" />
   {% for script_url in SCRIPT_URLS %}
     <script defer src="{% static script_url %}"></script>
   {% endfor %}

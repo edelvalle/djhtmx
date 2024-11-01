@@ -34,23 +34,11 @@ def htmx_headers(context):
         return {
             "enabled": True,
             "SCRIPT_URLS": settings.SCRIPT_URLS,
+            "CSRF_HEADER_NAME": settings.CSRF_HEADER_NAME,
+            "csrf_token": context.get("csrf_token", ""),
         }
     else:
         return {"enabled": False}
-
-
-@register.simple_tag(takes_context=True, name="hx-body")
-def hx_body(context: Context):
-    repo: Repository | None = context.get("htmx_repo")
-    if repo:
-        return format_html_attrs({
-            "hx-headers": json.dumps({
-                "HX-Session": repo.session_signed_id,
-                settings.CSRF_HEADER_NAME: str(context["csrf_token"]),
-            }),
-        })
-    else:
-        return ""
 
 
 @register.filter(name="add_delay_jitter")
@@ -134,6 +122,7 @@ def hx_tag(context: Context):
         attrs = {
             "id": component.id,
             "hx-swap-oob": "true" if oob else None,
+            "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
         }
         if context.get("hx_lazy"):
             context["hx_lazy"] = False
@@ -149,9 +138,7 @@ def hx_tag(context: Context):
             "hx-boost": "false",
             "hx-post": event_url(component, "render"),
             "hx-trigger": "render",
-            "hx-headers": json.dumps({
-                "X-Component-State": signer.sign(component._state_json),
-            }),
+            "hx-headers": json.dumps({"X-Component-State": signer.sign(component._state_json)}),
         }
     return format_html_attrs(attrs)
 

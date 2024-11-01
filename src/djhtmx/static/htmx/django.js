@@ -1,27 +1,13 @@
 (function () {
-    // HX-Boost does not update body attributes nor classes by default.
-    // https://github.com/bigskysoftware/htmx/issues/1384
-    htmx.on("htmx:afterSwap", function (evt) {
-        if (evt.detail.target.tagName !== "BODY") {
-            return;
-        }
+    document.body.addEventListener("htmx:configRequest", (event) => {
+        const csrf_header = document
+            .querySelector("meta[name=django-csrf-header-name]")
+            .getAttribute("content");
+        const csrf_token = document
+            .querySelector("meta[name=django-csrf-token]")
+            .getAttribute("content");
 
-        const parser = new DOMParser();
-        const parsedResponse = parser.parseFromString(
-            evt.detail.xhr.response,
-            "text/html",
-        );
-        const bodyAttributes =
-            parsedResponse.getElementsByTagName("body")[0].attributes;
-        const targetEl = evt.detail.target;
-
-        Object.values(targetEl.attributes).forEach(({ name }) =>
-            targetEl.removeAttribute(name),
-        );
-
-        for (const attribute of bodyAttributes) {
-            evt.detail.target.setAttribute(attribute.name, attribute.value);
-        }
+        event.detail.headers[csrf_header] = csrf_token;
     });
 
     // WebSocket Management
