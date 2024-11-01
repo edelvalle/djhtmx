@@ -1,4 +1,4 @@
-from typing import Iterable
+from typing import assert_never
 
 from .component import (
     BuildAndRender,
@@ -21,9 +21,10 @@ class CommandQueue:
         self._destroyed_ids: set[str] = set()
         self._optimize()
 
-    def extend(self, commands: Iterable[Command]):
-        self._commands.extend(commands)
-        self._optimize()
+    def extend(self, commands: list[Command]):
+        if commands:
+            self._commands.extend(commands)
+            self._optimize()
 
     def append(self, command: Command):
         self._commands.append(command)
@@ -98,3 +99,5 @@ class CommandQueue:
                     return 7, component.id, timestamp
             case Focus() | Redirect() | DispatchDOMEvent():
                 return 8, "", 0
+            case command:
+                assert_never(f"Unknown command {command}")

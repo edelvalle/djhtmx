@@ -244,6 +244,7 @@ class Repository:
     def _run_command(self, commands: CommandQueue) -> t.Generator[ProcessedCommand, None, None]:
         command = commands.pop()
         logger.debug("COMMAND: %s", command)
+        commands_to_append: list[Command] = []
         match command:
             case Execute(component_id, event_handler, event_data):
                 # handle event
@@ -260,7 +261,7 @@ class Repository:
 
             case BuildAndRender(component_type, state, oob):
                 component = self.build(component_type.__name__, state)
-                commands.append(Render(component, oob=oob))
+                commands_to_append.append(Render(component, oob=oob))
 
             case Render(component, template, oob, lazy):
                 html = self.render_html(component, oob=oob, template=template, lazy=lazy)
@@ -281,10 +282,12 @@ class Repository:
             case Signal(signals):
                 for component in self.get_components_subscribed_to(signals):
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
-                    commands.append(Render(component))
+                    commands_to_append.append(Render(component))
 
             case Redirect(_) | Focus(_) | DispatchDOMEvent(_) as command:
                 yield command
+
+        commands.extend(commands_to_append)
         self.session.set_ttl()
 
     def _process_emited_commands(
@@ -295,6 +298,7 @@ class Repository:
         during_execute: bool,
     ) -> t.Iterable[ProcessedCommand]:
         component_was_rendered = False
+        commands_to_add: list[Command] = []
         for command in emmited_commands or []:
             component_was_rendered = component_was_rendered or (
                 isinstance(command, (SkipRender, Render)) and command.component.id == component.id
@@ -307,15 +311,18 @@ class Repository:
             ):
                 # make partial updates not lazy during_execute
                 command.lazy = False
-            commands.append(command)
+            commands_to_add.append(command)
 
         if not component_was_rendered:
-            commands.append(Render(component, lazy=False if during_execute else component.lazy))
+            commands_to_add.append(
+                Render(component, lazy=False if during_execute else component.lazy)
+            )
 
         if signals := self.update_params_from(component):
             yield PushURL.from_params(self.params)
-            commands.append(Signal(signals))
+            commands_to_add.append(Signal(signals))
 
+        commands.extend(commands_to_add)
         self.session.store(component)
 
     def get_components_subscribed_to(self, signals: set[str]) -> t.Iterable[PydanticComponent]:
