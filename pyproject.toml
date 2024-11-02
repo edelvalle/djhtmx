@@ -98,9 +98,8 @@ exclude = [
 # H006: Img tag should have height and width attributes
 # H012: There should be no spaces around attribute =. (alpine js bindings)
 # H021: Inline styles.
-# H025: Tag seems to be an orphan. Cause djlint does not understand all the templatetags we use like {% class {} %}
 # H031: Metadata in html tag.
-ignore = "H021,H006,H025,H031,H012"
+ignore = "H021,H006,H031,H012"
 indent = 2
 profile="django"
 blank_line_after_tag="load,extends,endblock"

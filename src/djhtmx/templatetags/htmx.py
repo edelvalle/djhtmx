@@ -3,8 +3,11 @@ import typing as t
 
 from django import template
 from django.core.signing import Signer
-from django.template.base import Node, Parser, Token
+from django.template.base import FilterExpression, Node, NodeList, Parser, Token
 from django.template.context import Context
+from django.template.defaulttags import TemplateIfParser, TemplateLiteral
+from django.template.exceptions import TemplateSyntaxError
+from django.template.smartif import IfParser
 from django.urls import reverse
 from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
@@ -244,25 +247,13 @@ def safe_json(obj):
     return mark_safe(json.dumps(obj).translate(_json_script_escapes))
 
 
-@register.tag()
-def cond(parser: Parser, token: Token):
-    """Prints some text conditionally
-
-        ```html
-        {% cond {'works': True, 'does not work': 1 == 2} %}
-        ```
-    Will output 'works'.
-    """
-    dict_expression = token.contents[len("cond ") :]
-    return CondNode(dict_expression)
-
-
 @register.tag(name="class")
 def class_cond(parser: Parser, token: Token):
     """Prints classes conditionally
 
     ```html
-    <div {% class {'btn': True, 'loading': loading, 'falsy': 0} %}></div>
+    <div {% class 'btn': True, 'loading': loading, 'falsy': 0} %}></div>
+    <div {% class 'btn' x == 'something', 'loading': y is None %}></div>
     ```
 
     If `loading` is `True` will print:
@@ -271,20 +262,39 @@ def class_cond(parser: Parser, token: Token):
     <div class="btn loading"></div>
     ```
     """
-    dict_expression = token.contents[len("class ") :]
-    return ClassNode(dict_expression)
+    bits = token.split_contents()[1:]
+    classes: list[tuple[FilterExpression, list[str]]] = []
+
+    is_class_name = True
+    for bit in bits:
+        if is_class_name:
+            if bit.endswith(":"):
+                classes.append((FilterExpression(bit[:-1], parser), []))
+                is_class_name = False
+                continue
+            else:
+                raise TemplateSyntaxError(f"Expected colon (:) after: {bit}")
+        else:
+            if bit.endswith(","):
+                expr = bit[:-1]
+                is_class_name = True
+            else:
+                expr = bit
+        classes[-1][1].append(expr)
+
+    return ClassNode([
+        (TemplateIfParser(parser, expr).parse(), class_name) for class_name, expr in classes
+    ])
 
 
-class CondNode(Node):
-    def __init__(self, dict_expression):
-        self.dict_expression = dict_expression
+class ClassNode(Node):
+    def __init__(self, condition_and_classes: list[tuple[TemplateLiteral, FilterExpression]]):
+        self.condition_and_classes = condition_and_classes
 
-    def render(self, context: template.Context):
-        terms = eval(self.dict_expression, context.flatten())  # type: ignore
-        return " ".join(term for term, ok in terms.items() if ok)
-
-
-class ClassNode(CondNode):
-    def render(self, *args, **kwargs):
-        text = super().render(*args, **kwargs)
-        return f'class="{text}"'
+    def render(self, context: Context):
+        class_names = [
+            class_name.resolve(context)
+            for condition, class_name in self.condition_and_classes
+            if condition.eval(context)  # type: ignore
+        ]
+        return format_html_attrs({"class": " ".join(class_names) or None})

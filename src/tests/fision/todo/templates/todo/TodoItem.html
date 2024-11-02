@@ -1,8 +1,13 @@
 {% load htmx %}
 
-<li {% hx-tag %} {% class {"completed": item.completed, "editing": editing} %}>
+<li {% hx-tag %}
+    {% class "completed": item.completed, "editing": editing %}>
   <div class="view">
-    <input class="toggle" type="checkbox" name="completed" {% cond {"checked": item.completed} %} {% on 'change' 'completed' %} />
+    <input class="toggle"
+           type="checkbox"
+           name="completed"
+           {% if item.completed %}checked{% endif %}
+           {% on 'change' 'completed' %} />
     <label {% on 'click' 'toggle_editing' %}>{{ item.text }}</label>
     <button {% on 'click' 'delete' %} class="destroy"></button>
   </div>
