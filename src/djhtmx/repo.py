@@ -37,7 +37,7 @@ from .component import (
     _get_query_patchers,
 )
 from .introspection import Unset, filter_parameters, get_related_fields
-from .settings import conn
+from .settings import SESSION_TTL, conn
 from .utils import db, get_model_subscriptions, get_params
 
 signer = Signer()
@@ -471,7 +471,7 @@ class Session:
                     pipe.sadd(f"{self.id}:subs:{signal}", component.id)
                 pipe.execute()
 
-    def set_ttl(self, ttl: int = 3600):
+    def set_ttl(self, ttl: int = SESSION_TTL):
         with conn.pipeline() as pipe:
             for key in conn.keys(f"{self.id}:*"):  # type: ignore
                 pipe.expire(key, ttl)
