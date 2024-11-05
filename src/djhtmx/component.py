@@ -11,7 +11,7 @@ from inspect import Parameter
 from itertools import chain
 from os.path import basename
 
-from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
+from django.contrib.auth.models import AbstractBaseUser
 from django.db import models
 from django.http import HttpResponse
 from django.shortcuts import resolve_url
@@ -289,7 +289,7 @@ class PydanticComponent(BaseModel):
 
     # State
     id: t.Annotated[str, Field(default_factory=generate_id)]
-    user: t.Annotated[AnonymousUser | AbstractBaseUser, Field(exclude=True)]
+    user: t.Annotated[AbstractBaseUser | None, Field(exclude=True)]
     hx_name: str
     lazy: bool = False
 

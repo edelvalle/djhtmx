@@ -14,6 +14,7 @@ from django.dispatch.dispatcher import receiver
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
+from pydantic import ValidationError
 from uuid6 import uuid7
 
 from . import json
@@ -37,7 +38,7 @@ from .component import (
     _get_query_patchers,
 )
 from .introspection import Unset, filter_parameters, get_related_fields
-from .settings import SESSION_TTL, conn
+from .settings import LOGIN_URL, SESSION_TTL, conn
 from .utils import db, get_model_subscriptions, get_params
 
 signer = Signer()
@@ -198,10 +199,16 @@ class Repository:
                 commands.append(Signal(signals))
 
         # Command loop
-        while commands:
-            processed_commands = self._run_command(commands)
-            while command := await db(next)(processed_commands, None):
-                yield command
+        try:
+            while commands:
+                processed_commands = self._run_command(commands)
+                while command := await db(next)(processed_commands, None):
+                    yield command
+        except ValidationError as e:
+            for error in e.errors():
+                if error["type"] == "is_instance_of" and error["loc"] == ("user",):
+                    yield Redirect(LOGIN_URL)
+            raise e
 
     def dispatch_event(
         self,
@@ -237,9 +244,15 @@ class Repository:
                 commands.append(Signal(signals))
 
         # Command loop
-        while commands:
-            for command in self._run_command(commands):
-                yield command
+        try:
+            while commands:
+                for command in self._run_command(commands):
+                    yield command
+        except ValidationError as e:
+            for error in e.errors():
+                if error["type"] == "is_instance_of" and error["loc"] == ("user",):
+                    yield Redirect(LOGIN_URL)
+            raise e
 
     def _run_command(self, commands: CommandQueue) -> t.Generator[ProcessedCommand, None, None]:
         command = commands.pop()
@@ -377,8 +390,10 @@ class Repository:
             state |= patcher.get_update_for_state(self.params)
 
         # Inject component name and user
-        kwargs = state | {"hx_name": component_name, "user": self.user}
-
+        kwargs = state | {
+            "hx_name": component_name,
+            "user": None if isinstance(self.user, AnonymousUser) else self.user,
+        }
         return REGISTRY[component_name](**kwargs)
 
     def get_components_by_names(self, names: t.Iterable[str]) -> t.Iterable[PydanticComponent]:
