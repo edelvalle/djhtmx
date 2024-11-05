@@ -204,10 +204,14 @@ class Repository:
                 while command := await db(next)(processed_commands, None):
                     yield command
         except ValidationError as e:
-            for error in e.errors():
-                if error["type"] == "is_instance_of" and error["loc"] == ("user",):
-                    yield Redirect(LOGIN_URL)
-            raise e
+            if any(
+                e
+                for error in e.errors()
+                if error["type"] == "is_instance_of" and error["loc"] == ("user",)
+            ):
+                yield Redirect(LOGIN_URL)
+            else:
+                raise e
 
     def dispatch_event(
         self,
@@ -248,10 +252,14 @@ class Repository:
                 for command in self._run_command(commands):
                     yield command
         except ValidationError as e:
-            for error in e.errors():
-                if error["type"] == "is_instance_of" and error["loc"] == ("user",):
-                    yield Redirect(LOGIN_URL)
-            raise e
+            if any(
+                e
+                for error in e.errors()
+                if error["type"] == "is_instance_of" and error["loc"] == ("user",)
+            ):
+                yield Redirect(LOGIN_URL)
+            else:
+                raise e
 
     def _run_command(self, commands: CommandQueue) -> t.Generator[ProcessedCommand, None, None]:
         command = commands.pop()
