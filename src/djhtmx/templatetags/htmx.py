@@ -3,11 +3,10 @@ import typing as t
 
 from django import template
 from django.core.signing import Signer
-from django.template.base import FilterExpression, Node, NodeList, Parser, Token
+from django.template.base import FilterExpression, Node, Parser, Token
 from django.template.context import Context
 from django.template.defaulttags import TemplateIfParser, TemplateLiteral
 from django.template.exceptions import TemplateSyntaxError
-from django.template.smartif import IfParser
 from django.urls import reverse
 from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe

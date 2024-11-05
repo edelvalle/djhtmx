@@ -24,7 +24,6 @@ from .component import (
     REGISTRY,
     BuildAndRender,
     Command,
-    ComponentNotFound,
     Destroy,
     DispatchDOMEvent,
     Emit,
@@ -261,13 +260,16 @@ class Repository:
         match command:
             case Execute(component_id, event_handler, event_data):
                 # handle event
-                component = self.get_component_by_id(component_id)
-                handler = getattr(component, event_handler)
-                handler_kwargs = filter_parameters(handler, event_data)
-                emited_commands = handler(**handler_kwargs)
-                yield from self._process_emited_commands(
-                    component, emited_commands, commands, during_execute=True
-                )
+                match self.get_component_by_id(component_id):
+                    case Destroy() as command:
+                        yield command
+                    case component:
+                        handler = getattr(component, event_handler)
+                        handler_kwargs = filter_parameters(handler, event_data)
+                        emited_commands = handler(**handler_kwargs)
+                        yield from self._process_emited_commands(
+                            component, emited_commands, commands, during_execute=True
+                        )
 
             case SkipRender(component):
                 self.session.store(component)
@@ -293,9 +295,13 @@ class Repository:
                     )
 
             case Signal(signals):
-                for component in self.get_components_subscribed_to(signals):
-                    logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
-                    commands_to_append.append(Render(component))
+                for compoennt_or_destroy in self.get_components_subscribed_to(signals):
+                    match compoennt_or_destroy:
+                        case Destroy() as command:
+                            yield command
+                        case component:
+                            logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
+                            commands_to_append.append(Render(component))
 
             case Redirect(_) | Focus(_) | DispatchDOMEvent(_) as command:
                 yield command
@@ -338,7 +344,9 @@ class Repository:
         commands.extend(commands_to_add)
         self.session.store(component)
 
-    def get_components_subscribed_to(self, signals: set[str]) -> t.Iterable[PydanticComponent]:
+    def get_components_subscribed_to(
+        self, signals: set[str]
+    ) -> t.Iterable[PydanticComponent | Destroy]:
         return (
             self.get_component_by_id(c_id)
             for c_id in sorted(self.session.get_component_ids_subscribed_to(signals))
@@ -374,9 +382,10 @@ class Repository:
         if state := self.session.get_state(component_id):
             return self.build(state["hx_name"], state, retrieve_state=False)
         else:
-            raise ComponentNotFound(
-                f"Component with id {component_id} not found in session {self.session.id}"
+            logger.error(
+                "Component with id {} not found in session {}", component_id, self.session.id
             )
+            return Destroy(component_id)
 
     def build(self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True):
         """Build (or update) a component's state."""

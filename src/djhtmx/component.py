@@ -401,7 +401,7 @@ class Component:
     def _build(cls, _component_name, htmx_repo, id, state):
         if _component_name not in cls._all:
             raise ComponentNotFound(
-                f"Could not find requested component '{_component_name}'. Did you load the component?"
+                f"Could not find requested component '{_component_name}'. Did you load the component?",
             )
         return cls._all[_component_name](**dict(state, id=id, htmx_repo=htmx_repo))
 
