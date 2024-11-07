@@ -1,6 +1,7 @@
 from functools import partial
 from http import HTTPStatus
 from itertools import chain
+from typing import assert_never
 
 from django.core.signing import Signer
 from django.http.request import HttpRequest
@@ -9,7 +10,16 @@ from django.urls import path, re_path
 from django.utils.html import format_html
 
 from . import json
-from .component import REGISTRY, Component, Destroy, DispatchDOMEvent, Focus, Redirect, Triggers
+from .component import (
+    REGISTRY,
+    Component,
+    Destroy,
+    DispatchDOMEvent,
+    Focus,
+    Open,
+    Redirect,
+    Triggers,
+)
 from .consumer import Consumer
 from .introspection import filter_parameters, parse_request_data
 from .repo import PushURL, Repository, SendHtml
@@ -46,6 +56,11 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                     headers["HX-Redirect"] = url
                 case Focus(selector):
                     triggers.after_settle("hxFocus", selector)
+                case Open(url, name, target, rel):
+                    triggers.after_settle(
+                        "hxOpenURL",
+                        {"url": url, "name": name, "target": target, "rel": rel},
+                    )
                 case DispatchDOMEvent(event, target, detail, bubbles, cancelable, composed):
                     triggers.after_settle(
                         "hxDispatchDOMEvent",
@@ -62,6 +77,8 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                     content.append(html)
                 case PushURL(url):
                     headers["HX-Push-Url"] = url
+                case _ as unreachable:
+                    assert_never(unreachable)
 
         return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
 

@@ -55,6 +55,22 @@ class Redirect:
 
 
 @dataclass(slots=True)
+class Open:
+    "Open a new window with the URL."
+
+    url: str
+    name: str = ""
+    rel: str = "noopener noreferrer"
+    target: str = "_blank"
+
+    command: t.Literal["open-tab"] = "open-tab"
+
+    @classmethod
+    def to(cls, to: t.Callable[[], t.Any] | models.Model | str, *args, **kwargs):
+        return cls(resolve_url(to, *args, **kwargs))
+
+
+@dataclass(slots=True)
 class Focus:
     "Executes a '.focus()' on the browser element that matches `selector`"
 
@@ -153,6 +169,7 @@ Command = (
     | Emit
     | Signal
     | Execute
+    | Open
 )
 
 

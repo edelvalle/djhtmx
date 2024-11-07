@@ -187,6 +187,22 @@
             document.querySelector(selector).focus();
         });
     });
+
+    document.addEventListener("hxOpenURL", (event) => {
+        event.detail.value.map(({ url, name, target, rel }) => {
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = !!target ? target : '_blank';
+            if (name) {
+                link.download = name;
+            }
+            if (rel) {
+                link.rel = rel;
+            }
+            link.click();
+        });
+    });
+
 })();
 // Local Variables:
 // js-indent-level: 4
