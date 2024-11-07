@@ -8,6 +8,7 @@ from .component import (
     Emit,
     Execute,
     Focus,
+    Open,
     Redirect,
     Render,
     Signal,
@@ -48,7 +49,8 @@ class CommandQueue:
                     | SkipRender()
                     | Focus()
                     | Redirect()
-                    | DispatchDOMEvent() as command
+                    | DispatchDOMEvent()
+                    | Open()
                 ):
                     new_commands.append(command)
 
@@ -97,7 +99,7 @@ class CommandQueue:
                     return 6, component.id, timestamp
                 else:
                     return 7, component.id, timestamp
-            case Focus() | Redirect() | DispatchDOMEvent():
+            case Focus() | Redirect() | DispatchDOMEvent() | Open():
                 return 8, "", 0
-            case command:
-                assert_never(f"Unknown command {command}")
+            case _ as unreachable:
+                assert_never(unreachable)

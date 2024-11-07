@@ -29,6 +29,7 @@ from .component import (
     Emit,
     Execute,
     Focus,
+    Open,
     PydanticComponent,
     Redirect,
     Render,
@@ -63,7 +64,7 @@ class PushURL:
         return cls("?" + params.urlencode())
 
 
-ProcessedCommand = Destroy | Redirect | Focus | DispatchDOMEvent | SendHtml | PushURL
+ProcessedCommand = Destroy | Redirect | Open | Focus | DispatchDOMEvent | SendHtml | PushURL
 
 
 class Repository:
@@ -311,7 +312,7 @@ class Repository:
                             logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                             commands_to_append.append(Render(component))
 
-            case Redirect(_) | Focus(_) | DispatchDOMEvent(_) as command:
+            case Open() | Redirect() | Focus() | DispatchDOMEvent() as command:
                 yield command
 
         commands.extend(commands_to_append)

@@ -1,11 +1,11 @@
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from pydantic import BaseModel, TypeAdapter
 
 from . import json
-from .component import Command, Destroy, DispatchDOMEvent, Focus, Redirect
+from .component import Command, Destroy, DispatchDOMEvent, Focus, Open, Redirect
 from .introspection import parse_request_data
 from .repo import PushURL, Repository, SendHtml
 from .utils import get_params
@@ -53,9 +53,11 @@ class Consumer(AsyncJsonWebsocketConsumer):
                             "< Command: %s", f"SendHtml[{debug_trace}](... {len(html)} ...)"
                         )
                         await self.send(html)
-                    case Destroy(_) | Redirect(_) | Focus(_) | DispatchDOMEvent(_) | PushURL(_):
+                    case Destroy() | Redirect() | Focus() | DispatchDOMEvent() | PushURL() | Open():
                         logger.debug("< Command: %s", command)
                         await self.send_json(command)
+                    case _ as unreachable:
+                        assert_never(unreachable)
 
     async def send_commands(self, commands: list[Command]):
         for command in commands:
