@@ -5,7 +5,15 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, PydanticComponent, Query
+from djhtmx.component import (
+    BuildAndRender,
+    Destroy,
+    Emit,
+    Focus,
+    PydanticComponent,
+    Query,
+    SkipRender,
+)
 
 from .models import Item
 
@@ -37,9 +45,21 @@ class BaseQueryFilter(PydanticComponent, public=False):
         self.query = event.query
 
 
+@dataclass(slots=True)
+class SetEditing:
+    item: Item | None
+
+
 class TodoList(BaseToggleFilter, BaseQueryFilter):
     _template_name = "todo/TodoList.html"
     editing: t.Annotated[Item | None, Query("editing")] = None
+
+    def _handle_event(self, event: SetEditing | FilterChanged):
+        if isinstance(event, SetEditing):
+            self.editing = event.item
+            yield SkipRender(self)
+        else:
+            super()._handle_event(event)
 
     @property
     def queryset(self):
@@ -107,11 +127,15 @@ class TodoItem(PydanticComponent):
             self.editing = not self.editing
         if self.editing:
             yield Focus(f"#{self.id} input[name=text]")
+            yield Emit(SetEditing(item=self.item))
+        else:
+            yield Emit(SetEditing(item=None))
 
     def save(self, text):
         self.item.text = text
         self.item.save()
-        self.editing = False
+        if self.editing:
+            yield from self.toggle_editing()
 
 
 class TodoCounter(PydanticComponent):
