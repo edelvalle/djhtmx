@@ -215,9 +215,7 @@ def get_annotation_adapter(annotation):
     if annotation is bool:
         return infallible_bool_adapter
 
-    return TypeAdapter(
-        t.Optional[annotate_model(annotation)]  # type: ignore
-    )
+    return TypeAdapter(annotation, config={"arbitrary_types_allowed": True})
 
 
 # Infallible adapter for boolean values.  't' is True, everything else is
@@ -246,7 +244,7 @@ def is_basic_type(ann):
     """
     return (
         ann in _SIMPLE_TYPES
-        or issubclass_safe(ann, models.Model)
+        or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
     )
 

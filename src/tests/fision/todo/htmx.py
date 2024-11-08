@@ -39,6 +39,7 @@ class BaseQueryFilter(PydanticComponent, public=False):
 
 class TodoList(BaseToggleFilter, BaseQueryFilter):
     _template_name = "todo/TodoList.html"
+    editing: t.Annotated[Item | None, Query("editing")] = None
 
     @property
     def queryset(self):
@@ -57,6 +58,10 @@ class TodoList(BaseToggleFilter, BaseQueryFilter):
             case Showing.ACTIVE:
                 qs = self.queryset.filter(completed=False)
         return qs
+
+    @property
+    def editing_items(self):
+        return [(item, item == self.editing) for item in self.items]
 
     @property
     def all_items_are_completed(self):
