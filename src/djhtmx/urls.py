@@ -61,7 +61,7 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                         "hxOpenURL",
                         {"url": url, "name": name, "target": target, "rel": rel},
                     )
-                case DispatchDOMEvent(event, target, detail, bubbles, cancelable, composed):
+                case DispatchDOMEvent(target, event, detail, bubbles, cancelable, composed):
                     triggers.after_settle(
                         "hxDispatchDOMEvent",
                         {
