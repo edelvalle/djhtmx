@@ -238,7 +238,10 @@ class PydanticComponent(BaseModel):
         component_name = cls.__name__
 
         if public is None:
-            if _ABSTRACT_BASE_REGEX.match(component_name):
+            # Detect concrete versions of generic classes, they are non public
+            if "[" in component_name and "]" in component_name:
+                public = False
+            elif _ABSTRACT_BASE_REGEX.match(component_name):
                 logger.info(
                     "HTMX Component: <%s> Automatically detected as non public",
                     FQN[cls],
