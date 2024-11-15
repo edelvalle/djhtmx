@@ -391,10 +391,6 @@ class Component:
     })
 
     def __init_subclass__(cls, name=None, public=True):
-        logger.warning(
-            "Deprecated <%s>, migrate to the new style components",
-            f"{cls.__module__}.{cls.__name__}",
-        )
         if public:
             name = name or cls.__name__
             Component._all[name] = cls
