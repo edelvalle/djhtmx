@@ -133,6 +133,8 @@ def hx_tag(context: Context):
                 "hx-trigger": f"revealed delay:{jitter}ms",
                 "hx-get": event_url(component, "render"),
             }
+        if settings.DEBUG:
+            attrs |= {"hx-name": component.hx_name}
     else:
         attrs = {
             "id": component.id,
