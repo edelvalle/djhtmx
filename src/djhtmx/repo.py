@@ -441,7 +441,7 @@ class Repository:
             template = template or component._template_name_lazy
             context |= {"hx_lazy": True} | component._get_lazy_context()
         else:
-            context = component._get_context() | context
+            context |= component._get_context()
 
         html = mark_safe(component._get_template(template)(context).strip())
 

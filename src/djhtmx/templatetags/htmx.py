@@ -195,19 +195,32 @@ def on(
     component: Component | PydanticComponent = context["this"]
 
     if settings.DEBUG:
-        assert callable(
-            getattr(component, _event_handler, None)
-        ), f"{type(component).__name__}.{_event_handler} event handler not found"
+        if isinstance(component, PydanticComponent):
+            assert (
+                _event_handler in component._event_handler_params
+            ), f"{type(component).__name__}.{_event_handler} event handler not found"
+        else:
+            assert callable(
+                getattr(component, _event_handler, None)
+            ), f"{type(component).__name__}.{_event_handler} event handler not found"
 
-    implicit_params = (
-        get_function_parameters(getattr(component, _event_handler)) - set(kwargs)
-    ) or None
+    if not hx_include:
+        if isinstance(component, PydanticComponent):
+            has_implicit_params = bool(
+                component._event_handler_params[_event_handler] - set(kwargs)
+            )
+        else:
+            has_implicit_params = bool(
+                get_function_parameters(getattr(component, _event_handler)) - set(kwargs)
+            )
+        if has_implicit_params:
+            hx_include = f"#{component.id} [name]"
 
     attrs = {
         "hx-post": event_url(component, _event_handler),
         "hx-trigger": _trigger,
         "hx-vals": json.dumps(kwargs) if kwargs else None,
-        "hx-include": hx_include or implicit_params and f"#{component.id} [name]",
+        "hx-include": hx_include,
     }
     if isinstance(component, PydanticComponent):
         attrs |= {"hx-swap": "none"}

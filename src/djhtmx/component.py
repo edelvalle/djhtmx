@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import time
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as dataclass_field
-from functools import cache
-from inspect import Parameter
+from functools import cache, cached_property, partial
 from itertools import chain
 from os.path import basename
 
@@ -227,6 +227,13 @@ class PydanticComponent(BaseModel):
     _template_name: str = ...  # type: ignore
     _template_name_lazy: str = settings.DEFAULT_LAZY_TEMPLATE
 
+    # tracks which attributes are properties, to expose them in a lazy way to the _get_context
+    # during rendering
+    _properties: set[str] = ...  # type: ignore
+
+    # tracks what are the names of the event handlers of the class
+    _event_handler_params: dict[str, frozenset[str]] = ...  # type: ignore
+
     # fields to exclude from component state during serialization
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -283,27 +290,43 @@ class PydanticComponent(BaseModel):
                 annotation = hints[name]
                 cls.__annotations__[name] = annotate_model(annotation)
 
-        for name, event_handler in cls.__own_event_handlers():
-            setattr(
-                cls,
-                name,
-                validate_call(config={"arbitrary_types_allowed": True})(event_handler),
-            )
+        cls._event_handler_params = {
+            name: get_function_parameters(event_handler)
+            for name, event_handler in cls.__own_event_handlers(get_parent_ones=True)
+        }
 
-        if public and (event_handler := getattr(cls, "_handle_event", None)):
-            for event_type in get_event_handler_event_types(event_handler):
-                LISTENERS[event_type].add(component_name)
+        for name, params in cls._event_handler_params.items():
+            if params and not hasattr((attr := getattr(cls, name)), "raw_function"):
+                setattr(
+                    cls,
+                    name,
+                    validate_call(config={"arbitrary_types_allowed": True})(attr),
+                )
+
+        if public:
+            if event_handler := getattr(cls, "_handle_event", None):
+                for event_type in get_event_handler_event_types(event_handler):
+                    LISTENERS[event_type].add(component_name)
+
+            cls._properties = {
+                attr
+                for attr in dir(cls)
+                if not attr.startswith("_")
+                if attr not in PYDANTIC_MODEL_METHODS
+                if isinstance(getattr(cls, attr), (property, cached_property))
+            }
 
         return super().__init_subclass__()
 
     @classmethod
     def __own_event_handlers(cls, get_parent_ones=False):
-        for attr_name in dir(cls) if get_parent_ones else vars(cls):
+        attr_names = dir(cls) if get_parent_ones else vars(cls)
+        for attr_name in attr_names:
             if (
                 not attr_name.startswith("_")
                 and attr_name not in PYDANTIC_MODEL_METHODS
                 and attr_name.islower()
-                and callable(attr := getattr(cls, attr_name, None))
+                and callable(attr := getattr(cls, attr_name))
             ):
                 yield attr_name, attr
 
@@ -334,10 +357,14 @@ class PydanticComponent(BaseModel):
     def _get_context(self):
         with sentry_span(f"{FQN[type(self)]}._get_context"):
             return {
-                attr: getattr(self, attr)
+                attr: (
+                    partial(getattr, self, attr)  # do lazy evaluation of properties
+                    if attr in self._properties
+                    else getattr(self, attr)
+                )
                 for attr in dir(self)
                 if not attr.startswith("_") and attr not in PYDANTIC_MODEL_METHODS
-            } | {"this": self}
+            }
 
 
 @dataclass(slots=True)
@@ -397,7 +424,7 @@ class Component:
             cls._name = name
 
         cls._fields = tuple(
-            get_function_parameters(cls.__init__, exclude_kinds=(Parameter.VAR_KEYWORD,))
+            get_function_parameters(cls.__init__, exclude_kinds=(inspect.Parameter.VAR_KEYWORD,))
         )
 
         for attr_name in dict(vars(cls)):

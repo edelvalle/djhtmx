@@ -105,12 +105,11 @@ def issubclass_safe(o, types):
 # for state of old components
 
 
-@cache
 def get_function_parameters(
     function: t.Callable,
     exclude_kinds: tuple[_ParameterKind, ...] = (),
-) -> set[str]:
-    return set(
+) -> frozenset[str]:
+    return frozenset(
         param.name
         for param in inspect.signature(function).parameters.values()
         if param.name != "self" and param.kind not in exclude_kinds
