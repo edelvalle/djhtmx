@@ -136,7 +136,9 @@ class ItemEntry(PydanticComponent):
     ...
 ```
 
-```html: Items.html
+`Items.html`:
+
+```html
 {% load htmx %}
 
 <ul {% hx-tag %}>
@@ -150,8 +152,9 @@ In this case every time there is a render of the parent component all children c
 
 How can you preserve the state in the child components if there were some of them that were already had `is_open = True`? The state that is not passed directly during instantiation to the component is retrieved from the session, but the component needs to have consistent id. To do this you have to pass an `id` to the component.
 
+`Items.html`:
 
-```html: Items.html
+```html
 {% load htmx %}
 
 <ul {% hx-tag %}>
@@ -166,7 +169,9 @@ How can you preserve the state in the child components if there were some of the
 If you want some component to load lazily, you pass `lazy=True` where it is being instantiated.
 
 
-```html: Items.html
+`Items.html`:
+
+```html
 {% load htmx %}
 
 <ul {% hx-tag %}>
@@ -323,7 +328,9 @@ class SmartFilter(PydanticComponent):
         yield Render(self, template='SmartFilter_list.html')
 ```
 
-```html: SmartFilter.html
+`SmartFilter.html`:
+
+```html
 {% load htmx %}
 
 <div {% hx-tag %}>
@@ -332,7 +339,9 @@ class SmartFilter(PydanticComponent):
   </div>
 ```
 
-```html: SmartFilter_list.html
+`SmartFilter_list.html`:
+
+```html
 <ul id="{{ id }}-list" {% oob %}>
   {% for item in items %}
     <li><a href="{{ item.get_absolute_url }}">{{ item }}</a></li>
@@ -534,7 +543,9 @@ class ItemComponent(PydanticComponent):
     ...
 ```
 
-```html: TodoListComponent.html
+`TodoListComponent.html`:
+
+```html
 {% load htmx %}
 <div {% hx-tag %}>
   <form {% on "submit" "create"  %}>
