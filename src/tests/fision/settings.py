@@ -54,7 +54,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "djhtmx.Middleware",
 ]
 
 ROOT_URLCONF = "fision.urls"
@@ -70,6 +69,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "djhtmx.context.component_repo",
             ],
         },
     },
@@ -77,6 +77,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "fision.wsgi.application"
 ASGI_APPLICATION = "fision.asgi.application"
+# CHANNEL_LAYERS = {"default": {'BACKEND': }}
 
 # Database
 # https://docs.djangoproject.com/en/2.2/ref/settings/#databases
@@ -162,6 +163,11 @@ LOGGING = {
             "propagate": False,
         },
         "fision": {
+            "handlers": ["fision.console"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "redis": {
             "handlers": ["fision.console"],
             "level": "DEBUG",
             "propagate": False,

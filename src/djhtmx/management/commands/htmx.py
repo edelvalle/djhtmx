@@ -21,7 +21,7 @@ def htmx():
     pass
 
 
-@htmx.command("check-missing")
+@htmx.command("check-missing")  # type: ignore
 @click.option("--new-style-only", is_flag=True, default=False)
 @click.argument("fname", type=click.File())
 def check_missing(fname, new_style_only=False):
@@ -49,7 +49,7 @@ def check_missing(fname, new_style_only=False):
         sys.exit(1)
 
 
-@htmx.command("check-shadowing")
+@htmx.command("check-shadowing")  # type: ignore
 def check_shadowing():
     "Checks if there are components that might shadow one another."
     v1 = check_old_components_shadowing()
@@ -60,7 +60,10 @@ def check_shadowing():
 
 def check_pydantic_components_shadowing():
     clashes = defaultdict(list)
-    for cls in get_final_subclasses(PydanticComponent, without_duplicates=True):
+    for cls in get_final_subclasses(
+        PydanticComponent,  # type: ignore
+        without_duplicates=True,
+    ):
         name = cls.__name__
         registered = REGISTRY.get(name)
         if registered is not cls and registered is not None:
@@ -83,7 +86,10 @@ def check_pydantic_components_shadowing():
 
 def check_old_components_shadowing():
     clashes = defaultdict(list)
-    for cls in get_final_subclasses(Component, without_duplicates=True):
+    for cls in get_final_subclasses(
+        Component,  # type: ignore
+        without_duplicates=True,
+    ):
         name = getattr(cls, "_name", cls.__name__)
         registered = Component._all.get(name)
         if registered is not cls and registered is not None:

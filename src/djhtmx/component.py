@@ -1,41 +1,31 @@
 from __future__ import annotations
 
-import hashlib
+import inspect
 import logging
 import re
+import time
 import typing as t
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass, field as dataclass_field
-from functools import cached_property
+from functools import cache, cached_property, partial
 from itertools import chain
 from os.path import basename
-from urllib.parse import urlparse
-from uuid import uuid4
 
-from django.conf import settings
-from django.contrib.auth.models import AbstractUser, AnonymousUser
-from django.core.signing import Signer
+from django.contrib.auth.models import AbstractBaseUser
 from django.db import models
-from django.db.models.signals import post_save, pre_delete
-from django.http import Http404, HttpRequest, HttpResponse, QueryDict
+from django.http import HttpResponse
 from django.shortcuts import resolve_url
 from django.template import Context, loader
-from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, validate_call
 from pydantic.fields import ModelPrivateAttr
 from typing_extensions import deprecated
 
-from . import json
-from .introspection import (
-    annotate_model,
-    get_event_handler_event_types,
-    get_function_parameters,
-    get_related_fields,
-)
+from . import json, settings
+from .introspection import annotate_model, get_event_handler_event_types, get_function_parameters
 from .query import Query, QueryPatcher
 from .tracing import sentry_span
-from .utils import get_model_subscriptions
+from .utils import generate_id
 
 __all__ = ("Component", "PydanticComponent", "Query", "ComponentNotFound")
 
@@ -44,424 +34,168 @@ class ComponentNotFound(LookupError):
     pass
 
 
-TUser = t.TypeVar("TUser", bound=AbstractUser)
-RenderFunction = t.Callable[[Context | dict[str, t.Any] | None, HttpRequest | None], SafeString]
+@dataclass(slots=True)
+class Destroy:
+    "Destroys the given component in the browser and in the caches."
+
+    component_id: str
+    command: t.Literal["destroy"] = "destroy"
 
 
-def get_params(request: HttpRequest) -> QueryDict:
-    is_htmx_request = json.loads(request.META.get("HTTP_HX_REQUEST", "false"))
-    if is_htmx_request:
-        return QueryDict(  # type: ignore
-            urlparse(request.META["HTTP_HX_CURRENT_URL"]).query,
-            mutable=True,
-        )
-    else:
-        return request.GET.copy()
+@dataclass(slots=True)
+class Redirect:
+    "Executes a browser redirection to the given URL."
 
-
-class RequestWithRepo(HttpRequest):
-    djhtmx: Repository
-
-
-PyComp = t.TypeVar("PyComp", bound="PydanticComponent")
-
-
-signer = Signer()
-
-
-class Repository:
-    """An in-memory (cheap) mapping of component IDs to its states.
-
-    When an HTMX request comes, all the state from all the components are
-    placed in a registry.  This way we can instantiate components if/when
-    needed.
-
-    For instance, if a component is subscribed to an event and the event fires
-    during the request, that component is rendered.
-
-    """
+    url: str
+    command: t.Literal["redirect"] = "redirect"
 
     @classmethod
-    def from_request(
-        cls,
-        request: RequestWithRepo,
-        states_by_id: dict[str, dict[str, t.Any]] = None,
-        subscriptions_by_id: dict[str, list[str]] = None,
-    ) -> Repository:
-        """Get or build the Repository from the request.
-
-        If the request has already a Repository attached, return it without
-        further processing.
-
-        Otherwise, build the repository from the request's POST and attach it
-        to the request.
-
-        """
-        if (result := getattr(request, "djhtmx", None)) is None:
-            if states_by_id is None:
-                states_by_id = {
-                    state["id"]: state
-                    for state in [
-                        json.loads(signer.unsign(state))
-                        for state in request.POST.getlist("__hx-states__")
-                    ]
-                }
-
-            if subscriptions_by_id is None:
-                subscriptions_by_id = {
-                    component_id: subscriptions.split(",")
-                    for component_id, subscriptions in json.loads(
-                        request.POST.get("__hx-subscriptions__", "{}")
-                    ).items()
-                }
-
-            request.djhtmx = result = cls(
-                request,
-                states_by_id=states_by_id,
-                subscriptions_by_id=subscriptions_by_id,
-            )
-
-        return result
-
-    def __init__(
-        self,
-        request: RequestWithRepo,
-        states_by_id: dict[str, dict[str, t.Any]] = None,
-        subscriptions_by_id: dict[str, list[str]] = None,
-    ):
-        self.request = request
-        self.component_by_id: dict[str, PydanticComponent] = {}
-        self.component_by_name: dict[str, list[PydanticComponent]] = defaultdict(list)
-        self.states_by_id = states_by_id or {}
-        self.subscriptions_by_id = subscriptions_by_id or {}
-
-        self.params = get_params(request)
-        self.signals: set[str] = set()
-        self.events = []
-
-        if self.subscriptions_by_id:
-            post_save.connect(
-                receiver=self._listen_to_post_save,
-            )
-            pre_delete.connect(
-                receiver=self._listen_to_pre_delete,
-            )
-
-    def unlink(self):
-        """Remove circular references to ensure GC deallocates me"""
-        for component in self.component_by_id.values():
-            component.controller.unlink()
-            delattr(component, "controller")
-        delattr(self, "request")
-        delattr(self, "params")
-        delattr(self, "component_by_id")
-        delattr(self, "component_by_name")
-
-    def emit(self, event):
-        self.events.append(event)
-
-    def consume_events(self) -> list[t.Any]:
-        result = self.events
-        self.events = []
-        return result
-
-    def consume_signals(self) -> set[str]:
-        result = self.signals
-        self.signals = set()
-        return result
-
-    def _listen_to_post_save(
-        self,
-        sender: type[models.Model],
-        instance: models.Model,
-        created: bool,
-        **kwargs,
-    ):
-        action = "created" if created else "updated"
-        self.signals.update(get_model_subscriptions(instance, actions=(action,)))
-        self._listen_to_related(sender, instance, action=action)
-
-    def _listen_to_pre_delete(
-        self,
-        sender: type[models.Model],
-        instance: models.Model,
-        **kwargs,
-    ):
-        self.signals.update(get_model_subscriptions(instance, actions=("deleted",)))
-        self._listen_to_related(sender, instance, action="deleted")
-
-    def _listen_to_related(
-        self,
-        sender: type[models.Model],
-        instance: models.Model,
-        action: str,
-    ):
-        for field in get_related_fields(sender):
-            fk_id = getattr(instance, field.name)
-            signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"
-            self.signals.update((signal, f"{signal}.{action}"))
-
-    def dispatch_signals(self, main_component_id: str):
-        components_to_update: set[str] = set()
-        signals_queue: t.Deque[set[str]] = (
-            deque([signals]) if (signals := self.consume_signals()) else deque([])
-        )
-        events_queue: t.Deque[list[t.Any]] = (
-            deque([events]) if (events := self.consume_events()) else deque([])
-        )
-        generation = 0
-
-        while (signals_queue or events_queue) and generation < _MAX_GENERATION:
-            generation += 1
-            if signals_queue:
-                current_signals = signals_queue.pop()
-                logger.debug("LAUNCHED SIGNALS: %s", current_signals)
-
-                for component_id, subscriptions in self.subscriptions_by_id.items():
-                    if (
-                        current_signals.intersection(subscriptions)
-                        and (component := self.get_component_by_id(component_id)) is not None
-                    ):
-                        logger.debug(" > MATCHED: %s (%s)", component.hx_name, subscriptions)
-                        components_to_update.add(component.id)
-
-            if events_queue:
-                current_events = events_queue.pop()
-                logger.debug("EVENTS EMITTED: %s", current_events)
-
-                for event in current_events:
-                    for name in LISTENERS[type(event)]:
-                        logger.debug("> AWAKING: %s", name)
-                        self._awake_components_by_name(name)
-
-                        for component in self.get_components_by_name(name):
-                            logger.debug("> AWAKED: %s", component)
-                            component._handle_event(event)  # type: ignore
-                            components_to_update.add(component.id)
-
-            if more_events := self.consume_events():
-                events_queue.append(more_events)
-            if more_signals := self.consume_signals():
-                signals_queue.append(more_signals)
-
-        if generation >= _MAX_GENERATION:
-            raise RuntimeError("Possibly cyclic events/signals handlers")
-
-        # Rendering
-        for component_id in components_to_update:
-            component = self.get_component_by_id(component_id)
-            logger.debug("> Rendering %s (%s)", component.hx_name, component_id)
-            assert component, "Event updated non-existent component"
-            oob = "true" if component_id != main_component_id else None
-            logger.debug("Rendering signaled component %s", component)
-            yield (
-                component_id,
-                self.render_html(component, oob=oob),
-            )
-
-    def render_oob(self):
-        # component_by_id can change size during iteration
-        for component in list(self.component_by_id.values()):
-            for oob, component in component.controller._oob:
-                yield self.render_html(component, oob=oob)
-
-    def get_component_by_id(self, component_id):
-        """Return (possibly build) the component by its ID.
-
-        If the component was already built, get it unchanged, otherwise build
-        it from the request's payload and return it.
-
-        If the `component_id` cannot be found, raise a KeyError.
-
-        """
-        result = self.component_by_id.get(component_id)
-        if result is not None:
-            return result
-
-        state = self.states_by_id.pop(component_id)
-        return self.build(state["hx_name"], state)
-
-    def build(self, component_name: str, state: dict[str, t.Any]):
-        """Build (or update) a component's state."""
-        if component_id := state.get("id"):
-            if component := self.component_by_id.get(component_id):
-                for key, value in state.items():
-                    setattr(component, key, value)
-                return component
-            elif stored_state := self.states_by_id.pop(component_id, None):
-                state = stored_state | state
-
-        state = self._patch_state_with_query_string(component_name, state)
-        component = build(component_name, self.request, self.params, state)
-        return self.register_component(component)
-
-    def get_components_by_name(self, name: str):
-        yield from self.component_by_name[name]
-
-    def _awake_components_by_name(self, name: str):
-        for state in list(self.states_by_id.values()):
-            if state["hx_name"] == name:
-                self.build(name, state)
-
-    def register_component(self, component: PyComp) -> PyComp:
-        self.component_by_id[component.id] = component
-        self.component_by_name[type(component).__name__].append(component)
-        return component
-
-    def render(
-        self,
-        component: PydanticComponent,
-        template: str | None = None,
-    ) -> HttpResponse:
-        return component.controller.render(
-            component._get_template(template),
-            component._get_context() | {"htmx_repo": self},
-        )
-
-    def render_html(
-        self,
-        component: PydanticComponent,
-        oob: str = None,
-        template: str | None = None,
-    ) -> SafeString:
-        is_oob = oob not in ("true", None)
-        html = [
-            format_html('<div hx-swap-oob="{oob}">', oob=oob) if is_oob else None,
-            component.controller.render_html(
-                component._get_template(template),
-                component._get_context() | {"htmx_repo": self, "hx_oob": None if is_oob else oob},
-            ),
-            "</div>" if is_oob else None,
-        ]
-        return mark_safe("".join(filter(None, html)))
-
-    def _patch_state_with_query_string(self, component_name, state):
-        """Patches the state with the component's query annotated fields"""
-
-        if patchers := QS_MAP.get(component_name):
-            for patcher in patchers:
-                if patcher.shared:
-                    state = state | patcher.get_shared_state_updates(self.params)
-                elif ns := state.get(patcher.ns_attr_name, ""):
-                    state = state | patcher.get_private_state_updates(
-                        self.params,
-                        ns,
-                    )
-
-        return state
+    def to(cls, to: t.Callable[[], t.Any] | models.Model | str, *args, **kwargs):
+        return cls(resolve_url(to, *args, **kwargs))
 
 
-class Controller:
-    def __init__(self, request: RequestWithRepo, params: QueryDict):
-        self.request = request
-        self.params = params
-        self._destroyed: bool = False
-        self._headers: dict[str, str] = {}
-        self._oob: list[tuple[str, PydanticComponent]] = []
+@dataclass(slots=True)
+class Open:
+    "Open a new window with the URL."
 
-    def unlink(self):
-        self.request = None
-        self.params = None
-        self._oob = []
+    url: str
+    name: str = ""
+    rel: str = "noopener noreferrer"
+    target: str = "_blank"
 
-    def emit(self, event: t.Any):
-        self.request.djhtmx.emit(event)  # type: ignore
+    command: t.Literal["open-tab"] = "open-tab"
 
-    def build(self, component: type[PydanticComponent] | str, **state):
-        if isinstance(component, type):
-            component = component.__name__
-        return self.request.djhtmx.build(component, state)  # type: ignore
+    @classmethod
+    def to(cls, to: t.Callable[[], t.Any] | models.Model | str, *args, **kwargs):
+        return cls(resolve_url(to, *args, **kwargs))
 
-    def destroy(self):
-        self._destroyed = True
 
-    def append(self, target: str, component: type[PydanticComponent], **state):
-        self._oob.append((f"beforeend:{target}", self.build(component, **state)))
+@dataclass(slots=True)
+class Focus:
+    "Executes a '.focus()' on the browser element that matches `selector`"
 
-    def prepend(self, target: str, component: type[PydanticComponent], **state):
-        self._oob.append((f"afterbegin:{target}", self.build(component, **state)))
+    selector: str
+    command: t.Literal["focus"] = "focus"
 
-    def after(self, target: str, component: type["PydanticComponent"], **state):
-        self._oob.append((f"afterend:{target}", self.build(component, **state)))
 
-    def before(self, target: str, component: type[PydanticComponent], **state):
-        self._oob.append((f"beforebegin:{target}", self.build(component, **state)))
+@dataclass(slots=True)
+class Execute:
+    component_id: str
+    event_handler: str
+    event_data: dict[str, t.Any]
 
-    def update(self, component: type[PydanticComponent], **state):
-        self._oob.append(("true", self.build(component, **state)))
 
-    @cached_property
-    def triggers(self):
-        return Triggers()
+@dataclass(slots=True)
+class DispatchDOMEvent:
+    "Dispatches a DOM CustomEvent in the given target."
 
-    def redirect_to(
-        self,
-        url: t.Callable[..., t.Any] | models.Model | str,
-        **kwargs,
-    ):
-        self._headers["HX-Redirect"] = resolve_url(url, **kwargs)
+    target: str
+    event: str
+    detail: t.Any
+    bubbles: bool = False
+    cancelable: bool = False
+    composed: bool = False
+    command: t.Literal["dispatch_dom_event"] = "dispatch_dom_event"
 
-    def focus(self, selector):
-        self.triggers.after_settle("hxFocus", selector)
 
-    def dispatch_event(
-        self,
-        target: str,
-        event: str,
-        *,
-        bubbles: bool = False,
-        cancelable: bool = False,
-        composed: bool = False,
-        detail=None,
-    ):
-        """Trigger a custom event in the given DOM target.
+@dataclass(slots=True)
+class SkipRender:
+    "Instruct the HTMX engine to avoid the render of the component."
 
-        The meaning of the arguments `bubbles`, `cancelable`, and `composed`
-        are given in
-        https://developer.mozilla.org/en-US/docs/Web/API/Event/Event#options
+    component: "PydanticComponent"
 
-        The `detail` is a JSON reprentable data to add as the details of the
-        Event object, as in
-        https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent/detail
 
-        """
-        self.triggers.after_settle(
-            "hxDispatchEvent",
-            {
-                "event": event,
-                "target": target,
-                "detail": detail,
-                "bubbles": bubbles,
-                "cancelable": cancelable,
-                "composed": composed,
-            },
-        )
+@dataclass(slots=True)
+class BuildAndRender:
+    component: type["PydanticComponent"]
+    state: dict[str, t.Any]
+    oob: str = "true"
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
-    def _apply_headers(self, response: HttpResponse) -> HttpResponse:
-        for key, value in (self._headers | self.triggers.headers).items():
-            response[key] = value
-        return response
+    @classmethod
+    def append(cls, target_: str, component_: type[PydanticComponent], **state):
+        return cls(component=component_, state=state, oob=f"beforeend: {target_}")
 
-    def render(self, render: RenderFunction, context: dict[str, t.Any]):
-        response = HttpResponse(self.render_html(render, context))
-        return self._apply_headers(response)
+    @classmethod
+    def prepend(cls, target_: str, component_: type[PydanticComponent], **state):
+        return cls(component=component_, state=state, oob=f"afterbegin: {target_}")
 
-    def render_html(self, render: RenderFunction, context: dict[str, t.Any]):
-        if self._destroyed:
-            html = ""
-        else:
-            html = render(context, self.request).strip()
-        return mark_safe(html)
+    @classmethod
+    def after(cls, target_: str, component_: type[PydanticComponent], **state):
+        return cls(component=component_, state=state, oob=f"afterend: {target_}")
 
+    @classmethod
+    def before(cls, target_: str, component_: type[PydanticComponent], **state):
+        return cls(component=component_, state=state, oob=f"beforeend: {target_}")
+
+    @classmethod
+    def update(cls, component: type[PydanticComponent], **state):
+        return cls(component=component, state=state)
+
+
+@dataclass(slots=True)
+class Render:
+    component: PydanticComponent
+    template: str | None = None
+    oob: str = "true"
+    lazy: bool | None = None
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
+
+
+@dataclass(slots=True)
+class Emit:
+    "Emit a backend-only event."
+
+    event: t.Any
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
+
+
+@dataclass(slots=True)
+class Signal:
+    "Emit a backend-only signal."
+
+    names: set[str]
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
+
+
+Command = (
+    Destroy
+    | Redirect
+    | Focus
+    | DispatchDOMEvent
+    | SkipRender
+    | BuildAndRender
+    | Render
+    | Emit
+    | Signal
+    | Execute
+    | Open
+)
+
+
+RenderFunction = t.Callable[[Context | dict[str, t.Any] | None], SafeString]
+
+PYDANTIC_MODEL_METHODS = {
+    attr_name for attr_name in dir(BaseModel) if not attr_name.startswith("_")
+}
 
 REGISTRY: dict[str, type[PydanticComponent]] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[PydanticComponent], str] = {}
-RENDER_FUNC: dict[str, RenderFunction] = {}
 
-# Mapping from component name to the list of the patcher of the internal
-# state from query string.
-QS_MAP: dict[str, list[QueryPatcher]] = defaultdict(list)
+
+@cache
+def _get_query_patchers(component_name: str) -> list[QueryPatcher]:
+    return list(QueryPatcher.for_component(REGISTRY[component_name]))
+
+
+@cache
+def _get_querystring_subscriptions(component_name: str) -> frozenset[str]:
+    return frozenset({
+        patcher.signal_name
+        for patcher in _get_query_patchers(component_name)
+        if patcher.auto_subscribe
+    })
 
 
 A = t.TypeVar("A")
@@ -476,6 +210,9 @@ def _compose(f: t.Callable[P, A], g: t.Callable[[A], B]) -> t.Callable[P, B]:
     return result
 
 
+RENDER_FUNC: dict[str, RenderFunction] = {}
+
+
 def get_template(template: str) -> RenderFunction:
     if settings.DEBUG:
         return _compose(loader.get_template(template).render, mark_safe)
@@ -486,32 +223,16 @@ def get_template(template: str) -> RenderFunction:
         return render
 
 
-def build(
-    component_name: str,
-    request: RequestWithRepo,
-    params: QueryDict,
-    state: dict[str, t.Any],
-):
-    if component_name not in REGISTRY:
-        raise ComponentNotFound(
-            f"Could not find requested component '{component_name}'. " "Did you load the component?"
-        )
-
-    return REGISTRY[component_name](
-        **dict(  # type: ignore
-            state,
-            hx_name=component_name,
-            controller=Controller(request, params),
-        )
-    )
-
-
-def _generate_uuid():
-    return f"hx-{_bytes_compact_digest(uuid4().bytes)}"
-
-
-class PydanticComponent(BaseModel, t.Generic[TUser]):
+class PydanticComponent(BaseModel):
     _template_name: str = ...  # type: ignore
+    _template_name_lazy: str = settings.DEFAULT_LAZY_TEMPLATE
+
+    # tracks which attributes are properties, to expose them in a lazy way to the _get_context
+    # during rendering
+    _properties: set[str] = ...  # type: ignore
+
+    # tracks what are the names of the event handlers of the class
+    _event_handler_params: dict[str, frozenset[str]] = ...  # type: ignore
 
     # fields to exclude from component state during serialization
     model_config = ConfigDict(
@@ -524,36 +245,38 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
         component_name = cls.__name__
 
         if public is None:
-            if _ABSTRACT_BASE_REGEX.match(component_name):
-                logger.info("HTMX Component: <%s> Automatically detected as non public", FQN[cls])
+            # Detect concrete versions of generic classes, they are non public
+            if "[" in component_name and "]" in component_name:
+                public = False
+            elif _ABSTRACT_BASE_REGEX.match(component_name):
+                logger.info(
+                    "HTMX Component: <%s> Automatically detected as non public",
+                    FQN[cls],
+                )
                 public = False
             else:
                 public = True
 
         if public:
             REGISTRY[component_name] = cls
-            # We settle the query string patchers before any other processing,
-            # because we need the simplest types of the fields.
-            cls._settle_querystring_patchers(component_name)
 
             # Warn of components that do not have event handlers and are public
             if (
                 not any(cls.__own_event_handlers(get_parent_ones=True))
                 and not hasattr(cls, "_handle_event")
                 and not hasattr(cls, "subscriptions")
-                and not QS_MAP[component_name]
             ):
-                logger.warn(
+                logger.warning(
                     "HTMX Component <%s> has no event handlers, probably should not exist and be just a template",
                     FQN[cls],
                 )
 
         assert isinstance(cls._template_name, ModelPrivateAttr)
-        if (
-            isinstance(cls._template_name.default, str)
-            and basename(cls._template_name.default) != f"{component_name}.html"
+        if isinstance(cls._template_name.default, str) and (
+            basename(cls._template_name.default)
+            not in (f"{klass.__name__}.html" for klass in cls.__mro__)
         ):
-            logger.warn(
+            logger.warning(
                 "HTMX Component <%s> template name does not match the component name",
                 FQN[cls],
             )
@@ -567,106 +290,81 @@ class PydanticComponent(BaseModel, t.Generic[TUser]):
                 annotation = hints[name]
                 cls.__annotations__[name] = annotate_model(annotation)
 
-        for name, event_handler in cls.__own_event_handlers():
-            setattr(
-                cls,
-                name,
-                validate_call(config={"arbitrary_types_allowed": True})(event_handler),
-            )
+        cls._event_handler_params = {
+            name: get_function_parameters(event_handler)
+            for name, event_handler in cls.__own_event_handlers(get_parent_ones=True)
+        }
 
-        if public and (event_handler := getattr(cls, "_handle_event", None)):
-            for event_type in get_event_handler_event_types(event_handler):
-                LISTENERS[event_type].add(component_name)
+        for name, params in cls._event_handler_params.items():
+            if params and not hasattr((attr := getattr(cls, name)), "raw_function"):
+                setattr(
+                    cls,
+                    name,
+                    validate_call(config={"arbitrary_types_allowed": True})(attr),
+                )
+
+        if public:
+            if event_handler := getattr(cls, "_handle_event", None):
+                for event_type in get_event_handler_event_types(event_handler):
+                    LISTENERS[event_type].add(component_name)
+
+            cls._properties = {
+                attr
+                for attr in dir(cls)
+                if not attr.startswith("_")
+                if attr not in PYDANTIC_MODEL_METHODS
+                if isinstance(getattr(cls, attr), (property, cached_property))
+            }
 
         return super().__init_subclass__()
 
     @classmethod
     def __own_event_handlers(cls, get_parent_ones=False):
-        for attr_name in dir(cls) if get_parent_ones else vars(cls):
+        attr_names = dir(cls) if get_parent_ones else vars(cls)
+        for attr_name in attr_names:
             if (
                 not attr_name.startswith("_")
                 and attr_name not in PYDANTIC_MODEL_METHODS
                 and attr_name.islower()
-                and callable(attr := getattr(cls, attr_name, None))
+                and callable(attr := getattr(cls, attr_name))
             ):
-                if cls.__name__ == "InvolvedTours":
-                    print(attr_name, attr)
                 yield attr_name, attr
 
-    @classmethod
-    def _settle_querystring_patchers(cls, component_name):
-        """Updates the mapping to track query strings."""
-        QS_MAP[component_name] = QueryPatcher.for_component(cls)
-
     # State
-    id: t.Annotated[str, Field(default_factory=_generate_uuid)]
-    controller: t.Annotated[Controller, Field(exclude=True)]
-
+    id: t.Annotated[str, Field(default_factory=generate_id)]
+    user: t.Annotated[AbstractBaseUser | None, Field(exclude=True)]
     hx_name: str
+    lazy: bool = False
 
-    @cached_property
-    def hx_name_scrambled(self) -> str:
-        if name := self.hx_name:
-            return _compact_hash(name)
-        return self.id
+    def __repr__(self) -> str:
+        return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
 
-    @classmethod
-    def _build(cls, controller: Controller, **state):
-        return cls(controller=controller, hx_name=cls.__name__, **state)
+    @property
+    def subscriptions(self) -> set[str]:
+        return set()
 
-    if t.TYPE_CHECKING:
-
-        @property
-        def subscriptions(self) -> set[str]:
-            return set()
+    def render(self): ...
 
     def _get_all_subscriptions(self) -> set[str]:
-        try:
-            result = self.subscriptions
-        except AttributeError:
-            result = set()
-        query_patchers = self._get_query_patchers()
-        query_subscriptions = {p.subscription_channel for p in query_patchers if p.auto_subscribe}
-        return result | query_subscriptions
-
-    @cached_property
-    def user(self) -> TUser:
-        if isinstance(self.any_user, AnonymousUser):
-            raise Http404()
-        else:
-            return self.any_user
-
-    @cached_property
-    def any_user(self) -> TUser | AnonymousUser:
-        user = getattr(self.controller.request, "user", None)
-        if user is None:
-            return AnonymousUser()
-        else:
-            return user
+        return self.subscriptions | _get_querystring_subscriptions(self.hx_name)
 
     def _get_template(self, template: str | None = None) -> t.Callable[..., SafeString]:
         return get_template(template or self._template_name)
 
+    def _get_lazy_context(self):
+        return {}
+
     def _get_context(self):
-        attrs_to_exclude = {"user", "any_user"}
         with sentry_span(f"{FQN[type(self)]}._get_context"):
             return {
-                attr: getattr(self, attr)
+                attr: (
+                    partial(getattr, self, attr)  # do lazy evaluation of properties
+                    if attr in self._properties
+                    else getattr(self, attr)
+                )
                 for attr in dir(self)
-                if not attr.startswith("_")
-                and attr not in PYDANTIC_MODEL_METHODS
-                and attr not in attrs_to_exclude
-            } | {"this": self}
-
-    def _get_query_patchers(self) -> t.Sequence[QueryPatcher]:
-        """Return the list of query-param patchers for the component.
-
-        The default implementation uses the fields annotated with `Query`.
-        Subclasses could override/extend this to include more dynamically
-        annotated patchers.
-
-        """
-        return tuple(QS_MAP.get(self.hx_name, []))
+                if not attr.startswith("_") and attr not in PYDANTIC_MODEL_METHODS
+            }
 
 
 @dataclass(slots=True)
@@ -725,7 +423,9 @@ class Component:
             Component._all[name] = cls
             cls._name = name
 
-        cls._fields = get_function_parameters(cls.__init__, exclude={"self"})
+        cls._fields = tuple(
+            get_function_parameters(cls.__init__, exclude_kinds=(inspect.Parameter.VAR_KEYWORD,))
+        )
 
         for attr_name in dict(vars(cls)):
             attr = getattr(cls, attr_name)
@@ -741,27 +441,21 @@ class Component:
         return super().__init_subclass__()
 
     @classmethod
-    def _build(cls, _component_name, request, id, state):
+    def _build(cls, _component_name, htmx_repo, id, state):
         if _component_name not in cls._all:
             raise ComponentNotFound(
-                f"Could not find requested component '{_component_name}'. Did you load the component?"
+                f"Could not find requested component '{_component_name}'. Did you load the component?",
             )
-        return cls._all[_component_name](**dict(state, id=id, request=request))
+        return cls._all[_component_name](**dict(state, id=id, htmx_repo=htmx_repo))
 
-    def __init__(self, request: HttpRequest, id: str | None = None):
-        self.request = request
+    def __init__(self, htmx_repo, id: str | None = None):
+        self.htmx_repo = htmx_repo
+        self.user = htmx_repo.user
         self.id = id
         self._destroyed = False
         self._headers = {}
         self._triggers = Triggers()
         self._oob = []
-
-    @cached_property
-    def user(self) -> AbstractUser | AnonymousUser:
-        user = getattr(self.request, "user", None)
-        if user is None or not isinstance(user, AbstractUser):
-            return AnonymousUser()
-        return user
 
     @property
     def _state_json(self) -> str:
@@ -812,7 +506,11 @@ class Component:
         """
         pass
 
-    def _render(self, hx_swap_oob=False, template: str | None = None):
+    def _render(
+        self,
+        hx_swap_oob=False,
+        template: str = None,
+    ):
         with sentry_span(f"{self._fqn}._render"):
             with sentry_span(f"{self._fqn}.before_render"):
                 self.before_render()
@@ -823,7 +521,6 @@ class Component:
                     self._get_template(template)
                     .render(
                         self._get_context(hx_swap_oob),
-                        request=self.request,
                     )
                     .strip()
                 )
@@ -839,7 +536,7 @@ class Component:
             return html
 
     def _also_render(self, component, **kwargs):
-        self._oob.append(component(request=self.request, **kwargs))
+        self._oob.append(component(user=self.user, **kwargs))
 
     def _get_template(self, template: str | None = None):
         if template:
@@ -868,39 +565,7 @@ class Component:
         return f"{mod}.{name}" if mod else name
 
 
-PYDANTIC_MODEL_METHODS = {
-    attr_name for attr_name in dir(BaseModel) if not attr_name.startswith("_")
-}
-
-_MAX_GENERATION = 50
-
 logger = logging.getLogger(__name__)
 
 
-def _compact_hash(v: str) -> str:
-    """Return a SHA1 using a very base with 64+ symbols"""
-    h = hashlib.sha1()
-    h.update(v.encode("ascii"))
-    d = h.digest()
-    return _bytes_compact_digest(d)
-
-
-def _bytes_compact_digest(v: bytes) -> str:
-    # Convert the binary digest to an integer
-    num = int.from_bytes(v, byteorder="big")
-
-    # Convert the integer to the custom base
-    base_len = len(_BASE)
-    encoded = []
-    while num > 0:
-        num, rem = divmod(num, base_len)
-        encoded.append(_BASE[rem])
-
-    return "".join(encoded)
-
-
-# The order of the base is random so that it doesn't match anything out there.
-# The symbols are chosen to avoid extra encoding in the URL and HTML, and but
-# put in plain CSS selectors.
-_BASE = "ZmBeUHhTgusXNW_-Y1b05KPiFcQJD86joqnIRE7Lfkrdp3AOMCvltSwzVG9yxa42"
 _ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")
