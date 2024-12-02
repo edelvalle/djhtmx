@@ -10,13 +10,13 @@ of the list:
 ```python
 INSTALLED_APPS = [
     ...
-    'djhtmx',
+    "djhtmx",
     ...
 ]
 
 MIDDLEWARE = [
     ...,
-    'djhtmx.Middleware',
+    "djhtmx.Middleware",
 ]
 
 ```
@@ -28,7 +28,7 @@ from django.urls import path, include
 
 urlpatterns = [
     # ...
-    path('_htmx/', include('djhtmx.urls')),
+    path("_htmx/", include("djhtmx.urls")),
     # ...
 ]
 ```
@@ -54,7 +54,7 @@ from djhtmx.component import PydanticComponent
 
 
 class Counter(PydanticComponent):
-    _template_name = 'Counter.html'
+    _template_name = "Counter.html"
     counter: int = 0
 
     def inc(self, amount: int = 1):
@@ -69,8 +69,8 @@ The `counter.html` would be:
 {% load htmx %}
 <div {% hx-tag %}>
   {{ counter }}
-  <button {% on 'inc' %}>+</button>
-  <button {% on 'inc' amount=2 %}>+2</button>
+  <button {% on "inc" %}>+</button>
+  <button {% on "inc" amount=2 %}>+2</button>
 </div>
 ```
 
@@ -79,9 +79,11 @@ When the event is dispatched to the back-end the component state is reconstructe
 Now use the component in any of your html templates, by passing attributes that are part of the component state:
 
 ```html
-{% load htmx %} Counter: <br />
-{% htmx 'Counter' %} Counter with init value 3:<br />
-{% htmx 'Counter' counter=3 %}
+{% load htmx %}
+
+Counters: <br />
+{% htmx "Counter" %} Counter with init value 3:<br />
+{% htmx "Counter" counter=3 %}
 ```
 
 ##  Doing more complicated stuff
@@ -100,7 +102,7 @@ class BaseComponent(PydanticComponent, public=False):
 
 
 class Counter(BaseComponent):
-    _template_name = 'Counter.html'
+    _template_name = "Counter.html"
     counter: int = 0
 
     def inc(self, amount: int = 1):
@@ -109,7 +111,7 @@ class Counter(BaseComponent):
 
 ### Non-public components
 
-These are components that can't be instantiated using `{% htmx 'ComponentName' %}` because they are used to create some abstraction and reuse code.
+These are components that can't be instantiated using `{% htmx "ComponentName" %}` because they are used to create some abstraction and reuse code.
 
 Pass `public=False` in their declaration
 
@@ -124,7 +126,7 @@ Components can contain components inside to decompose the behavior in more granu
 
 ```python
 class Items(PydanticComponent):
-    _template_name = 'Items.html'
+    _template_name = "Items.html"
 
     def items(self):
         return Item.objects.all()
@@ -143,7 +145,7 @@ class ItemEntry(PydanticComponent):
 
 <ul {% hx-tag %}>
   {% for item in items %}
-    {% htmx 'ItemEntry' item=item %}
+    {% htmx "ItemEntry" item=item %}
   {% endfor %}
 </ul>
 ```
@@ -159,7 +161,7 @@ How can you preserve the state in the child components if there were some of the
 
 <ul {% hx-tag %}>
   {% for item in items %}
-    {% htmx 'ItemEntry' id='item-'|add:item.id item=item %}
+    {% htmx "ItemEntry" id="item-"|add:item.id item=item %}
   {% endfor %}
 </ul>
 ```
@@ -176,7 +178,7 @@ If you want some component to load lazily, you pass `lazy=True` where it is bein
 
 <ul {% hx-tag %}>
   {% for item in items %}
-    {% htmx 'ItemEntry' id='item-'|add:item.id item=item lazy=True %}
+    {% htmx "ItemEntry" id="item-"|add:item.id item=item lazy=True %}
   {% endfor %}
 </ul>
 ```
@@ -200,8 +202,8 @@ class Component(PydanticComponent):
 ```html
 {% load htmx %}
 
-<form {% hx-tag %} {% on 'submit' 'create' %}>
-  <input type "text" name="name">
+<form {% hx-tag %} {% on "submit" "create" %}>
+  <input type="text" name="name">
   <input type="checkbox" name="is_active">
   <button type="submit">Create!</button>
 </form>
@@ -228,7 +230,7 @@ class DeleteSelection(PydanticComponent):
 ```html
 {% load htmx %}
 
-<form {% hx-tag %} {% on 'submit' 'delete' %}>
+<form {% hx-tag %} {% on "submit" "delete" %}>
   <h1>Select items to be deleted</h1>
   {% for item in items %}
     <p>
@@ -313,7 +315,7 @@ Sometimes you don't want to do a full component render, but a partial one. Speci
 from djhtmx.component import PydanticComponent, Render
 
 class SmartFilter(PydanticComponent):
-    _template_name = 'SmartFilter.html'
+    _template_name = "SmartFilter.html"
     query: str = ""
 
     @property
@@ -325,7 +327,7 @@ class SmartFilter(PydanticComponent):
 
     def filter(self, query: str):
         self.query = query.trim()
-        yield Render(self, template='SmartFilter_list.html')
+        yield Render(self, template="SmartFilter_list.html")
 ```
 
 `SmartFilter.html`:
@@ -385,7 +387,7 @@ from djhtmx.component import PydanticComponent, SkipRender
 from djhtmx.query import Query
 
 class SmartFilter(PydanticComponent):
-    _template_name = 'SmartFilter.html'
+    _template_name = "SmartFilter.html"
     query: Annotated[str, Query("query")] = ""
 
     def filter(self, query: str):
@@ -393,7 +395,7 @@ class SmartFilter(PydanticComponent):
         yield SkipRender(self)
 
 class SmartList(PydanticComponent):
-    _template_name = 'SmartList.html'
+    _template_name = "SmartList.html"
     query: Annotated[str, Query("query")] = ""
 
     @property
@@ -440,7 +442,7 @@ class TodoList(Model):
     ...
 
 class Item(Model):
-    todo_list = ForeignKey(TodoList, related_name='items')
+    todo_list = ForeignKey(TodoList, related_name="items")
 ```
 
 And from the list with id `932` you take a item with id `123` and update it all this signals will be triggered:
@@ -464,8 +466,8 @@ class ItemCounter(PydanticComponent):
 
     def subscriptions(self):
         return {
-            f'todoapp.todolist.{self.todo_list.id}.items.deleted',
-            f'todoapp.todolist.{self.todo_list.id}.items.created',
+            f"todoapp.todolist.{self.todo_list.id}.items.deleted",
+            f"todoapp.todolist.{self.todo_list.id}.items.created",
         }
 
     def count(self):
@@ -491,7 +493,7 @@ class QueryChanged:
 
 
 class SmartFilter(PydanticComponent):
-    _template_name = 'SmartFilter.html'
+    _template_name = "SmartFilter.html"
     query: str = ""
 
     def filter(self, query: str):
@@ -500,7 +502,7 @@ class SmartFilter(PydanticComponent):
         yield SkipRender(self)
 
 class SmartList(PydanticComponent):
-    _template_name = 'SmartList.html'
+    _template_name = "SmartList.html"
     query: str = ""
 
     def _handle_event(self, event: QueryChanged):
@@ -524,15 +526,15 @@ Let's say that we are making the TODO list app and we want that when a new item 
 from djhtmx.component import PydanticComponent, SkipRender, BuildAndRender
 
 class TodoListComponent(PydanticComponent):
-    _template_name = 'TodoListComponent.html'
+    _template_name = "TodoListComponent.html"
     todo_list: TodoList
 
     def create(self, name: str):
         item = self.todo_list.items.create(name=name)
         yield BuildAndRender.prepend(
-            f'{self.id} .list',
+            f"{self.id} .list",
             ItemComponent,
-            id=f'item-{item.id}',
+            id=f"item-{item.id}",
             item=item,
         )
         yield SkipRender(self)
@@ -553,7 +555,7 @@ class ItemComponent(PydanticComponent):
   </form>
   <ul class="list">
     {% for item in items  %}
-      {% htmx "ItemComponent" id='item-'|add:item.id item=item  %}
+      {% htmx "ItemComponent" id="item-"|add:item.id item=item  %}
     {% endfor %}
   </ul>
 </div>
@@ -570,19 +572,19 @@ Let's say we want to put the focus in an input that inside the new ItemComponent
 from djhtmx.component import PydanticComponent, SkipRender, BuildAndRender, Focus
 
 class TodoListComponent(PydanticComponent):
-    _template_name = 'TodoListComponent.html'
+    _template_name = "TodoListComponent.html"
     todo_list: TodoList
 
     def create(self, name: str):
         item = self.todo_list.items.create(name=name)
-        item_id = f'item-{item.id}'
+        item_id = f"item-{item.id}"
         yield BuildAndRender.prepend(
-            f'{self.id} .list',
+            f"{self.id} .list",
             ItemComponent,
             id=item_id,
             item=item,
         )
-        yield Focus(f'#{item_id} input')
+        yield Focus(f"#{item_id} input")
         yield SkipRender(self)
 ```
 
@@ -595,15 +597,15 @@ Suppose you have a rich JavaScript library (graphs, maps, or anything...) in the
 from djhtmx.component import PydanticComponent, DispatchDOMEvent
 
 class TodoListComponent(PydanticComponent):
-    _template_name = 'TodoListComponent.html'
+    _template_name = "TodoListComponent.html"
     todo_list: TodoList
 
     def create(self, name: str):
         item = self.todo_list.items.create(name=name)
         yield DispatchDOMEvent(
-            '#leaflet-map',
-            'new-item',
-            {'id': item.id, 'name': item.name, 'geojson': item.geojson}
+            "#leaflet-map",
+            "new-item",
+            {"id": item.id, "name": item.name, "geojson": item.geojson}
         )
 ```
 
