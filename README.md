@@ -344,7 +344,7 @@ class SmartFilter(PydanticComponent):
 `SmartFilter_list.html`:
 
 ```html
-<ul id="{{ id }}-list" {% oob %}>
+<ul {% oob "list" %}>
   {% for item in items %}
     <li><a href="{{ item.get_absolute_url }}">{{ item }}</a></li>
   {% empty %}
@@ -610,3 +610,56 @@ class TodoListComponent(PydanticComponent):
 ```
 
 This will trigger that event in the front-end when the request arrives allowing rich JavaScript components to react accordingly without full re-render.
+
+## Template Tags you should know about
+
+- `{% htmx-headers %}`: put it inside your `<header></header>` to load the right scripts and configuration.
+
+```html
+<header>
+  {% htmx-headers %}
+</header>
+```
+
+- `{% htmx <ComponentName: str> **kwargs %}`: instantiates and inserts the result of rendering that component with those initialization parameters.
+
+```html
+<div>
+  {% htmx 'Button' document=document name='Save Document' is_primary=True %}
+</div>
+```
+
+
+- `{% hx-tag %}`: goes in the root HTML Element of a component template, it sets the component `id` and some other basic configuration details of the component.
+
+```html
+<button {% hx-tag %}>
+  ...
+</button>
+```
+
+
+- `{% oob <LocalId: str> %}`: goes in the root HTML Element of an element that will used for partial render (swapped Out Of Band). It sets the id of the element to a concatenation of the current component id and whatever you pass to it, and sets the right [hx-swap-oob](https://htmx.org/attributes/hx-swap-oob/) strategy.
+
+```html
+<div {% oob "dropdown" %} class="dropdown">
+  ...
+</div>
+```
+
+- `{% on <EventName: str> <EventHandler: str> **kwargs %}` binds the event handler using [hx-trigger](https://htmx.org/attributes/hx-trigger/) to an event handler in the component with certain explicit parameters. Implicit parameters are passed from anything that has a name attribute defined inside the component.
+
+```html
+<button {% on "click" "save" %}>
+  ...
+</button>
+```
+
+- `{% class <ClassName: str>: <BooleanExpr: bool>[, ...] %}` used inside of any html tag to set the class attribute, activating certain classes when corresponding boolean expression is `True`.
+
+
+```html
+<button {% class "btn": True, "btn-primary": is_primary %}>
+  ...
+</button>
+```

@@ -148,10 +148,11 @@ def hx_tag(context: Context):
 
 
 @register.simple_tag(takes_context=True)
-def oob(context: Context):
+def oob(context: Context, suffix: str):
     oob = context.get("hx_oob")
     context["hx_oob"] = False
-    return format_html_attrs({"hx-swap-oob": "true" if oob else None})
+    id = "-".join(filter(None, (context.get("id"), suffix)))
+    return format_html_attrs({"id": id, "hx-swap-oob": "true" if oob else None})
 
 
 @register.simple_tag(takes_context=True)
