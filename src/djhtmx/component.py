@@ -126,7 +126,7 @@ class BuildAndRender:
 
     @classmethod
     def before(cls, target_: str, component_: type[PydanticComponent], **state):
-        return cls(component=component_, state=state, oob=f"beforeend: {target_}")
+        return cls(component=component_, state=state, oob=f"beforebegin: {target_}")
 
     @classmethod
     def update(cls, component: type[PydanticComponent], **state):
