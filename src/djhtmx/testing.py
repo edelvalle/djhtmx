@@ -25,7 +25,7 @@ class Htmx:
         self.client = client
 
     def navigate_to(self, url: str, *args, **kwargs):
-        response = self.client.get(url, *args, **kwargs)
+        response = self.client.get(url, follow=True, *args, **kwargs)
         assert 200 <= response.status_code < 300
         self.path = response.request["PATH_INFO"]
         self.query_string = response.request["QUERY_STRING"]
@@ -42,7 +42,7 @@ class Htmx:
         session_id = signer.unsign(session_id)
 
         self.repo = Repository(
-            user=getattr(response.request, "user", AnonymousUser()),
+            user=response.context.get("user") or AnonymousUser(),
             session=Session(session_id),
             params=get_params(self.query_string),
         )
