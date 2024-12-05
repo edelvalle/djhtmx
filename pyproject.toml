@@ -51,6 +51,9 @@ dev-dependencies = [
     "ipdb~=0.13.13",
     "django-extensions~=3.2.3",
     "uvicorn[standard]>=0.30.6",
+    "lxml>=5.3.0",
+    "cssselect>=1.2.0",
+    "pygments>=2.18.0",
 ]
 
 

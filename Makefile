@@ -70,6 +70,9 @@ run: install
 	@cd src/tests; $(RUN) uvicorn --reload --reload-include="*.html" --reload-dir=../ fision.asgi:application
 .PHONY: run
 
+test: install
+	@cd src/tests; $(RUN) python manage.py test
+
 
 makemigrations:
 	@$(RUN) python src/tests/manage.py makemigrations
