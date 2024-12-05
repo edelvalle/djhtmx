@@ -296,7 +296,7 @@ class Repository:
                 yield command
 
             case Emit(event):
-                for component in self.get_components_by_names(LISTENERS[type(event)]):
+                for component in self.get_components_by_names(*LISTENERS[type(event)]):
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     emited_commands = component._handle_event(event)  # type: ignore
                     yield from self._process_emited_commands(
@@ -414,7 +414,7 @@ class Repository:
         }
         return REGISTRY[component_name](**kwargs)
 
-    def get_components_by_names(self, names: t.Iterable[str]) -> t.Iterable[PydanticComponent]:
+    def get_components_by_names(self, *names: str) -> t.Iterable[PydanticComponent]:
         # go over awaken components
         for name in names:
             for state in self.session.get_all_states():
