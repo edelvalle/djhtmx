@@ -139,7 +139,13 @@ class QueryPatcher:
         # different.
         serialized_value = self.adapter.dump_python(value, mode="json")
         try:
-            previous_value = self.adapter.validate_python(params.get(self.param_name))
+            # We need to validate and dump back to get the exact JSON-friendly
+            # type representation.  Otherwise dates, enums, and other types
+            # won't match the serialized value.
+            previous_value = self.adapter.dump_python(
+                self.adapter.validate_python(params.get(self.param_name)),
+                mode="json",
+            )
         except ValueError:
             previous_value = self.default_value
         if serialized_value == previous_value:
