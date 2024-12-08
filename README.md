@@ -663,3 +663,85 @@ This will trigger that event in the front-end when the request arrives allowing 
   ...
 </button>
 ```
+
+## Testing
+
+This library provides the class `djhtmx.testing.Htmx` which implements a very basic a dumb runtime for testing components. How to use:
+
+
+```
+from django.test import Client, TestCase
+from djhtmx.testing import Htmx
+
+from .models import Item
+
+class TestNormalRendering(TestCase):
+    def setUp(self):
+        Item.objects.create(text="First task")
+        Item.objects.create(text="Second task")
+        self.htmx = Htmx(Client())
+
+    def test_todo_app(self):
+        self.htmx.navigate_to("/todo")
+
+        [a, b] = self.htmx.select('[hx-name="TodoItem"] label')
+        self.assertEqual(a.text_content(), "First task")
+        self.assertEqual(b.text_content(), "Second task")
+
+        [count] = self.htmx.select(".todo-count")
+        self.assertEqual(count.text_content(), "2 items left")
+
+        # Add new item
+        self.htmx.type("input.new-todo", "3rd task")
+        self.htmx.trigger("input.new-todo")
+
+        [count] = self.htmx.select(".todo-count")
+        self.assertEqual(count.text_content(), "3 items left")
+
+        [a, b, c] = self.htmx.select('[hx-name="TodoItem"] label')
+        self.assertEqual(a.text_content(), "First task")
+        self.assertEqual(b.text_content(), "Second task")
+        self.assertEqual(c.text_content(), "3rd task")
+```
+
+### API
+
+`Htmx(client: Client)`: pass a Django test client, that can be authenticated if that's required.
+
+`htmx.navigate_to(url, *args, **kwargs)`: This is used to navigate to some url. It is a wrapper of `Client.get` that will retrieve the page and parse the HTML into `htmx.dom: lxml.html.HtmlElement` and create a component repository in `htmx.repo`.
+
+#### Look-ups
+
+`htmx.select(css_selector: str) -> list[lxml.html.HtmlElement]`: Pass some CSS selector here to retrieve nodes from the DOM, so you can modify them or perform assertions over them.
+
+`htmx.find_by_text(text: str) -> lxml.html.HtmlElement`: Returns the first element that contains certain text.
+
+`htmx.get_component_by_type(component_type: type[TPydanticComponent]) -> TPydanticComponent`: Retrieves the only instance rendered of that component type in the current page. If there is more than one instance this fails.
+
+`htmx.get_components_by_type(component_type: type[TPydanticComponent]) -> list[TPydanticComponent]`: Retrieves all instances of this component type in the current page.
+
+`htmx.get_component_by_id(component_id: str) -> TPydanticComponent`: Retrieves a component by its id from the current page.
+
+#### Interactions
+
+`htmx.type(selector: str | html.HtmlElement, text: str, clear=False)`: This simulates typing in an input or text area. If `clear=True` it clears it replaces the current text in it.
+
+`htmx.trigger(selector: str | html.HtmlElement)`: This triggers whatever event is bound in the selected element and returns after all side effects had been processed.
+
+```python
+self.htmx.type("input.new-todo", "3rd task")
+self.htmx.trigger("input.new-todo")
+```
+
+`htmx.send(method: Callable[P, Any], *args: P.args, **kwargs: P.kwargs)`: This sends the runtime to execute that a bound method of a PydanticComponent and returns after all side effects had been processed. Use as in:
+
+```python
+todo_list = htmx.get_component_by_type(TodoList)
+htmx.send(todo_list.new_item, text="New todo item")
+```
+
+`htmx.dispatch_event(self, component_id: str, event_handler: str, kwargs: dict[str, Any])`: Similar to `htmx.send`, but you don't need the instance, you just need to know its id.
+
+```python
+htmx.dispatch_event("#todo-list", "new_item", {"text": "New todo item"})
+```
