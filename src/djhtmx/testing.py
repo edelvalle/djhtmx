@@ -1,6 +1,6 @@
 from collections import defaultdict
 from functools import reduce
-from typing import Any, Callable, Iterable, ParamSpec, TypeVar, cast
+from typing import Any, Callable, Iterable, ParamSpec, TypeVar
 from urllib.parse import urlparse
 
 from django.contrib.auth.models import AnonymousUser
@@ -30,7 +30,7 @@ class Htmx:
         self.path = response.request["PATH_INFO"]
         self.query_string = response.request["QUERY_STRING"]
 
-        self.dom = cast(html.HtmlElement, html.fromstring(response.content))
+        self.dom = html.fromstring(response.content)
         session_id = reduce(
             lambda session, element: (
                 session if session else json.loads(element.attrib["hx-headers"]).get("HX-Session")
@@ -148,11 +148,12 @@ class Htmx:
         for command in commands:
             match command:
                 case SendHtml(content):
-                    incoming = cast(html.HtmlElement, html.fromstring(content))
+                    incoming = html.fromstring(content)
                     oob: str = incoming.attrib["hx-swap-oob"]
                     if oob == "true":
                         target = self.dom.get_element_by_id(incoming.attrib["id"])
-                        target.getparent().replace(target, incoming)
+                        if parent := target.getparent():
+                            parent.replace(target, incoming)
                     elif oob.startswith("beforeend: "):
                         target_selector = oob.removeprefix("beforeend: ")
                         [target] = self.dom.cssselect(target_selector)
@@ -174,7 +175,8 @@ class Htmx:
 
                 case Destroy(component_id):
                     target = self.dom.get_element_by_id(component_id)
-                    target.getparent().remove(target)
+                    if parent := target.getparent():
+                        parent.remove(target)
 
                 case Redirect(url) | Open(url):
                     navigate_to_url = url
