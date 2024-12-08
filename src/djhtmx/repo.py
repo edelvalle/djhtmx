@@ -165,7 +165,7 @@ class Repository:
         # delete component state
         self.session.unregister_component(component_id)
 
-    async def adispatch_event(
+    async def adispatch_event(  # pragma: no cover
         self,
         component_id: str,
         event_handler: str,

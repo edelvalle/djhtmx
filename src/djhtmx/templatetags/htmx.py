@@ -97,7 +97,7 @@ def htmx(
             component,
             lazy=lazy if isinstance(lazy, bool) else False,
         )
-    else:
+    else:  # pragma: no cover
         # Legacy Component
         id = state.pop("id", None) or generate_id()
         component = Component._build(_name, repo, id, state)
@@ -202,7 +202,7 @@ def on(
             assert (
                 _event_handler in component._event_handler_params
             ), f"{type(component).__name__}.{_event_handler} event handler not found"
-        else:
+        else:  # pragma: no cover
             assert callable(
                 getattr(component, _event_handler, None)
             ), f"{type(component).__name__}.{_event_handler} event handler not found"

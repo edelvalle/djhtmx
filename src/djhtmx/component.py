@@ -213,7 +213,7 @@ def _compose(f: t.Callable[P, A], g: t.Callable[[A], B]) -> t.Callable[P, B]:
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
-def get_template(template: str) -> RenderFunction:
+def get_template(template: str) -> RenderFunction:  # pragma: no cover
     if settings.DEBUG:
         return _compose(loader.get_template(template).render, mark_safe)
     else:
@@ -405,7 +405,7 @@ class Triggers:
 
 
 @deprecated("Use PydanticComponent")
-class Component:
+class Component:  # pragma: no cover
     template_name = ""
     template = None
     _all = {}

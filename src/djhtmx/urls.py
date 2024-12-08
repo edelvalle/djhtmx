@@ -83,7 +83,7 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
         return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
 
 
-def legacy_endpoint(
+def legacy_endpoint(  # pragma: no cover
     request: HttpRequest, component_name: str, component_id: str, event_handler: str
 ):
     with sentry_request_transaction(request, component_name, event_handler):

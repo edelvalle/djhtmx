@@ -1,5 +1,7 @@
 import contextlib
 
+# pragma: no cover
+
 try:
     from sentry_sdk import Hub, configure_scope  # pyright: ignore[reportMissingImports]
 
