@@ -54,6 +54,8 @@ dev-dependencies = [
     "lxml>=5.3.0",
     "cssselect>=1.2.0",
     "pygments>=2.18.0",
+    "coverage[toml]>=7.6.9",
+    "types-lxml>=2024.11.8",
 ]
 
 
@@ -107,3 +109,35 @@ indent = 2
 profile="django"
 blank_line_after_tag="load,extends,endblock"
 close_void_tags=true
+
+[tool.coverage.run]
+branch = false
+
+[tool.coverage.report]
+skip_covered = false
+show_missing = true
+exclude_also = [
+  "pragma: no cover",
+  "case _ as unreachable:",
+  "if .*TYPE_CHECKING:",
+  "assert False",
+  # "def __repr__",
+  # "def __hash__",
+  # "def __str__",
+  # "raise AssertionError",
+  # "raise NotImplementedError",
+  # "return NotImplemented",
+  # "if __name__ == .__main__.:",
+  # "@(abc\\.)?abstractmethod",
+  # "class .*\\bProtocol\\):",
+  # "if ((t|typing)\\.)?TYPE_CHECKING:",
+  # "@((t|typing)\\.)?overload",
+  # "((t|typing)\\.)?assert_never",
+]
+
+omit = [
+    "**/djhtmx/tracing.py",
+    "**/djhtmx/consumer.py",
+    "fision/*",
+    "manage.py",
+]

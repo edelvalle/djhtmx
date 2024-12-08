@@ -70,8 +70,12 @@ run: install
 	@cd src/tests; $(RUN) uvicorn --reload --reload-include="*.html" --reload-dir=../ fision.asgi:application
 .PHONY: run
 
-test: install
-	@cd src/tests; $(RUN) python manage.py test
+test:
+	@cd src/tests; $(RUN) coverage run --rcfile=../../pyproject.toml -m manage test
+.PHONY: test
+
+coverage-html: test
+	@cd src/tests; $(RUN) coverage html --rcfile=../../pyproject.toml
 
 
 makemigrations:
