@@ -10,7 +10,6 @@ LOGIN_URL = settings.LOGIN_URL
 
 SCRIPT_URLS = [
     f"htmx/{VERSION}/htmx{'' if DEBUG else '.min'}.js",
-    f"htmx/{VERSION}/ext/ws.js",
     "htmx/django.js",
 ]
 
