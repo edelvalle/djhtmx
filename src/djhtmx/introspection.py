@@ -40,7 +40,7 @@ def Model(model: type[models.Model]):
         ),
         PlainSerializer(
             func=lambda v: v.pk,
-            return_type=str if (pk := model().pk) is None else type(pk),
+            return_type=guess_pk_type(model),
         ),
     ]
 
@@ -56,7 +56,7 @@ def QuerySet(qs: type[models.QuerySet]):
                 if v._result_cache
                 else list(v.values_list("pk", flat=True))
             ),
-            return_type=str if (pk := model().pk) is None else type(pk),
+            return_type=guess_pk_type(model),
         ),
     ]
 
@@ -86,6 +86,16 @@ def annotate_model(annotation):
                 return type_[*(annotate_model(p) for p in params)]  # type: ignore
     else:
         return annotation
+
+
+def guess_pk_type(model: type[models.Model]):
+    match model._meta.pk:
+        case models.UUIDField():
+            return UUID
+        case models.IntegerField():
+            return int
+        case _:
+            return str
 
 
 def isinstance_safe(o, types):
