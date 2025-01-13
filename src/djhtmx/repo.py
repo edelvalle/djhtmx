@@ -503,7 +503,7 @@ class Session:
     def get_all_states(self) -> t.Iterable[dict[str, t.Any]]:
         # is the cache fully populated?
         if self.get_all_states_was_called:
-            yield from self.cache.values()
+            yield from list(self.cache.values())
         else:
             for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
                 state = self.cache[str(component_id)] = json.loads(state)
