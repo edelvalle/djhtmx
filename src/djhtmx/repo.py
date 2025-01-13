@@ -4,7 +4,6 @@ import logging
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as Field
-from itertools import chain
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.signing import Signer
@@ -461,15 +460,25 @@ class Repository:
 class Session:
     id: str
     cache: dict[str, dict[str, t.Any] | None] = Field(default_factory=dict)
+    subscriptions: defaultdict[str, set[str]] = Field(default_factory=lambda: defaultdict(set))
+
+    def store(self, component: PydanticComponent):
+        model_dump = component.model_dump()
+        if self.cache.get(component.id) != model_dump:
+            self.cache[component.id] = model_dump
+            with conn.pipeline() as pipe:
+                pipe.hset(f"{self.id}:states", component.id, component.model_dump_json())
+                for signal in component._get_all_subscriptions():
+                    pipe.sadd(f"{self.id}:subs", f"{signal}:{component.id}")
+                pipe.execute()
 
     def unregister_component(self, component_id: str):
-        with conn.pipeline() as pipe:
-            # delete state
-            pipe.hdel(f"{self.id}:states", component_id)
-            # delete from subscriptions
-            for key in conn.keys(f"{self.id}:subs:*"):  # type: ignore
-                pipe.srem(key, component_id)
-            pipe.execute()
+        conn.hdel(f"{self.id}:states", component_id)
+        _, keys = conn.sscan(f"{self.id}:subs")  # type: ignore
+        component_id_suffix = f":{component_id}".encode()
+        to_remove = [key for key in keys if key.endswith(component_id_suffix)]
+        if to_remove:
+            conn.srem(f"{self.id}:subs", *to_remove)
 
     def get_state(self, component_id: str) -> dict[str, t.Any] | None:
         if (state := self.cache.get(component_id, Unset)) is not Unset:
@@ -482,30 +491,22 @@ class Session:
             return None
 
     def get_component_ids_subscribed_to(self, signals: set[str]) -> set[str]:
-        with conn.pipeline() as pipe:
-            for signal in signals:
-                pipe.sscan(f"{self.id}:subs:{signal}")
-            return set(
-                chain.from_iterable((k.decode() for k in keys) for (_, keys) in pipe.execute())
-            )
+        _, keys = conn.sscan(f"{self.id}:subs")  # type: ignore
+        signals_bytes = {signal.encode() for signal in signals}
+        return set(
+            signal_component_id[1].decode()
+            for key in keys
+            if (signal_component_id := key.rsplit(b":", 1))
+            and signal_component_id[0] in signals_bytes
+        )
 
     def get_all_states(self) -> t.Iterable[dict[str, t.Any]]:
         for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
             state = self.cache[str(component_id)] = json.loads(state)
             yield state
 
-    def store(self, component: PydanticComponent):
-        model_dump = component.model_dump()
-        if self.cache.get(component.id) != model_dump:
-            self.cache[component.id] = model_dump
-            with conn.pipeline() as pipe:
-                pipe.hset(f"{self.id}:states", component.id, component.model_dump_json())
-                for signal in component._get_all_subscriptions():
-                    pipe.sadd(f"{self.id}:subs:{signal}", component.id)
-                pipe.execute()
-
     def set_ttl(self, ttl: int = SESSION_TTL):
         with conn.pipeline() as pipe:
-            for key in conn.keys(f"{self.id}:*"):  # type: ignore
-                pipe.expire(key, ttl)
+            pipe.expire(f"{self.id}:status", ttl)
+            pipe.expire(f"{self.id}:subs", ttl)
             pipe.execute()
