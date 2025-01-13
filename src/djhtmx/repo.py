@@ -36,7 +36,7 @@ from .component import (
     SkipRender,
     _get_query_patchers,
 )
-from .introspection import Unset, filter_parameters, get_related_fields
+from .introspection import filter_parameters, get_related_fields
 from .settings import LOGIN_URL, SESSION_TTL, conn
 from .utils import db, get_model_subscriptions, get_params
 
@@ -459,8 +459,8 @@ class Repository:
 @dataclass(slots=True)
 class Session:
     id: str
-    cache: dict[str, dict[str, t.Any] | None] = Field(default_factory=dict)
-    subscriptions: defaultdict[str, set[str]] = Field(default_factory=lambda: defaultdict(set))
+    cache: dict[str, dict[str, t.Any]] = Field(default_factory=dict)
+    get_all_states_was_called: bool = False
 
     def store(self, component: PydanticComponent):
         model_dump = component.model_dump()
@@ -481,7 +481,7 @@ class Session:
             conn.srem(f"{self.id}:subs", *to_remove)
 
     def get_state(self, component_id: str) -> dict[str, t.Any] | None:
-        if (state := self.cache.get(component_id, Unset)) is not Unset:
+        if state := self.cache.get(component_id):
             return state  # type: ignore
         elif state := conn.hget(f"{self.id}:states", component_id):
             state = json.loads(state)  # type: ignore
@@ -501,9 +501,14 @@ class Session:
         )
 
     def get_all_states(self) -> t.Iterable[dict[str, t.Any]]:
-        for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
-            state = self.cache[str(component_id)] = json.loads(state)
-            yield state
+        # is the cache fully populated?
+        if self.get_all_states_was_called:
+            yield from self.cache.values()
+        else:
+            for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
+                state = self.cache[str(component_id)] = json.loads(state)
+                yield state
+            self.get_all_states_was_called = True
 
     def set_ttl(self, ttl: int = SESSION_TTL):
         with conn.pipeline() as pipe:
