@@ -468,8 +468,10 @@ class Session:
             self.cache[component.id] = model_dump
             with conn.pipeline() as pipe:
                 pipe.hset(f"{self.id}:states", component.id, component.model_dump_json())
-                for signal in component._get_all_subscriptions():
-                    pipe.sadd(f"{self.id}:subs", f"{signal}:{component.id}")
+                pipe.sadd(
+                    f"{self.id}:subs",
+                    *(f"{signal}:{component.id}" for signal in component._get_all_subscriptions()),
+                )
                 pipe.execute()
 
     def unregister_component(self, component_id: str):
