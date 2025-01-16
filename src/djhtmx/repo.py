@@ -473,10 +473,10 @@ class Session:
                 # updated, the subscriptions won't be updated.
                 #
                 # Q: Is this correct?
-                pipe.sadd(
-                    f"{self.id}:subs",
-                    *(f"{signal}:{component.id}" for signal in component._get_all_subscriptions()),
-                )
+                if subs := tuple(
+                    f"{signal}:{component.id}" for signal in component._get_all_subscriptions()
+                ):
+                    pipe.sadd(f"{self.id}:subs", *subs)
                 pipe.execute()
 
     def unregister_component(self, component_id: str):
