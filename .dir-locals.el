@@ -1,0 +1,16 @@
+;;; Directory Local Variables            -*- no-byte-compile: t -*-
+;;; For more information see (info "(emacs) Directory Variables")
+
+((nil . ((projectile-project-compilation-cmd . "source .envrc; make format")))
+  (css-mode . ((indent-tabs-mode . nil)))
+  (jinja2-mode . ((indent-tabs-mode . nil)))
+  (js-mode . ((js-indent-level . 4)
+               (tab-width . 4)))
+  (js2-mode . ((js-indent-level . 4)
+                (tab-width . 4)))
+  (json-mode . ((js-indent-level . 4)
+                 (tab-width . 4)))
+  (mhtml-mode . ((indent-tabs-mode . nil)))
+  (python-mode . ((projectile-project-compilation-cmd . "source .envrc; make format")
+                   (fill-column . 100)))
+  ("*.html" . ((mode . jinja2-mode))))

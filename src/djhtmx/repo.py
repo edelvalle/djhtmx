@@ -36,7 +36,7 @@ from .component import (
     SkipRender,
     _get_query_patchers,
 )
-from .introspection import filter_parameters, get_related_fields
+from .introspection import Unset, filter_parameters, get_related_fields
 from .settings import LOGIN_URL, SESSION_TTL, conn
 from .utils import db, get_model_subscriptions, get_params
 
@@ -488,7 +488,12 @@ class Session:
             conn.srem(f"{self.id}:subs", *to_remove)
 
     def get_state(self, component_id: str) -> dict[str, t.Any] | None:
-        if state := self.cache.get(component_id):
+        # Some components might have an empty state (i.e the empty dict).  Unset is an impossible
+        # value in the cache because it has no JSON representation.
+        #
+        # Even though we think this kind of components should not exist, we cannot stop programmers
+        # from creating them.
+        if (state := self.cache.get(component_id, Unset)) is not Unset:
             return state  # type: ignore
         elif state := conn.hget(f"{self.id}:states", component_id):
             state = json.loads(state)  # type: ignore
