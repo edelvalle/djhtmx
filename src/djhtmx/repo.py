@@ -468,6 +468,11 @@ class Session:
             self.cache[component.id] = model_dump
             with conn.pipeline() as pipe:
                 pipe.hset(f"{self.id}:states", component.id, component.model_dump_json())
+                # NOTE: We're tying the update of the subscriptions to the
+                # state of the component.  If the component's state is not
+                # updated, the subscriptions won't be updated.
+                #
+                # Q: Is this correct?
                 pipe.sadd(
                     f"{self.id}:subs",
                     *(f"{signal}:{component.id}" for signal in component._get_all_subscriptions()),
