@@ -532,7 +532,7 @@ class TodoListComponent(PydanticComponent):
     def create(self, name: str):
         item = self.todo_list.items.create(name=name)
         yield BuildAndRender.prepend(
-            f"{self.id} .list",
+            f"#{self.id} .list",
             ItemComponent,
             id=f"item-{item.id}",
             item=item,
@@ -669,7 +669,7 @@ This will trigger that event in the front-end when the request arrives allowing 
 This library provides the class `djhtmx.testing.Htmx` which implements a very basic a dumb runtime for testing components. How to use:
 
 
-```
+```python
 from django.test import Client, TestCase
 from djhtmx.testing import Htmx
 
