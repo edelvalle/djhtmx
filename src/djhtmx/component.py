@@ -303,6 +303,7 @@ class PydanticComponent(BaseModel):
                     validate_call(config={"arbitrary_types_allowed": True})(attr),
                 )
 
+        cls.__check_consistent_event_handler(strict=settings.STRICT_EVENT_HANDLER_CONSISTENCY_CHECK)
         if public:
             if event_handler := getattr(cls, "_handle_event", None):
                 for event_type in get_event_handler_event_types(event_handler):
@@ -329,6 +330,42 @@ class PydanticComponent(BaseModel):
                 and callable(attr := getattr(cls, attr_name))
             ):
                 yield attr_name, attr
+
+    @classmethod
+    def __check_consistent_event_handler(cls, *, strict: bool = False):
+        """Check that '_handle_event' is consistent.
+
+        If the class inherits from one that super-class, and it gets
+        `_handle_event` from several of those branches, it must override it to
+        resolve the ambiguity.
+
+        Raise an error if there is no self-defined method.
+
+        """
+        parents = {
+            method
+            for base in cls.__bases__
+            if (method := getattr(base, "_handle_event", None)) is not None
+        }
+        if len(parents) > 1:
+            resolved = getattr(cls, "_handle_event")
+            if resolved in parents:
+                bases = ", ".join(
+                    base.__name__
+                    for base in cls.__bases__
+                    if (method := getattr(base, "_handle_event", None)) is not None
+                )
+                if strict:
+                    raise TypeError(
+                        f"Component {cls.__name__} doesn't override "
+                        f"_handle_event to reconcile the base classes ({bases})."
+                    )
+                else:
+                    logger.error(
+                        "Component %s doesn't override _handle_event to reconcile the base classes (%s)",
+                        cls.__name__,
+                        bases,
+                    )
 
     # State
     id: t.Annotated[str, Field(default_factory=generate_id)]
