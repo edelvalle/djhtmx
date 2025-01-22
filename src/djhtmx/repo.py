@@ -36,7 +36,7 @@ from .component import (
     SkipRender,
     _get_query_patchers,
 )
-from .introspection import Unset, filter_parameters, get_related_fields
+from .introspection import filter_parameters, get_related_fields
 from .settings import LOGIN_URL, SESSION_TTL, conn
 from .utils import db, get_model_subscriptions, get_params
 
@@ -472,9 +472,15 @@ class Session:
     unregistered: set[str] = Field(default_factory=set)
 
     def store(self, component: PydanticComponent):
-        self.states[component.id] = component.model_dump_json()
-        self.subscriptions[component.id] = component._get_all_subscriptions()
-        self.is_dirty = True
+        state = component.model_dump_json()
+        if self.states.get(component.id) != state:
+            self.states[component.id] = state
+            self.is_dirty = True
+
+        subscriptions = component._get_all_subscriptions()
+        if self.subscriptions[component.id] != subscriptions:
+            self.subscriptions[component.id] = subscriptions
+            self.is_dirty = True
 
     def unregister_component(self, component_id: str):
         self.states.pop(component_id, None)
