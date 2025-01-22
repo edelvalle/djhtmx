@@ -17,6 +17,7 @@ from django.utils.safestring import SafeString, mark_safe
 from pydantic import ValidationError
 from uuid6 import uuid7
 
+
 from . import json
 from .command_queue import CommandQueue
 from .component import (
@@ -268,7 +269,6 @@ class Repository:
         commands_to_append: list[Command] = []
         match command:
             case Execute(component_id, event_handler, event_data):
-                # handle event
                 match self.get_component_by_id(component_id):
                     case Destroy() as command:
                         yield command
@@ -304,8 +304,8 @@ class Repository:
                     )
 
             case Signal(signals):
-                for compoennt_or_destroy in self.get_components_subscribed_to(signals):
-                    match compoennt_or_destroy:
+                for component_or_destroy in self.get_components_subscribed_to(signals):
+                    match component_or_destroy:
                         case Destroy() as command:
                             yield command
                         case component:
@@ -424,9 +424,9 @@ class Repository:
     def render_html(
         self,
         component: PydanticComponent,
-        oob: str = None,
-        template: str = None,
-        lazy: bool = None,
+        oob: str | None = None,
+        template: str | None = None,
+        lazy: bool | None = None,
     ) -> SafeString:
         lazy = component.lazy if lazy is None else lazy
         self.session.store(component)
