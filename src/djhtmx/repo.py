@@ -315,7 +315,7 @@ class Repository:
                 yield command
 
         commands.extend(commands_to_append)
-        self.session.set_ttl()
+        self.session.flush()
 
     def _process_emited_commands(
         self,
@@ -459,71 +459,73 @@ class Repository:
 @dataclass(slots=True)
 class Session:
     id: str
-    cache: dict[str, dict[str, t.Any]] = Field(default_factory=dict)
-    get_all_states_was_called: bool = False
+
+    read: bool = False
+    is_dirty: bool = False
+
+    # dict[component_id -> state]
+    states: dict[str, str] = Field(default_factory=dict)
+
+    # dict[component_id -> set[signals]]
+    subscriptions: defaultdict[str, set[str]] = Field(default_factory=lambda: defaultdict(set))
+
+    # set[component_id]
+    unregistered: set[str] = Field(default_factory=set)
 
     def store(self, component: PydanticComponent):
-        model_dump = component.model_dump()
-        if self.cache.get(component.id) != model_dump:
-            self.cache[component.id] = model_dump
-            with conn.pipeline() as pipe:
-                pipe.hset(f"{self.id}:states", component.id, component.model_dump_json())
-                # NOTE: We're tying the update of the subscriptions to the
-                # state of the component.  If the component's state is not
-                # updated, the subscriptions won't be updated.
-                #
-                # Q: Is this correct?
-                if subs := tuple(
-                    f"{signal}:{component.id}" for signal in component._get_all_subscriptions()
-                ):
-                    pipe.sadd(f"{self.id}:subs", *subs)
-                pipe.execute()
+        self.states[component.id] = component.model_dump_json()
+        self.subscriptions[component.id] = component._get_all_subscriptions()
+        self.is_dirty = True
 
     def unregister_component(self, component_id: str):
-        conn.hdel(f"{self.id}:states", component_id)
-        _, keys = conn.sscan(f"{self.id}:subs")  # type: ignore
-        component_id_suffix = f":{component_id}".encode()
-        to_remove = [key for key in keys if key.endswith(component_id_suffix)]
-        if to_remove:
-            conn.srem(f"{self.id}:subs", *to_remove)
+        self.states.pop(component_id, None)
+        self.subscriptions.pop(component_id, None)
+        self.unregistered.add(component_id)
+        self.is_dirty = True
 
     def get_state(self, component_id: str) -> dict[str, t.Any] | None:
-        # Some components might have an empty state (i.e the empty dict).  Unset is an impossible
-        # value in the cache because it has no JSON representation.
-        #
-        # Even though we think this kind of components should not exist, we cannot stop programmers
-        # from creating them.
-        if (state := self.cache.get(component_id, Unset)) is not Unset:
-            return state  # type: ignore
-        elif state := conn.hget(f"{self.id}:states", component_id):
-            state = json.loads(state)  # type: ignore
-            self.cache[component_id] = state
-            return state
-        else:
-            return None
+        self._ensure_read()
+        if state := self.states.get(component_id):
+            return json.loads(state)
 
-    def get_component_ids_subscribed_to(self, signals: set[str]) -> set[str]:
-        _, keys = conn.sscan(f"{self.id}:subs")  # type: ignore
-        signals_bytes = {signal.encode() for signal in signals}
-        return set(
-            signal_component_id[1].decode()
-            for key in keys
-            if (signal_component_id := key.rsplit(b":", 1))
-            and signal_component_id[0] in signals_bytes
-        )
+    def get_component_ids_subscribed_to(self, signals: set[str]) -> t.Iterable[str]:
+        self._ensure_read()
+        for component_id, subscribed_to in self.subscriptions.items():
+            if signals.intersection(subscribed_to):
+                yield component_id
 
     def get_all_states(self) -> t.Iterable[dict[str, t.Any]]:
-        # is the cache fully populated?
-        if self.get_all_states_was_called:
-            yield from list(self.cache.values())
-        else:
-            for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
-                state = self.cache[str(component_id)] = json.loads(state)
-                yield state
-            self.get_all_states_was_called = True
+        self._ensure_read()
+        return [json.loads(state) for state in self.states.values()]
 
-    def set_ttl(self, ttl: int = SESSION_TTL):
-        with conn.pipeline() as pipe:
-            pipe.expire(f"{self.id}:status", ttl)
-            pipe.expire(f"{self.id}:subs", ttl)
-            pipe.execute()
+    def _ensure_read(self):
+        if not self.read:
+            subscriptions_were_read = False
+            for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
+                component_id = component_id.decode()
+                if component_id == "__subs__":
+                    # dict[component_id -> list[signals]]
+                    for component_id, signals in json.loads(state).items():
+                        self.subscriptions[component_id] = set(signals)
+                    subscriptions_were_read = True
+                else:
+                    self.states[component_id] = state.decode()
+
+            # TODO: delete later, backwards compatible method
+            if not subscriptions_were_read:
+                _, keys = conn.sscan(f"{self.id}:subs")  # type: ignore
+                for key in keys:
+                    signal, component_id = key.decode().rsplit(":", 1)
+                    self.subscriptions[component_id].add(signal)
+            self.read = True
+
+    def flush(self, ttl: int = SESSION_TTL):
+        if self.is_dirty:
+            if self.unregistered:
+                conn.hdel(f"{self.id}:states", *self.unregistered)
+                self.unregistered.clear()
+            if self.states:
+                conn.hset(f"{self.id}:states", mapping=self.states)
+            conn.hset(f"{self.id}:states", "__subs__", json.dumps(self.subscriptions))
+            conn.expire(f"{self.id}:status", ttl)
+            self.is_dirty = False

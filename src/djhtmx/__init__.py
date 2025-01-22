@@ -11,6 +11,6 @@ class Middleware:
         """Ensure the Repository gets deallocated"""
         response = self.get_response(request)
         if repo := getattr(request, "htmx_repo", None):
-            repo.session.set_ttl()
+            repo.session.flush()
             delattr(request, "htmx_repo")
         return response
