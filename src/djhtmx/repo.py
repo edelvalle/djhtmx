@@ -16,7 +16,6 @@ from django.utils.safestring import SafeString, mark_safe
 from pydantic import ValidationError
 from uuid6 import uuid7
 
-
 from . import json
 from .command_queue import CommandQueue
 from .component import (
@@ -527,5 +526,5 @@ class Session:
             if self.states:
                 conn.hset(f"{self.id}:states", mapping=self.states)
             conn.hset(f"{self.id}:states", "__subs__", json.dumps(self.subscriptions))
-            conn.expire(f"{self.id}:status", ttl)
+            conn.expire(f"{self.id}:states", ttl)
             self.is_dirty = False
