@@ -22,7 +22,12 @@ from pydantic.fields import ModelPrivateAttr
 from typing_extensions import deprecated
 
 from . import json, settings
-from .introspection import annotate_model, get_event_handler_event_types, get_function_parameters
+from .introspection import (
+    Unset,
+    annotate_model,
+    get_event_handler_event_types,
+    get_function_parameters,
+)
 from .query import Query, QueryPatcher
 from .tracing import sentry_span
 from .utils import generate_id
@@ -396,8 +401,8 @@ class PydanticComponent(BaseModel):
         # computed more than once.  It doesn't survive several renders which is good, because it
         # doesn't require invalidation.
         def get_property(cache, attr):
-            result = cache.get(attr, unset)
-            if result is unset:
+            result = cache.get(attr, Unset)
+            if result is Unset:
                 result = getattr(self, attr)
                 cache[attr] = result
             return result
@@ -617,4 +622,3 @@ logger = logging.getLogger(__name__)
 
 
 _ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")
-unset = object()
