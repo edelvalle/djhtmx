@@ -392,10 +392,21 @@ class PydanticComponent(BaseModel):
         return {}
 
     def _get_context(self):
+        # This render-local cache, supports lazy properties but avoids the same property to be
+        # computed more than once.  It doesn't survive several renders which is good, because it
+        # doesn't require invalidation.
+        def get_property(cache, attr):
+            result = cache.get(attr, unset)
+            if result is unset:
+                result = getattr(self, attr)
+                cache[attr] = result
+            return result
+
         with sentry_span(f"{FQN[type(self)]}._get_context"):
+            render_cache = {}
             return {
                 attr: (
-                    partial(getattr, self, attr)  # do lazy evaluation of properties
+                    partial(get_property, render_cache, attr)  # do lazy evaluation of properties
                     if attr in self._properties
                     else getattr(self, attr)
                 )
@@ -606,3 +617,4 @@ logger = logging.getLogger(__name__)
 
 
 _ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")
+unset = object()

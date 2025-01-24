@@ -20,7 +20,7 @@ endif
 # https://github.com/astral-sh/uv/pull/6738
 RUN ?= $(UV_RUN)
 
-REQUIRED_UV_VERSION ?= 0.4.27
+REQUIRED_UV_VERSION ?= 0.5.24
 REQUIRED_RYE_VERSION ?= 0.41.0
 bootstrap-uv:
 	@INSTALLED_UV_VERSION=$$(uv --version 2>/dev/null | awk '{print $$2}' || echo "0.0.0"); \
