@@ -25,3 +25,19 @@ STRICT_EVENT_HANDLER_CONSISTENCY_CHECK = getattr(
     "DJHTMX_STRICT_EVENT_HANDLER_CONSISTENCY_CHECK",
     False,
 )
+
+KEY_SIZE_ERROR_THRESHOLD = getattr(
+    settings,
+    "DJHTMX_KEY_SIZE_ERROR_THRESHOLD",
+    0,
+)
+KEY_SIZE_WARN_THRESHOLD = getattr(
+    settings,
+    "DJHTMX_KEY_SIZE_WARN_THRESHOLD",
+    50 * 1024,  # 50kb
+)
+KEY_SIZE_SAMPLE_PROB = getattr(
+    settings,
+    "DJHTMX_KEY_SIZE_SAMPLE_PROB",
+    0.1,
+)
