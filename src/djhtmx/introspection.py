@@ -33,7 +33,7 @@ def Model(model: type[models.Model]):
         model,
         BeforeValidator(
             lambda value: (
-                value if value is None and isinstance(value, model) else model.objects.get(pk=value)
+                value if value is None or isinstance(value, model) else model.objects.get(pk=value)
             )
         ),
         PlainSerializer(
