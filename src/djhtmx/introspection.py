@@ -32,7 +32,9 @@ def Model(model: type[models.Model]):
     return t.Annotated[
         model,
         BeforeValidator(
-            lambda value: (value if isinstance(value, model) else model.objects.get(pk=value))
+            lambda value: (
+                value if value is None and isinstance(value, model) else model.objects.get(pk=value)
+            )
         ),
         PlainSerializer(
             func=lambda v: v.pk,
