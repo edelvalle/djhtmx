@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as Field
@@ -37,7 +38,14 @@ from .component import (
     _get_query_patchers,
 )
 from .introspection import filter_parameters, get_related_fields
-from .settings import LOGIN_URL, SESSION_TTL, conn
+from .settings import (
+    KEY_SIZE_ERROR_THRESHOLD,
+    KEY_SIZE_SAMPLE_PROB,
+    KEY_SIZE_WARN_THRESHOLD,
+    LOGIN_URL,
+    SESSION_TTL,
+    conn,
+)
 from .utils import db, get_model_subscriptions, get_params
 
 signer = Signer()
@@ -526,11 +534,30 @@ class Session:
 
     def flush(self, ttl: int = SESSION_TTL):
         if self.is_dirty:
+            key = f"{self.id}:states"
             if self.unregistered:
-                conn.hdel(f"{self.id}:states", *self.unregistered)
+                conn.hdel(key, *self.unregistered)
                 self.unregistered.clear()
             if self.states:
-                conn.hset(f"{self.id}:states", mapping=self.states)
-            conn.hset(f"{self.id}:states", "__subs__", json.dumps(self.subscriptions))
-            conn.expire(f"{self.id}:states", ttl)
+                conn.hset(key, mapping=self.states)
+            conn.hset(key, "__subs__", json.dumps(self.subscriptions))
+            conn.expire(key, ttl)
+            # The command MEMORY USAGE is considered slow:
+            # https://redis.io/docs/latest/commands/memory-usage/
+            #
+            # So we perform a trivial sampling with some prob to test the memory usage of the state.
+            probe = random.random() <= KEY_SIZE_SAMPLE_PROB
+            if probe and isinstance(usage := conn.memory_usage(key), int):
+                if KEY_SIZE_ERROR_THRESHOLD and usage > KEY_SIZE_ERROR_THRESHOLD:
+                    logger.error(
+                        "HTMX session's size (%s) exceeded the size threshold %s",
+                        usage,
+                        KEY_SIZE_ERROR_THRESHOLD,
+                    )
+                elif KEY_SIZE_WARN_THRESHOLD and usage > KEY_SIZE_WARN_THRESHOLD:
+                    logger.warning(
+                        "HTMX session's size (%s) exceeded the size threshold %s",
+                        usage,
+                        KEY_SIZE_WARN_THRESHOLD,
+                    )
             self.is_dirty = False
