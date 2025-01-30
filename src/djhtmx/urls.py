@@ -3,6 +3,7 @@ from http import HTTPStatus
 from itertools import chain
 from typing import assert_never
 
+from django.apps import apps
 from django.core.signing import Signer
 from django.http.request import HttpRequest
 from django.http.response import HttpResponse
@@ -102,16 +103,38 @@ def legacy_endpoint(  # pragma: no cover
         return handler(**handler_kwargs) or component.render()
 
 
+APP_CONFIGS = sorted(apps.app_configs.values(), key=lambda app_config: -len(app_config.name))
+
+
+def app_name_of_component(cls: type):
+    cls_module = cls.__module__
+    for app_config in APP_CONFIGS:
+        if cls_module.startswith(app_config.name):
+            return app_config.label
+    return cls_module
+
+
 urlpatterns = list(
     chain(
+        # Routing with app name in path
+        (
+            path(
+                f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
+                partial(endpoint, component_name=component_name),
+                name=f"djhtmx.{component_name}",
+            )
+            for component_name, component in REGISTRY.items()
+        ),
+        # Legacy routing, without app name in path
         (
             path(
                 f"{component_name}/<component_id>/<event_handler>",
                 partial(endpoint, component_name=component_name),
-                name=f"djhtmx.{component_name}",
+                name=f"djhtmx.legacy.{component_name}",
             )
             for component_name in REGISTRY
         ),
+        # Legacy endpoint
         (
             path(
                 f"{component_name}/<component_id>/<event_handler>",
