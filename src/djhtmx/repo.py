@@ -17,6 +17,8 @@ from django.utils.safestring import SafeString, mark_safe
 from pydantic import ValidationError
 from uuid6 import uuid7
 
+from djhtmx.tracing import sentry_span
+
 from . import json
 from .command_queue import CommandQueue
 from .component import (
@@ -405,20 +407,21 @@ class Repository:
     def build(self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True):
         """Build (or update) a component's state."""
 
-        # Retrieve state from storage
-        if retrieve_state and (component_id := state.get("id")):
-            state = (self.session.get_state(component_id) or {}) | state
+        with sentry_span("Repository.build", component_name=component_name):
+            # Retrieve state from storage
+            if retrieve_state and (component_id := state.get("id")):
+                state = (self.session.get_state(component_id) or {}) | state
 
-        # Patch it with whatever is the the GET params if needed
-        for patcher in _get_query_patchers(component_name):
-            state |= patcher.get_update_for_state(self.params)
+            # Patch it with whatever is the the GET params if needed
+            for patcher in _get_query_patchers(component_name):
+                state |= patcher.get_update_for_state(self.params)
 
-        # Inject component name and user
-        kwargs = state | {
-            "hx_name": component_name,
-            "user": None if isinstance(self.user, AnonymousUser) else self.user,
-        }
-        return REGISTRY[component_name](**kwargs)
+            # Inject component name and user
+            kwargs = state | {
+                "hx_name": component_name,
+                "user": None if isinstance(self.user, AnonymousUser) else self.user,
+            }
+            return REGISTRY[component_name](**kwargs)
 
     def get_components_by_names(self, *names: str) -> t.Iterable[PydanticComponent]:
         # go over awaken components
@@ -435,32 +438,39 @@ class Repository:
         lazy: bool | None = None,
     ) -> SafeString:
         lazy = component.lazy if lazy is None else lazy
-        self.session.store(component)
+        with sentry_span(
+            "Repository.render_html",
+            component_name=component.hx_name,
+            oob=str(oob),
+            template=str(template),
+            lazy=str(lazy),
+        ):
+            self.session.store(component)
 
-        context = {
-            "htmx_repo": self,
-            "hx_oob": oob == "true",
-            "this": component,
-        }
+            context = {
+                "htmx_repo": self,
+                "hx_oob": oob == "true",
+                "this": component,
+            }
 
-        if lazy:
-            template = template or component._template_name_lazy
-            context |= {"hx_lazy": True} | component._get_lazy_context()
-        else:
-            context |= component._get_context()
+            if lazy:
+                template = template or component._template_name_lazy
+                context |= {"hx_lazy": True} | component._get_lazy_context()
+            else:
+                context |= component._get_context()
 
-        html = mark_safe(component._get_template(template)(context).strip())
+            html = mark_safe(component._get_template(template)(context).strip())
 
-        # if performing some kind of append, the component has to be wrapped
-        if oob and oob != "true":
-            html = mark_safe(
-                "".join([
-                    format_html('<div hx-swap-oob="{oob}">', oob=oob),
-                    html,
-                    "</div>",
-                ])
-            )
-        return html
+            # if performing some kind of append, the component has to be wrapped
+            if oob and oob != "true":
+                html = mark_safe(
+                    "".join([
+                        format_html('<div hx-swap-oob="{oob}">', oob=oob),
+                        html,
+                        "</div>",
+                    ])
+                )
+            return html
 
 
 @dataclass(slots=True)
