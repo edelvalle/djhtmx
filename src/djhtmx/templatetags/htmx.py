@@ -12,7 +12,7 @@ from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
 
 from .. import json, settings
-from ..component import REGISTRY, PydanticComponent, generate_id
+from ..component import REGISTRY, HtmxComponent, generate_id
 from ..introspection import get_function_parameters
 from ..repo import Repository
 
@@ -110,7 +110,7 @@ def hx_tag(context: Context):
         </div>
         ```
     """
-    component: PydanticComponent = context["this"]
+    component: HtmxComponent = context["this"]
     oob = context.get("hx_oob")
     context["hx_oob"] = False
     attrs = {
@@ -178,7 +178,7 @@ def on(
         _event_handler = _trigger
         _trigger = None
 
-    component: PydanticComponent = context["this"]
+    component: HtmxComponent = context["this"]
 
     if settings.DEBUG:
         assert (
@@ -208,7 +208,7 @@ def format_html_attrs(attrs: dict[str, t.Any]):
     )
 
 
-def event_url(component: PydanticComponent, event_handler: str):
+def event_url(component: HtmxComponent, event_handler: str):
     return reverse(
         f"djhtmx.{type(component).__name__}",
         kwargs={

@@ -5,7 +5,7 @@ import djclick as click
 from xotl.tools.future.itertools import delete_duplicates
 from xotl.tools.objects import get_branch_subclasses as get_final_subclasses
 
-from djhtmx.component import REGISTRY, Component, PydanticComponent
+from djhtmx.component import REGISTRY, HtmxComponent
 
 
 def bold(msg):
@@ -22,9 +22,8 @@ def htmx():
 
 
 @htmx.command("check-missing")  # type: ignore
-@click.option("--new-style-only", is_flag=True, default=False)
 @click.argument("fname", type=click.File())
-def check_missing(fname, new_style_only=False):
+def check_missing(fname):
     r"""Check if there are any missing HTMX components.
 
     Expected usage:
@@ -36,8 +35,6 @@ def check_missing(fname, new_style_only=False):
     """
     names = {n.strip() for n in fname.readlines()}
     known = set(REGISTRY)
-    if not new_style_only:
-        known |= set(Component._all)
     missing = list(names - known)
     if missing:
         missing.sort()
@@ -52,16 +49,9 @@ def check_missing(fname, new_style_only=False):
 @htmx.command("check-shadowing")  # type: ignore
 def check_shadowing():
     "Checks if there are components that might shadow one another."
-    v1 = check_old_components_shadowing()
-    v2 = check_pydantic_components_shadowing()
-    if v1 or v2:
-        sys.exit(1)
-
-
-def check_pydantic_components_shadowing():
     clashes = defaultdict(list)
     for cls in get_final_subclasses(
-        PydanticComponent,  # type: ignore
+        HtmxComponent,  # type: ignore
         without_duplicates=True,
     ):
         name = cls.__name__
@@ -69,42 +59,13 @@ def check_pydantic_components_shadowing():
         if registered is not cls and registered is not None:
             clashes[name].append(cls)
             clashes[name].append(registered)
-        if foreign := Component._all.get(name):
-            clashes[name].append(cls)
-            clashes[name].append(foreign)
 
     if clashes:
         for name, shadows in clashes.items():
             shadows = delete_duplicates(shadows)
             if shadows:
-                click.echo(f"Pydantic Component {bold(name)} might be shadowed by:")
+                click.echo(f"HtmxComponent {bold(name)} might be shadowed by:")
                 for shadow in shadows:
                     click.echo(f"  -  {bold(shadow.__module__)}.{bold(shadow.__name__)}")
 
-    return bool(clashes)
-
-
-def check_old_components_shadowing():
-    clashes = defaultdict(list)
-    for cls in get_final_subclasses(
-        Component,  # type: ignore
-        without_duplicates=True,
-    ):
-        name = getattr(cls, "_name", cls.__name__)
-        registered = Component._all.get(name)
-        if registered is not cls and registered is not None:
-            clashes[name].append(cls)
-            clashes[name].append(registered)
-        if foreign := REGISTRY.get(name):
-            clashes[name].append(cls)
-            clashes[name].append(foreign)
-
-    if clashes:
-        for name, shadows in clashes.items():
-            shadows = delete_duplicates(shadows)
-            if shadows:
-                click.echo(f"Old-style component {bold(name)} might be shadowed by:")
-                for shadow in shadows:
-                    click.echo(f"  -  {bold(shadow.__module__)}.{bold(shadow.__name__)}")
-
-    return bool(clashes)
+        sys.exit(1)

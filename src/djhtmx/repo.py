@@ -31,8 +31,8 @@ from .component import (
     Emit,
     Execute,
     Focus,
+    HtmxComponent,
     Open,
-    PydanticComponent,
     Redirect,
     Render,
     Signal,
@@ -328,7 +328,7 @@ class Repository:
 
     def _process_emited_commands(
         self,
-        component: PydanticComponent,
+        component: HtmxComponent,
         emmited_commands: t.Iterable[Command] | None,
         commands: CommandQueue,
         during_execute: bool,
@@ -363,13 +363,13 @@ class Repository:
 
     def get_components_subscribed_to(
         self, signals: set[str]
-    ) -> t.Iterable[PydanticComponent | Destroy]:
+    ) -> t.Iterable[HtmxComponent | Destroy]:
         return (
             self.get_component_by_id(c_id)
             for c_id in sorted(self.session.get_component_ids_subscribed_to(signals))
         )
 
-    def update_params_from(self, component: PydanticComponent) -> set[str]:
+    def update_params_from(self, component: HtmxComponent) -> set[str]:
         """Updates self.params based on the state of the component
 
         Return the set of signals that should be triggered as the result of
@@ -423,7 +423,7 @@ class Repository:
             }
             return REGISTRY[component_name](**kwargs)
 
-    def get_components_by_names(self, *names: str) -> t.Iterable[PydanticComponent]:
+    def get_components_by_names(self, *names: str) -> t.Iterable[HtmxComponent]:
         # go over awaken components
         for name in names:
             for state in self.session.get_all_states():
@@ -432,7 +432,7 @@ class Repository:
 
     def render_html(
         self,
-        component: PydanticComponent,
+        component: HtmxComponent,
         oob: str | None = None,
         template: str | None = None,
         lazy: bool | None = None,
@@ -489,7 +489,7 @@ class Session:
     # set[component_id]
     unregistered: set[str] = Field(default_factory=set)
 
-    def store(self, component: PydanticComponent):
+    def store(self, component: HtmxComponent):
         state = component.model_dump_json()
         if self.states.get(component.id) != state:
             self.states[component.id] = state

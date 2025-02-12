@@ -11,13 +11,13 @@ from pygments.formatters import TerminalTrueColorFormatter
 from pygments.lexers import HtmlLexer
 
 from . import json
-from .component import Destroy, DispatchDOMEvent, Focus, Open, PydanticComponent, Redirect
+from .component import Destroy, DispatchDOMEvent, Focus, HtmxComponent, Open, Redirect
 from .introspection import parse_request_data
 from .repo import PushURL, Repository, SendHtml, Session, signer
 from .utils import get_params
 
 P = ParamSpec("P")
-TPComponent = TypeVar("TPComponent", bound=PydanticComponent)
+TPComponent = TypeVar("TPComponent", bound=HtmxComponent)
 
 
 class Htmx:
@@ -56,7 +56,7 @@ class Htmx:
 
     def get_component_by_id(self, component_id: str):
         component = self.repo.get_component_by_id(component_id)
-        assert isinstance(component, PydanticComponent)
+        assert isinstance(component, HtmxComponent)
         return component
 
     def type(self, selector: str | html.HtmlElement, text: str, clear=False):

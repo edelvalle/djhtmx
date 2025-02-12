@@ -5,15 +5,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
-from djhtmx.component import (
-    BuildAndRender,
-    Destroy,
-    Emit,
-    Focus,
-    PydanticComponent,
-    Query,
-    SkipRender,
-)
+from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, HtmxComponent, Query, SkipRender
 
 from .models import Item
 
@@ -34,11 +26,11 @@ class FilterChanged:
     query: str
 
 
-class BaseToggleFilter(PydanticComponent, public=False):
+class BaseToggleFilter(HtmxComponent, public=False):
     showing: t.Annotated[Showing, Query("showing"), Field(default=Showing.ALL)]
 
 
-class BaseQueryFilter(PydanticComponent, public=False):
+class BaseQueryFilter(HtmxComponent, public=False):
     query: str = ""
 
     def _handle_event(self, event: FilterChanged):
@@ -97,7 +89,7 @@ class TodoList(BaseToggleFilter, BaseQueryFilter):
         self.items.completed().delete()
 
 
-class ListHeader(PydanticComponent):
+class ListHeader(HtmxComponent):
     _template_name = "todo/ListHeader.html"
 
     def _handle_event(self, event: ItemsCleared | int):
@@ -108,7 +100,7 @@ class ListHeader(PydanticComponent):
         yield BuildAndRender.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
 
 
-class TodoItem(PydanticComponent):
+class TodoItem(HtmxComponent):
     _template_name = "todo/TodoItem.html"
 
     item: Item
@@ -138,7 +130,7 @@ class TodoItem(PydanticComponent):
             yield from self.toggle_editing()
 
 
-class TodoCounter(PydanticComponent):
+class TodoCounter(HtmxComponent):
     _template_name = "todo/TodoCounter.html"
 
     query: t.Annotated[str, Query("q")] = ""
@@ -157,7 +149,7 @@ class TodoCounter(PydanticComponent):
         return Item.objects.active()
 
 
-class TodoFilter(PydanticComponent):
+class TodoFilter(HtmxComponent):
     _template_name = "todo/TodoFilter.html"
     query: t.Annotated[str, Query("q")] = ""
 

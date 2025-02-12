@@ -32,7 +32,7 @@ from .query import Query, QueryPatcher
 from .tracing import sentry_span
 from .utils import generate_id
 
-__all__ = ("PydanticComponent", "Query", "ComponentNotFound")
+__all__ = ("HtmxComponent", "Query", "ComponentNotFound")
 
 
 class ComponentNotFound(LookupError):
@@ -107,40 +107,40 @@ class DispatchDOMEvent:
 class SkipRender:
     "Instruct the HTMX engine to avoid the render of the component."
 
-    component: "PydanticComponent"
+    component: "HtmxComponent"
 
 
 @dataclass(slots=True)
 class BuildAndRender:
-    component: type["PydanticComponent"]
+    component: type["HtmxComponent"]
     state: dict[str, t.Any]
     oob: str = "true"
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
     @classmethod
-    def append(cls, target_: str, component_: type[PydanticComponent], **state):
+    def append(cls, target_: str, component_: type[HtmxComponent], **state):
         return cls(component=component_, state=state, oob=f"beforeend: {target_}")
 
     @classmethod
-    def prepend(cls, target_: str, component_: type[PydanticComponent], **state):
+    def prepend(cls, target_: str, component_: type[HtmxComponent], **state):
         return cls(component=component_, state=state, oob=f"afterbegin: {target_}")
 
     @classmethod
-    def after(cls, target_: str, component_: type[PydanticComponent], **state):
+    def after(cls, target_: str, component_: type[HtmxComponent], **state):
         return cls(component=component_, state=state, oob=f"afterend: {target_}")
 
     @classmethod
-    def before(cls, target_: str, component_: type[PydanticComponent], **state):
+    def before(cls, target_: str, component_: type[HtmxComponent], **state):
         return cls(component=component_, state=state, oob=f"beforebegin: {target_}")
 
     @classmethod
-    def update(cls, component: type[PydanticComponent], **state):
+    def update(cls, component: type[HtmxComponent], **state):
         return cls(component=component, state=state)
 
 
 @dataclass(slots=True)
 class Render:
-    component: PydanticComponent
+    component: HtmxComponent
     template: str | None = None
     oob: str = "true"
     lazy: bool | None = None
@@ -184,9 +184,9 @@ PYDANTIC_MODEL_METHODS = {
     attr_name for attr_name in dir(BaseModel) if not attr_name.startswith("_")
 }
 
-REGISTRY: dict[str, type[PydanticComponent]] = {}
+REGISTRY: dict[str, type[HtmxComponent]] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
-FQN: dict[type[PydanticComponent], str] = {}
+FQN: dict[type[HtmxComponent], str] = {}
 
 
 @cache
@@ -228,7 +228,7 @@ def get_template(template: str) -> RenderFunction:  # pragma: no cover
         return render
 
 
-class PydanticComponent(BaseModel):
+class HtmxComponent(BaseModel):
     _template_name: str = ...  # type: ignore
     _template_name_lazy: str = settings.DEFAULT_LAZY_TEMPLATE
 

@@ -50,10 +50,10 @@ In your base template you need to load the necessary scripts to make this work
 This app will look for `htmx.py` files in your app and registers all components found there, but if you load any module where you have components manually when Django boots up, that also works.
 
 ```python
-from djhtmx.component import PydanticComponent
+from djhtmx.component import HtmxComponent
 
 
-class Counter(PydanticComponent):
+class Counter(HtmxComponent):
     _template_name = "Counter.html"
     counter: int = 0
 
@@ -95,9 +95,9 @@ All components have a `self.user` representing the current logged in user or `No
 ```python
 from typing import Annotated
 from pydantic import Field
-from djhtmx.component import PydanticComponent
+from djhtmx.component import HtmxComponent
 
-class BaseComponent(PydanticComponent, public=False):
+class BaseComponent(HtmxComponent, public=False):
     user: Annotated[User, Field(exclude=True)]
 
 
@@ -116,7 +116,7 @@ These are components that can't be instantiated using `{% htmx "ComponentName" %
 Pass `public=False` in their declaration
 
 ```python
-class BaseComponent(PydanticComponent, public=False):
+class BaseComponent(HtmxComponent, public=False):
     ...
 ```
 
@@ -125,13 +125,13 @@ class BaseComponent(PydanticComponent, public=False):
 Components can contain components inside to decompose the behavior in more granular and specialized parts, for this you don't have to do anything but to a component inside the template of other component....
 
 ```python
-class Items(PydanticComponent):
+class Items(HtmxComponent):
     _template_name = "Items.html"
 
     def items(self):
         return Item.objects.all()
 
-class ItemEntry(PydanticComponent):
+class ItemEntry(HtmxComponent):
     ...
     item: Item
     is_open: bool = False
@@ -191,7 +191,7 @@ This makes the component to be initialized, but instead of rendering the templat
 When sending an event to the back-end sometimes you can pass the parameters explicitly to the event handler, and sometimes these are inputs the user is typing stuff on. The value of those inputs are passed implicitly if they nave a `name="..."` attribute.
 
 ```python
-class Component(PydanticComponent):
+class Component(HtmxComponent):
     ...
 
     def create(self, name: str, is_active: bool = False):
@@ -216,7 +216,7 @@ The parameters of any event handler are always converted by pydantic to the anno
 Suppose that you have a multiple choice list and you want to select multiple options, you can do this by suffixing the name with `[]` as in `choices[]`:
 
 ```python
-class DeleteSelection(PydanticComponent):
+class DeleteSelection(HtmxComponent):
 
     @property
     def items(self):
@@ -262,10 +262,10 @@ Wanna redirect the user to some object url:
 - If you want Django to resolve the url automatically use: `yield Redirect.to(obj, *args, **kwargs)` as you would use `django.shortcuts.resolve_url`.
 
 ```python
-from djhtmx.component import PydanticComponent, Redirect
+from djhtmx.component import HtmxComponent, Redirect
 
 
-class Component(PydanticComponent):
+class Component(HtmxComponent):
     ...
 
     def create(self, name: str):
@@ -280,10 +280,10 @@ If you want to open the url in a new url use the `yield Open...` command with si
 Sometimes you want to remove the component when it responds to an event, for that you need to `yield Destroy(component_id: str)`. You can also use this to remove any other component if you know their id.
 
 ```python
-from djhtmx.component import PydanticComponent, Destroy
+from djhtmx.component import HtmxComponent, Destroy
 
 
-class Notification(PydanticComponent):
+class Notification(HtmxComponent):
     ...
 
     def close(self):
@@ -296,10 +296,10 @@ class Notification(PydanticComponent):
 Sometimes when reacting to a front-end event is handy to skip the default render of the current component, to achieve this do:
 
 ```python
-from djhtmx.component import PydanticComponent, Redirect
+from djhtmx.component import HtmxComponent, Redirect
 
 
-class Component(PydanticComponent):
+class Component(HtmxComponent):
     ...
 
     def do_something(self):
@@ -312,9 +312,9 @@ class Component(PydanticComponent):
 Sometimes you don't want to do a full component render, but a partial one. Specially if the user if typing somewhere to filter items and you don't wanna interfere with the user typing or focus. Here is the technique to do that:
 
 ```python
-from djhtmx.component import PydanticComponent, Render
+from djhtmx.component import HtmxComponent, Render
 
-class SmartFilter(PydanticComponent):
+class SmartFilter(HtmxComponent):
     _template_name = "SmartFilter.html"
     query: str = ""
 
@@ -364,11 +364,11 @@ Coming back to the previous example let's say that we want to persist the state 
 
 ```python
 from typing import Annotated
-from djhtmx.component import PydanticComponent
+from djhtmx.component import HtmxComponent
 from djhtmx.query import Query
 
 
-class SmartFilter(PydanticComponent):
+class SmartFilter(HtmxComponent):
     ...
     query: Annotated[str, Query("query")] = ""
     ...
@@ -383,10 +383,10 @@ If you want now you can split this component in two, each with their own templat
 
 ```python
 from typing import Annotated
-from djhtmx.component import PydanticComponent, SkipRender
+from djhtmx.component import HtmxComponent, SkipRender
 from djhtmx.query import Query
 
-class SmartFilter(PydanticComponent):
+class SmartFilter(HtmxComponent):
     _template_name = "SmartFilter.html"
     query: Annotated[str, Query("query")] = ""
 
@@ -394,7 +394,7 @@ class SmartFilter(PydanticComponent):
         self.query = query.trim()
         yield SkipRender(self)
 
-class SmartList(PydanticComponent):
+class SmartList(HtmxComponent):
     _template_name = "SmartList.html"
     query: Annotated[str, Query("query")] = ""
 
@@ -459,9 +459,9 @@ And from the list with id `932` you take a item with id `123` and update it all 
 Let's say you wanna count how many items there are in certain Todo list, but your component does not receive an update when the list is updated because it is out of it. You can do this.
 
 ```python
-from djhtmx.component import PydanticComponent
+from djhtmx.component import HtmxComponent
 
-class ItemCounter(PydanticComponent):
+class ItemCounter(HtmxComponent):
     todo_list: TodoList
 
     def subscriptions(self):
@@ -484,7 +484,7 @@ Find here an implementation of `SmartFilter` and `SmartItem` using this mechanis
 
 ```python
 from dataclasses import dataclass
-from djhtmx.component import PydanticComponent, SkipRender, Emit
+from djhtmx.component import HtmxComponent, SkipRender, Emit
 
 
 @dataclass(slots=True)
@@ -492,7 +492,7 @@ class QueryChanged:
     query: str
 
 
-class SmartFilter(PydanticComponent):
+class SmartFilter(HtmxComponent):
     _template_name = "SmartFilter.html"
     query: str = ""
 
@@ -501,7 +501,7 @@ class SmartFilter(PydanticComponent):
         yield Emit(QueryChanged(query))
         yield SkipRender(self)
 
-class SmartList(PydanticComponent):
+class SmartList(HtmxComponent):
     _template_name = "SmartList.html"
     query: str = ""
 
@@ -523,9 +523,9 @@ The library will look in all components if they define `_handle_event(event: ...
 Let's say that we are making the TODO list app and we want that when a new item is added to the list there is not a full re-render of the whole list, just that the Component handling a single Item is added to the list.
 
 ```python
-from djhtmx.component import PydanticComponent, SkipRender, BuildAndRender
+from djhtmx.component import HtmxComponent, SkipRender, BuildAndRender
 
-class TodoListComponent(PydanticComponent):
+class TodoListComponent(HtmxComponent):
     _template_name = "TodoListComponent.html"
     todo_list: TodoList
 
@@ -539,7 +539,7 @@ class TodoListComponent(PydanticComponent):
         )
         yield SkipRender(self)
 
-class ItemComponent(PydanticComponent):
+class ItemComponent(HtmxComponent):
     ...
     item: Item
     ...
@@ -569,9 +569,9 @@ Use the `BuildAndRender.<helper>(target: str, ...)` to send a component to be in
 Let's say we want to put the focus in an input that inside the new ItemComponent rendered, for this use `yield Focus(target)`
 
 ```python
-from djhtmx.component import PydanticComponent, SkipRender, BuildAndRender, Focus
+from djhtmx.component import HtmxComponent, SkipRender, BuildAndRender, Focus
 
-class TodoListComponent(PydanticComponent):
+class TodoListComponent(HtmxComponent):
     _template_name = "TodoListComponent.html"
     todo_list: TodoList
 
@@ -594,9 +594,9 @@ Suppose you have a rich JavaScript library (graphs, maps, or anything...) in the
 
 
 ```python
-from djhtmx.component import PydanticComponent, DispatchDOMEvent
+from djhtmx.component import HtmxComponent, DispatchDOMEvent
 
-class TodoListComponent(PydanticComponent):
+class TodoListComponent(HtmxComponent):
     _template_name = "TodoListComponent.html"
     todo_list: TodoList
 
@@ -716,11 +716,11 @@ class TestNormalRendering(TestCase):
 
 `htmx.find_by_text(text: str) -> lxml.html.HtmlElement`: Returns the first element that contains certain text.
 
-`htmx.get_component_by_type(component_type: type[TPydanticComponent]) -> TPydanticComponent`: Retrieves the only instance rendered of that component type in the current page. If there is more than one instance this fails.
+`htmx.get_component_by_type(component_type: type[THtmxComponent]) -> THtmxComponent`: Retrieves the only instance rendered of that component type in the current page. If there is more than one instance this fails.
 
-`htmx.get_components_by_type(component_type: type[TPydanticComponent]) -> list[TPydanticComponent]`: Retrieves all instances of this component type in the current page.
+`htmx.get_components_by_type(component_type: type[THtmxComponent]) -> list[THtmxComponent]`: Retrieves all instances of this component type in the current page.
 
-`htmx.get_component_by_id(component_id: str) -> TPydanticComponent`: Retrieves a component by its id from the current page.
+`htmx.get_component_by_id(component_id: str) -> THtmxComponent`: Retrieves a component by its id from the current page.
 
 #### Interactions
 
@@ -733,7 +733,7 @@ self.htmx.type("input.new-todo", "3rd task")
 self.htmx.trigger("input.new-todo")
 ```
 
-`htmx.send(method: Callable[P, Any], *args: P.args, **kwargs: P.kwargs)`: This sends the runtime to execute that a bound method of a PydanticComponent and returns after all side effects had been processed. Use as in:
+`htmx.send(method: Callable[P, Any], *args: P.args, **kwargs: P.kwargs)`: This sends the runtime to execute that a bound method of a HtmxComponent and returns after all side effects had been processed. Use as in:
 
 ```python
 todo_list = htmx.get_component_by_type(TodoList)
