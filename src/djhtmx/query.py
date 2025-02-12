@@ -9,7 +9,11 @@ from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from djhtmx.introspection import get_annotation_adapter, is_simple_annotation
+from djhtmx.introspection import (
+    get_annotation_adapter,
+    is_collection_annotation,
+    is_simple_annotation,
+)
 from djhtmx.utils import compact_hash
 
 
@@ -68,6 +72,8 @@ class QueryPatcher:
     default_value: Any
     adapter: TypeAdapter[Any]
 
+    use_json: bool
+
     @classmethod
     def for_component(cls, component: type[BaseModel]):
         seen = set()
@@ -109,6 +115,7 @@ class QueryPatcher:
                     auto_subscribe=query.auto_subscribe,
                     default_value=field.get_default(call_default_factory=True),
                     adapter=adapter,
+                    use_json=is_collection_annotation(annotation),
                 )
 
     def get_update_for_state(self, params: QueryDict):
@@ -118,7 +125,11 @@ class QueryPatcher:
             # ValidationError, but we should just simply ignore invalid
             # values.
             try:
-                return {self.field_name: self.adapter.validate_python(raw_param)}
+                return {
+                    self.field_name: self.adapter.validate_json(raw_param)
+                    if self.use_json
+                    else self.adapter.validate_python(raw_param)
+                }
             except ValueError:
                 # Preserve the last good known state in the component
                 return {}
@@ -137,15 +148,22 @@ class QueryPatcher:
 
         # Otherwise, let's serialize the value and only update it if it is
         # different.
-        serialized_value = self.adapter.dump_python(value, mode="json")
+        if self.use_json:
+            serialized_value = self.adapter.dump_json(value)
+        else:
+            serialized_value = self.adapter.dump_python(value, mode="json")
         try:
             # We need to validate and dump back to get the exact JSON-friendly
             # type representation.  Otherwise dates, enums, and other types
             # won't match the serialized value.
-            previous_value = self.adapter.dump_python(
-                self.adapter.validate_python(params.get(self.param_name)),
-                mode="json",
-            )
+            param = params.get(self.param_name)
+            if self.use_json:
+                previous_value = self.adapter.dump_json(self.adapter.validate_json(param or ""))
+            else:
+                previous_value = self.adapter.dump_python(
+                    self.adapter.validate_python(params.get(self.param_name)),
+                    mode="json",
+                )
         except ValueError:
             previous_value = self.default_value
         if serialized_value == previous_value:

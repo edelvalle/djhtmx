@@ -1,6 +1,5 @@
 from functools import partial
 from http import HTTPStatus
-from itertools import chain
 from typing import assert_never
 
 from django.apps import apps
@@ -10,10 +9,9 @@ from django.http.response import HttpResponse
 from django.urls import path, re_path
 from django.utils.html import format_html
 
-from . import json
 from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, Triggers
 from .consumer import Consumer
-from .introspection import filter_parameters, parse_request_data
+from .introspection import parse_request_data
 from .repo import PushURL, Repository, SendHtml
 from .tracing import sentry_span
 

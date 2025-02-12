@@ -12,8 +12,7 @@ from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
 
 from .. import json, settings
-from ..component import REGISTRY, HtmxComponent, generate_id
-from ..introspection import get_function_parameters
+from ..component import HtmxComponent
 from ..repo import Repository
 
 register = template.Library()
