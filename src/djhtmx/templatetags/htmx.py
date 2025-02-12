@@ -12,7 +12,7 @@ from django.utils.html import format_html, format_html_join
 from django.utils.safestring import mark_safe
 
 from .. import json, settings
-from ..component import REGISTRY, Component, PydanticComponent, generate_id
+from ..component import REGISTRY, PydanticComponent, generate_id
 from ..introspection import get_function_parameters
 from ..repo import Repository
 
@@ -89,19 +89,12 @@ def htmx(
     """
     state = (_state or {}) | state
     repo: Repository = context["htmx_repo"]
-    if _name in REGISTRY:
-        # PydanticComponent
-        state |= {"lazy": lazy is True}
-        component = repo.build(_name, state)
-        return repo.render_html(
-            component,
-            lazy=lazy if isinstance(lazy, bool) else False,
-        )
-    else:  # pragma: no cover
-        # Legacy Component
-        id = state.pop("id", None) or generate_id()
-        component = Component._build(_name, repo, id, state)
-        return mark_safe(component._render())
+    state |= {"lazy": lazy is True}
+    component = repo.build(_name, state)
+    return repo.render_html(
+        component,
+        lazy=lazy if isinstance(lazy, bool) else False,
+    )
 
 
 @register.simple_tag(takes_context=True, name="hx-tag")
@@ -117,33 +110,23 @@ def hx_tag(context: Context):
         </div>
         ```
     """
-    component: Component | PydanticComponent = context["this"]
-    if isinstance(component, PydanticComponent):
-        oob = context.get("hx_oob")
-        context["hx_oob"] = False
-        attrs = {
-            "id": component.id,
-            "hx-swap-oob": "true" if oob else None,
-            "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
+    component: PydanticComponent = context["this"]
+    oob = context.get("hx_oob")
+    context["hx_oob"] = False
+    attrs = {
+        "id": component.id,
+        "hx-swap-oob": "true" if oob else None,
+        "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
+    }
+    if context.get("hx_lazy"):
+        context["hx_lazy"] = False
+        jitter = random.randint(100, 1000)
+        attrs |= {
+            "hx-trigger": f"revealed delay:{jitter}ms",
+            "hx-get": event_url(component, "render"),
         }
-        if context.get("hx_lazy"):
-            context["hx_lazy"] = False
-            jitter = random.randint(100, 1000)
-            attrs |= {
-                "hx-trigger": f"revealed delay:{jitter}ms",
-                "hx-get": event_url(component, "render"),
-            }
-        if settings.DEBUG:
-            attrs |= {"hx-name": component.hx_name}
-    else:
-        attrs = {
-            "id": component.id,
-            "hx-target": "this",
-            "hx-boost": "false",
-            "hx-post": event_url(component, "render"),
-            "hx-trigger": "render",
-            "hx-headers": json.dumps({"X-Component-State": signer.sign(component._state_json)}),
-        }
+    if settings.DEBUG:
+        attrs |= {"hx-name": component.hx_name}
     return format_html_attrs(attrs)
 
 
@@ -195,38 +178,25 @@ def on(
         _event_handler = _trigger
         _trigger = None
 
-    component: Component | PydanticComponent = context["this"]
+    component: PydanticComponent = context["this"]
 
     if settings.DEBUG:
-        if isinstance(component, PydanticComponent):
-            assert (
-                _event_handler in component._event_handler_params
-            ), f"{type(component).__name__}.{_event_handler} event handler not found"
-        else:  # pragma: no cover
-            assert callable(
-                getattr(component, _event_handler, None)
-            ), f"{type(component).__name__}.{_event_handler} event handler not found"
+        assert (
+            _event_handler in component._event_handler_params
+        ), f"{type(component).__name__}.{_event_handler} event handler not found"
 
     if not hx_include:
-        if isinstance(component, PydanticComponent):
-            has_implicit_params = bool(
-                component._event_handler_params[_event_handler] - set(kwargs)
-            )
-        else:
-            has_implicit_params = bool(
-                get_function_parameters(getattr(component, _event_handler)) - set(kwargs)
-            )
+        has_implicit_params = bool(component._event_handler_params[_event_handler] - set(kwargs))
         if has_implicit_params:
             hx_include = f"#{component.id} [name]"
 
     attrs = {
+        "hx-swap": "none",
         "hx-post": event_url(component, _event_handler),
         "hx-trigger": _trigger,
         "hx-vals": json.dumps(kwargs) if kwargs else None,
         "hx-include": hx_include,
     }
-    if isinstance(component, PydanticComponent):
-        attrs |= {"hx-swap": "none"}
     return format_html_attrs(attrs)
 
 
@@ -238,7 +208,7 @@ def format_html_attrs(attrs: dict[str, t.Any]):
     )
 
 
-def event_url(component: PydanticComponent | Component, event_handler: str):
+def event_url(component: PydanticComponent, event_handler: str):
     return reverse(
         f"djhtmx.{type(component).__name__}",
         kwargs={

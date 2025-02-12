@@ -11,16 +11,7 @@ from django.urls import path, re_path
 from django.utils.html import format_html
 
 from . import json
-from .component import (
-    REGISTRY,
-    Component,
-    Destroy,
-    DispatchDOMEvent,
-    Focus,
-    Open,
-    Redirect,
-    Triggers,
-)
+from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, Triggers
 from .consumer import Consumer
 from .introspection import filter_parameters, parse_request_data
 from .repo import PushURL, Repository, SendHtml
@@ -84,25 +75,6 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
         return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
 
 
-def legacy_endpoint(  # pragma: no cover
-    request: HttpRequest, component_name: str, component_id: str, event_handler: str
-):
-    with sentry_span(f"{component_name}.{event_handler}"):
-        state = request.META.get("HTTP_X_COMPONENT_STATE", "{}")
-        state = signer.unsign(state)
-        state = json.loads(state)
-        component = Component._build(
-            component_name,
-            request,
-            component_id,
-            state,
-        )
-        handler = getattr(component, event_handler)
-        handler_kwargs = parse_request_data(request.POST)
-        handler_kwargs = filter_parameters(handler, handler_kwargs)
-        return handler(**handler_kwargs) or component.render()
-
-
 APP_CONFIGS = sorted(apps.app_configs.values(), key=lambda app_config: -len(app_config.name))
 
 
@@ -115,35 +87,12 @@ def app_name_of_component(cls: type):
 
 
 urlpatterns = list(
-    chain(
-        # Routing with app name in path
-        (
-            path(
-                f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
-                partial(endpoint, component_name=component_name),
-                name=f"djhtmx.{component_name}",
-            )
-            for component_name, component in REGISTRY.items()
-        ),
-        # Legacy routing, without app name in path
-        (
-            path(
-                f"{component_name}/<component_id>/<event_handler>",
-                partial(endpoint, component_name=component_name),
-                name=f"djhtmx.legacy.{component_name}",
-            )
-            for component_name in REGISTRY
-        ),
-        # Legacy endpoint
-        (
-            path(
-                f"{component_name}/<component_id>/<event_handler>",
-                partial(legacy_endpoint, component_name=component_name),
-                name=f"djhtmx.{component_name}",
-            )
-            for component_name in Component._all
-        ),
+    path(
+        f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
+        partial(endpoint, component_name=component_name),
+        name=f"djhtmx.{component_name}",
     )
+    for component_name, component in REGISTRY.items()
 )
 
 
