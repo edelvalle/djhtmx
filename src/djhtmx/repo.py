@@ -73,7 +73,19 @@ class PushURL:
         return cls("?" + params.urlencode())
 
 
-ProcessedCommand = Destroy | Redirect | Open | Focus | DispatchDOMEvent | SendHtml | PushURL
+@dataclass(slots=True)
+class ReplaceURL:
+    url: str
+    command: t.Literal["replace_url"] = "replace_url"
+
+    @classmethod
+    def from_params(cls, params: QueryDict):
+        return cls("?" + params.urlencode())
+
+
+ProcessedCommand = (
+    Destroy | Redirect | Open | Focus | DispatchDOMEvent | SendHtml | PushURL | ReplaceURL
+)
 
 
 class Repository:
@@ -355,7 +367,7 @@ class Repository:
             )
 
         if signals := self.update_params_from(component):
-            yield PushURL.from_params(self.params)
+            yield ReplaceURL.from_params(self.params)
             commands_to_add.append(Signal(signals))
 
         commands.extend(commands_to_add)

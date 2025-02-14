@@ -13,7 +13,7 @@ from pygments.lexers import HtmlLexer
 from . import json
 from .component import Destroy, DispatchDOMEvent, Focus, HtmxComponent, Open, Redirect
 from .introspection import parse_request_data
-from .repo import PushURL, Repository, SendHtml, Session, signer
+from .repo import PushURL, ReplaceURL, Repository, SendHtml, Session, signer
 from .utils import get_params
 
 P = ParamSpec("P")
@@ -181,7 +181,7 @@ class Htmx:
                 case Redirect(url) | Open(url):
                     navigate_to_url = url
 
-                case PushURL(url):
+                case PushURL(url) | ReplaceURL(url):
                     parsed_url = urlparse(url)
                     self.path = parsed_url.path
                     self.query_string = parsed_url.query
