@@ -249,11 +249,14 @@ def is_basic_type(ann):
 
     - Instances of IntEnum or StrEnum.
 
+    - Instances of dict, tuple, list or set
+
     """
     return (
         ann in _SIMPLE_TYPES
         or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
+        or is_collection_annotation(ann)
     )
 
 
@@ -270,5 +273,10 @@ def is_simple_annotation(ann):
     return is_basic_type(ann) or is_union_of_basic(ann)
 
 
+def is_collection_annotation(ann):
+    return issubclass_safe(ann, _COLLECTION_TYPES)
+
+
 Unset = object()
 _SIMPLE_TYPES = (int, str, float, UUID, types.NoneType, date, datetime, bool)
+_COLLECTION_TYPES = (dict, tuple, list, set)

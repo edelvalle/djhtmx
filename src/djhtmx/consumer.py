@@ -7,7 +7,7 @@ from pydantic import BaseModel, TypeAdapter
 from . import json
 from .component import Command, Destroy, DispatchDOMEvent, Focus, Open, Redirect
 from .introspection import parse_request_data
-from .repo import PushURL, Repository, SendHtml
+from .repo import PushURL, ReplaceURL, Repository, SendHtml
 from .utils import get_params
 
 
@@ -53,7 +53,15 @@ class Consumer(AsyncJsonWebsocketConsumer):
                             "< Command: %s", f"SendHtml[{debug_trace}](... {len(html)} ...)"
                         )
                         await self.send(html)
-                    case Destroy() | Redirect() | Focus() | DispatchDOMEvent() | PushURL() | Open():
+                    case (
+                        Destroy()
+                        | Redirect()
+                        | Focus()
+                        | DispatchDOMEvent()
+                        | PushURL()
+                        | Open()
+                        | ReplaceURL()
+                    ):
                         logger.debug("< Command: %s", command)
                         await self.send_json(command)
                     case _ as unreachable:

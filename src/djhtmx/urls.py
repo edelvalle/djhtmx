@@ -1,6 +1,5 @@
 from functools import partial
 from http import HTTPStatus
-from itertools import chain
 from typing import assert_never
 
 from django.apps import apps
@@ -10,11 +9,10 @@ from django.http.response import HttpResponse
 from django.urls import path, re_path
 from django.utils.html import format_html
 
-from . import json
 from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, Triggers
 from .consumer import Consumer
-from .introspection import filter_parameters, parse_request_data
-from .repo import PushURL, Repository, SendHtml
+from .introspection import parse_request_data
+from .repo import PushURL, ReplaceURL, Repository, SendHtml
 from .tracing import sentry_span
 
 signer = Signer()
@@ -69,6 +67,8 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                     content.append(html)
                 case PushURL(url):
                     headers["HX-Push-Url"] = url
+                case ReplaceURL(url):
+                    headers["HX-Replace-Url"] = url
                 case _ as unreachable:
                     assert_never(unreachable)
 

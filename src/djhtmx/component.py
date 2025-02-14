@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import logging
 import re
 import time
@@ -8,18 +7,15 @@ import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as dataclass_field
 from functools import cache, cached_property, partial
-from itertools import chain
 from os.path import basename
 
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import models
-from django.http import HttpResponse
 from django.shortcuts import resolve_url
 from django.template import Context, loader
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, validate_call
 from pydantic.fields import ModelPrivateAttr
-from typing_extensions import deprecated
 
 from . import json, settings
 from .introspection import (
