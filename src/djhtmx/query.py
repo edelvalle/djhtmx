@@ -161,7 +161,7 @@ class QueryPatcher:
                 previous_value = self.adapter.dump_json(self.adapter.validate_json(param or ""))
             else:
                 previous_value = self.adapter.dump_python(
-                    self.adapter.validate_python(params.get(self.param_name)),
+                    self.adapter.validate_python(param),
                     mode="json",
                 )
         except ValueError:
