@@ -112,7 +112,7 @@ class QueryPatcher:
                     field_name=field_name,
                     param_name=param_name,
                     signal_name=f"querystring.{param_name}",
-                    auto_subscribe=query.auto_subscribe,
+                    auto_subscribe=query.shared and query.auto_subscribe,
                     default_value=field.get_default(call_default_factory=True),
                     adapter=adapter,
                     use_json=is_collection_annotation(annotation),
