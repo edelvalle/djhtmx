@@ -1,5 +1,5 @@
 CARGO_HOME ?= $(HOME)/.cargo
-PATH := $(HOME)/.rye/shims:$(CARGO_HOME)/bin:$(PATH)
+PATH := $(HOME)/.local/bin:$(CARGO_HOME)/bin:$(PATH)
 
 PYTHON_VERSION ?= 3.12
 
@@ -9,33 +9,21 @@ PROJECT_NAME := djhtmx
 ifdef INSIDE_EMACS
 	UV ?= NO_COLOR=1 UV_PYTHON=${PYTHON_VERSION} uv
 	UV_RUN ?= $(UV) run
-	RYE_RUN ?= NO_COLOR=1 rye run
 else
 	UV ?= UV_PYTHON=${PYTHON_VERSION} uv
 	UV_RUN ?= $(UV) run
-	RYE_RUN ?= rye run
 endif
 
-# In some cases we want to run things with rye to avoid bug
-# https://github.com/astral-sh/uv/pull/6738
 RUN ?= $(UV_RUN)
 
-REQUIRED_UV_VERSION ?= 0.5.24
-REQUIRED_RYE_VERSION ?= 0.41.0
-bootstrap-uv:
+REQUIRED_UV_VERSION ?= 0.5.31
+bootstrap:
 	@INSTALLED_UV_VERSION=$$(uv --version 2>/dev/null | awk '{print $$2}' || echo "0.0.0"); \
     DETECTED_UV_VERSION=$$(printf '%s\n' "$(REQUIRED_UV_VERSION)" "$$INSTALLED_UV_VERSION" | sort -V | head -n1); \
 	if [ "$$DETECTED_UV_VERSION" != "$(REQUIRED_UV_VERSION)" ]; then \
 		uv self update | curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	fi
-
-bootstrap: bootstrap-uv
-	@INSTALLED_RYE_VERSION=$$(rye --version 2>/dev/null | head -n1 | awk '{print $$2}' || echo "0.0.0"); \
-	DETECTED_RYE_VERSION=$$(printf '%s\n' "$(REQUIRED_RYE_VERSION)" "$$INSTALLED_RYE_VERSION" | sort -V | head -n1); \
-	if [ "$$DETECTED_RYE_VERSION" != "$(REQUIRED_RYE_VERSION)" ]; then \
-		rye self update || curl -sSf https://rye.astral.sh/get | RYE_INSTALL_OPTION="--yes" RYE_VERSION="$(REQUIRED_RYE_VERSION)" bash; \
-	fi
-.PHONY: bootstrap-uv bootstrap
+.PHONY: bootstrap
 
 install: bootstrap uv.lock
 	@$(UV) sync --frozen
