@@ -34,6 +34,7 @@ dependencies = [
    "channels>=4.1.0",
    "uuid6>=2024.7.10",
    "redis[hiredis]>=5.0.8",
+   "mmh3>=5.1.0",
 ]
 
 

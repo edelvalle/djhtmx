@@ -1,7 +1,7 @@
-import hashlib
 import typing as t
 from urllib.parse import urlparse
 
+import mmh3
 from channels.db import database_sync_to_async as db  # type: ignore
 from django.db import models
 from django.http.request import HttpRequest, QueryDict
@@ -71,27 +71,20 @@ def get_model_subscriptions(
     return result
 
 
-def compact_hash(v: str) -> str:
-    """Return a SHA1 using a base with 64+ symbols"""
-    h = hashlib.sha1()
-    h.update(v.encode("ascii"))
-    digest = h.digest()
-    return bytes_compact_digest(digest)
-
-
 def generate_id():
     return f"hx-{uuid7().hex}"
 
 
-def bytes_compact_digest(digest: bytes):
-    # Convert the binary digest to an integer
-    num = int.from_bytes(digest, byteorder="big")
+def compact_hash(value: str) -> str:
+    """Return a SHA1 using a base with 64+ symbols"""
+    # this returns a signed 32 bit number, we convert it to unsigned with `& 0xffffffff`
+    hashed_value = mmh3.hash(value) & 0xFFFFFFFF
 
     # Convert the integer to the custom base
     base_len = len(_BASE)
     encoded = []
-    while num > 0:
-        num, rem = divmod(num, base_len)
+    while hashed_value > 0:
+        hashed_value, rem = divmod(hashed_value, base_len)
         encoded.append(_BASE[rem])
 
     return "".join(encoded)
