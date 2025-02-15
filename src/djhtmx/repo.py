@@ -8,9 +8,6 @@ from dataclasses import dataclass, field as Field
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.signing import Signer
-from django.db import models
-from django.db.models.signals import post_save, pre_delete
-from django.dispatch.dispatcher import receiver
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
@@ -39,7 +36,7 @@ from .component import (
     SkipRender,
     _get_query_patchers,
 )
-from .introspection import filter_parameters, get_related_fields
+from .introspection import filter_parameters
 from .settings import (
     KEY_SIZE_ERROR_THRESHOLD,
     KEY_SIZE_SAMPLE_PROB,
@@ -48,7 +45,7 @@ from .settings import (
     SESSION_TTL,
     conn,
 )
-from .utils import db, get_model_subscriptions, get_params
+from .utils import db, get_params
 
 signer = Signer()
 
@@ -194,31 +191,6 @@ class Repository:
     ) -> t.AsyncIterable[ProcessedCommand]:
         commands = CommandQueue([Execute(component_id, event_handler, event_data)])
 
-        # Listen to model signals during execution
-        @receiver(post_save, weak=True)
-        @receiver(pre_delete, weak=True)
-        def _listen_to_post_save_and_pre_delete(
-            sender: type[models.Model],
-            instance: models.Model,
-            created: bool = None,
-            **kwargs,
-        ):
-            if created is None:
-                action = "deleted"
-            elif created:
-                action = "created"
-            else:
-                action = "updated"
-
-            signals = get_model_subscriptions(instance, actions=(action,))
-            for field in get_related_fields(sender):
-                fk_id = getattr(instance, field.name)
-                signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"
-                signals.update((signal, f"{signal}.{action}"))
-
-            if signals:
-                commands.append(Signal(signals))
-
         # Command loop
         try:
             while commands:
@@ -226,6 +198,8 @@ class Repository:
                 while command := await db(next)(processed_commands, None):
                     yield command
         except ValidationError as e:
+            # This is here to detect validation errors derived from an invalid User
+            # Meaning that the user type is not the right one so a login redirect has to happen
             if any(
                 e
                 for error in e.errors()
@@ -243,37 +217,14 @@ class Repository:
     ) -> t.Iterable[ProcessedCommand]:
         commands = CommandQueue([Execute(component_id, event_handler, event_data)])
 
-        # Listen to model signals during execution
-        @receiver(post_save, weak=True)
-        @receiver(pre_delete, weak=True)
-        def _listen_to_post_save_and_pre_delete(
-            sender: type[models.Model],
-            instance: models.Model,
-            created: bool = None,
-            **kwargs,
-        ):
-            if created is None:
-                action = "deleted"
-            elif created:
-                action = "created"
-            else:
-                action = "updated"
-
-            signals = get_model_subscriptions(instance, actions=(action,))
-            for field in get_related_fields(sender):
-                fk_id = getattr(instance, field.name)
-                signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"
-                signals.update((signal, f"{signal}.{action}"))
-
-            if signals:
-                commands.append(Signal(signals))
-
         # Command loop
         try:
             while commands:
                 for command in self._run_command(commands):
                     yield command
         except ValidationError as e:
+            # This is here to detect validation errors derived from an invalid User
+            # Meaning that the user type is not the right one so a login redirect has to happen
             if any(
                 e
                 for error in e.errors()
@@ -289,6 +240,7 @@ class Repository:
         commands_to_append: list[Command] = []
         match command:
             case Execute(component_id, event_handler, event_data):
+                commands.processing_component_id = component_id
                 match self.get_component_by_id(component_id):
                     case Destroy() as command:
                         yield command
@@ -301,22 +253,27 @@ class Repository:
                         )
 
             case SkipRender(component):
+                commands.processing_component_id = component.id
                 self.session.store(component)
 
             case BuildAndRender(component_type, state, oob):
+                commands.processing_component_id = state.get("id", "")
                 component = self.build(component_type.__name__, state)
                 commands_to_append.append(Render(component, oob=oob))
 
             case Render(component, template, oob, lazy):
+                commands.processing_component_id = component.id
                 html = self.render_html(component, oob=oob, template=template, lazy=lazy)
                 yield SendHtml(html, debug_trace=f"{component.hx_name}({component.id})")
 
             case Destroy(component_id) as command:
+                commands.processing_component_id = component_id
                 self.unregister_component(component_id)
                 yield command
 
             case Emit(event):
                 for component in self.get_components_by_names(*LISTENERS[type(event)]):
+                    commands.processing_component_id = component.id
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     emited_commands = component._handle_event(event)  # type: ignore
                     yield from self._process_emited_commands(
@@ -324,6 +281,7 @@ class Repository:
                     )
 
             case Signal(signals):
+                commands.processing_component_id = ""
                 for component_or_destroy in self.get_components_subscribed_to(signals):
                     match component_or_destroy:
                         case Destroy() as command:
@@ -333,6 +291,7 @@ class Repository:
                             commands_to_append.append(Render(component))
 
             case Open() | Redirect() | Focus() | DispatchDOMEvent() as command:
+                commands.processing_component_id = ""
                 yield command
 
         commands.extend(commands_to_append)
@@ -368,13 +327,13 @@ class Repository:
 
         if signals := self.update_params_from(component):
             yield ReplaceURL.from_params(self.params)
-            commands_to_add.append(Signal(signals))
+            commands_to_add.append(Signal({(signal, component.id) for signal in signals}))
 
         commands.extend(commands_to_add)
         self.session.store(component)
 
     def get_components_subscribed_to(
-        self, signals: set[str]
+        self, signals: set[tuple[str, str]]
     ) -> t.Iterable[HtmxComponent | Destroy]:
         return (
             self.get_component_by_id(c_id)
@@ -523,10 +482,11 @@ class Session:
         if state := self.states.get(component_id):
             return json.loads(state)
 
-    def get_component_ids_subscribed_to(self, signals: set[str]) -> t.Iterable[str]:
+    def get_component_ids_subscribed_to(self, signals: set[tuple[str, str]]) -> t.Iterable[str]:
         self._ensure_read()
         for component_id, subscribed_to in self.subscriptions.items():
-            if signals.intersection(subscribed_to):
+            # here we ignore signals emitted by the component it self
+            if subscribed_to.intersection(signal for signal, cid in signals if cid != component_id):
                 yield component_id
 
     def get_all_states(self) -> t.Iterable[dict[str, t.Any]]:

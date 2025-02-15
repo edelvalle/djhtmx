@@ -155,7 +155,7 @@ class Emit:
 class Signal:
     "Emit a backend-only signal."
 
-    names: set[str]
+    names: set[tuple[str, str]]  # set[tuple[signal name, emitter component id]]
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 
