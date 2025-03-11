@@ -95,8 +95,8 @@ class ListHeader(HtmxComponent):
     def _handle_event(self, event: ItemsCleared | int):
         pass
 
-    def add(self, new_item: str):
-        item = Item.objects.create(text=new_item)
+    async def add(self, new_item: str):
+        item = await Item.objects.acreate(text=new_item)
         yield BuildAndRender.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
 
 

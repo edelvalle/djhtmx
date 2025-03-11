@@ -18,7 +18,9 @@ from .tracing import sentry_span
 signer = Signer()
 
 
-def endpoint(request: HttpRequest, component_name: str, component_id: str, event_handler: str):
+async def endpoint(
+    request: HttpRequest, component_name: str, component_id: str, event_handler: str
+):
     if "HTTP_HX_SESSION" not in request.META:
         return HttpResponse("Missing header HX-Session", status=HTTPStatus.BAD_REQUEST)
 
@@ -28,7 +30,7 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
         headers: dict[str, str] = {}
         triggers = Triggers()
 
-        for command in repo.dispatch_event(
+        async for command in repo.dispatch_event(
             component_id,
             event_handler,
             parse_request_data(request.POST),

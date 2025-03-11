@@ -16,9 +16,22 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     ...,
-    "djhtmx.Middleware",
+    "djhtmx.middleware",
 ]
 
+TEMPLATES = [
+    {
+        "BACKEND": "...",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                ...,
+                "djhtmx.context.component_repo",
+            ],
+        },
+    },
+]
 ```
 
 Expose the HTTP endpoint in your `urls.py` as you wish, you can use any path you want.
@@ -86,7 +99,7 @@ Counters: <br />
 {% htmx "Counter" counter=3 %}
 ```
 
-##  Doing more complicated stuff
+## Doing more complicated stuff
 
 ### Authentication
 
