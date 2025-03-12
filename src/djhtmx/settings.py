@@ -44,7 +44,7 @@ if isinstance(SESSION_TTL, timedelta):
 STRICT_EVENT_HANDLER_CONSISTENCY_CHECK = getattr(
     settings,
     "DJHTMX_STRICT_EVENT_HANDLER_CONSISTENCY_CHECK",
-    False,
+    True,
 )
 
 KEY_SIZE_ERROR_THRESHOLD = getattr(
