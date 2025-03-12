@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import time
 import typing as t
 from collections import defaultdict
 from dataclasses import dataclass, field as dataclass_field
+from enum import IntEnum
 from functools import cache, cached_property, partial
 from os.path import basename
 
@@ -214,6 +216,24 @@ def _compose(f: t.Callable[P, A], g: t.Callable[[A], B]) -> t.Callable[P, B]:
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
+class HandlerType(IntEnum):
+    SYNC = 0
+    GENERATOR = 1
+    ASYNC = 2
+    ASYNC_GENERATOR = 3
+
+    @classmethod
+    def from_function(cls, func: t.Callable) -> HandlerType:
+        if inspect.isgeneratorfunction(func):
+            return cls.GENERATOR
+        elif inspect.iscoroutinefunction(func):
+            return cls.ASYNC
+        elif inspect.isasyncgenfunction(func):
+            return cls.ASYNC_GENERATOR
+        else:
+            return cls.SYNC
+
+
 def get_template(template: str) -> RenderFunction:  # pragma: no cover
     if settings.DEBUG:
         return _compose(loader.get_template(template).render, mark_safe)
@@ -297,16 +317,21 @@ class HtmxComponent(BaseModel):
         }
 
         for name, params in cls._event_handler_params.items():
-            if params and not hasattr((attr := getattr(cls, name)), "raw_function"):
+            attr = getattr(cls, name)
+            attr.handler_type = HandlerType.from_function(attr)
+            if params and not hasattr(attr, "raw_function"):
+                new_attr = validate_call(config={"arbitrary_types_allowed": True})(attr)
+                new_attr.handler_type = attr.handler_type
                 setattr(
                     cls,
                     name,
-                    validate_call(config={"arbitrary_types_allowed": True})(attr),
+                    new_attr,
                 )
 
         cls.__check_consistent_event_handler(strict=settings.STRICT_EVENT_HANDLER_CONSISTENCY_CHECK)
         if public:
             if event_handler := getattr(cls, "_handle_event", None):
+                event_handler.handler_type = HandlerType.from_function(event_handler)
                 for event_type in get_event_handler_event_types(event_handler):
                     LISTENERS[event_type].add(component_name)
 

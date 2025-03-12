@@ -9,12 +9,8 @@ from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from djhtmx.introspection import (
-    get_annotation_adapter,
-    is_collection_annotation,
-    is_simple_annotation,
-)
-from djhtmx.utils import compact_hash
+from .introspection import get_annotation_adapter, is_collection_annotation, is_simple_annotation
+from .utils import compact_hash, db
 
 
 @dataclass(slots=True)
@@ -117,6 +113,24 @@ class QueryPatcher:
                     adapter=adapter,
                     use_json=is_collection_annotation(annotation),
                 )
+
+    async def aget_update_for_state(self, params: QueryDict):
+        if (raw_param := params.get(self.param_name)) is not None:
+            # We need to perform the validation during patching, otherwise
+            # ill-formed values in the query will cause a Pydantic
+            # ValidationError, but we should just simply ignore invalid
+            # values.
+            try:
+                return {
+                    self.field_name: await db(self.adapter.validate_json)(raw_param)
+                    if self.use_json
+                    else await db(self.adapter.validate_python)(raw_param)
+                }
+            except ValueError:
+                # Preserve the last good known state in the component
+                return {}
+        else:
+            return {self.field_name: self.default_value}
 
     def get_update_for_state(self, params: QueryDict):
         if (raw_param := params.get(self.param_name)) is not None:

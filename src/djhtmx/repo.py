@@ -8,6 +8,7 @@ from dataclasses import dataclass, field as Field
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.signing import Signer
+from django.db.transaction import atomic
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
@@ -28,6 +29,7 @@ from .component import (
     Emit,
     Execute,
     Focus,
+    HandlerType,
     HtmxComponent,
     Open,
     Redirect,
@@ -43,7 +45,8 @@ from .settings import (
     KEY_SIZE_WARN_THRESHOLD,
     LOGIN_URL,
     SESSION_TTL,
-    conn,
+    async_connection,
+    sync_connection,
 )
 from .utils import db, get_params
 
@@ -183,7 +186,7 @@ class Repository:
         # delete component state
         self.session.unregister_component(component_id)
 
-    async def adispatch_event(  # pragma: no cover
+    async def dispatch_event(  # pragma: no cover
         self,
         component_id: str,
         event_handler: str,
@@ -194,9 +197,8 @@ class Repository:
         # Command loop
         try:
             while commands:
-                processed_commands = self._run_command(commands)
-                while command := await db(next)(processed_commands, None):
-                    yield command
+                async for processed_command in self._run_command(commands):
+                    yield processed_command
         except ValidationError as e:
             # This is here to detect validation errors derived from an invalid User
             # Meaning that the user type is not the right one so a login redirect has to happen
@@ -209,48 +211,25 @@ class Repository:
             else:
                 raise e
 
-    def dispatch_event(
-        self,
-        component_id: str,
-        event_handler: str,
-        event_data: dict[str, t.Any],
-    ) -> t.Iterable[ProcessedCommand]:
-        commands = CommandQueue([Execute(component_id, event_handler, event_data)])
-
-        # Command loop
-        try:
-            while commands:
-                for command in self._run_command(commands):
-                    yield command
-        except ValidationError as e:
-            # This is here to detect validation errors derived from an invalid User
-            # Meaning that the user type is not the right one so a login redirect has to happen
-            if any(
-                e
-                for error in e.errors()
-                if error["type"] == "is_instance_of" and error["loc"] == ("user",)
-            ):
-                yield Redirect(LOGIN_URL)
-            else:
-                raise e
-
-    def _run_command(self, commands: CommandQueue) -> t.Generator[ProcessedCommand, None, None]:
+    async def _run_command(self, commands: CommandQueue) -> t.AsyncIterable[ProcessedCommand]:
         command = commands.pop()
         logger.debug("COMMAND: %s", command)
         commands_to_append: list[Command] = []
         match command:
             case Execute(component_id, event_handler, event_data):
                 commands.processing_component_id = component_id
-                match self.get_component_by_id(component_id):
+                match await self.get_component_by_id(component_id):
                     case Destroy() as command:
                         yield command
                     case component:
-                        handler = getattr(component, event_handler)
-                        handler_kwargs = filter_parameters(handler, event_data)
-                        emited_commands = handler(**handler_kwargs)
-                        yield from self._process_emited_commands(
-                            component, emited_commands, commands, during_execute=True
+                        handler: t.Callable[..., t.AsyncIterable[Command]] = getattr(
+                            component, event_handler
                         )
+                        handler_kwargs = filter_parameters(handler, event_data)
+                        async for processed_command in self._call_event_handler(
+                            component, handler, handler_kwargs, commands, during_execute=True
+                        ):
+                            yield processed_command
 
             case SkipRender(component):
                 commands.processing_component_id = component.id
@@ -258,12 +237,12 @@ class Repository:
 
             case BuildAndRender(component_type, state, oob):
                 commands.processing_component_id = state.get("id", "")
-                component = self.build(component_type.__name__, state)
+                component = await self.abuild(component_type.__name__, state)
                 commands_to_append.append(Render(component, oob=oob))
 
             case Render(component, template, oob, lazy):
                 commands.processing_component_id = component.id
-                html = self.render_html(component, oob=oob, template=template, lazy=lazy)
+                html = await db(self.render_html)(component, oob=oob, template=template, lazy=lazy)
                 yield SendHtml(html, debug_trace=f"{component.hx_name}({component.id})")
 
             case Destroy(component_id) as command:
@@ -272,17 +251,21 @@ class Repository:
                 yield command
 
             case Emit(event):
-                for component in self.get_components_by_names(*LISTENERS[type(event)]):
+                async for component in self.get_components_by_names(*LISTENERS[type(event)]):
                     commands.processing_component_id = component.id
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
-                    emited_commands = component._handle_event(event)  # type: ignore
-                    yield from self._process_emited_commands(
-                        component, emited_commands, commands, during_execute=False
-                    )
+                    async for processed_command in self._call_event_handler(
+                        component,
+                        component._handle_event,  # type: ignore
+                        {"event": event},
+                        commands,
+                        during_execute=False,
+                    ):
+                        yield processed_command
 
             case Signal(signals):
                 commands.processing_component_id = ""
-                for component_or_destroy in self.get_components_subscribed_to(signals):
+                async for component_or_destroy in self.get_components_subscribed_to(signals):
                     match component_or_destroy:
                         case Destroy() as command:
                             yield command
@@ -295,18 +278,31 @@ class Repository:
                 yield command
 
         commands.extend(commands_to_append)
-        self.session.flush()
+        await self.session.aflush()
 
-    def _process_emited_commands(
+    async def _call_event_handler(
         self,
         component: HtmxComponent,
-        emmited_commands: t.Iterable[Command] | None,
+        event_handler: t.Callable,
+        kwargs: dict[str, t.Any],
         commands: CommandQueue,
         during_execute: bool,
-    ) -> t.Iterable[ProcessedCommand]:
+    ) -> t.AsyncIterable[ProcessedCommand]:
         component_was_rendered = False
         commands_to_add: list[Command] = []
-        for command in emmited_commands or []:
+
+        handler_type: HandlerType = event_handler.handler_type  # type: ignore
+        match handler_type:
+            case HandlerType.SYNC:
+                emmited_commands = await db(lambda: atomic(event_handler)(**kwargs))() or []
+            case HandlerType.GENERATOR:
+                emmited_commands = await db(lambda: list(atomic(event_handler)(**kwargs)))()
+            case HandlerType.ASYNC:
+                emmited_commands = await event_handler(**kwargs) or []
+            case HandlerType.ASYNC_GENERATOR:
+                emmited_commands = [command async for command in event_handler(**kwargs)]
+
+        for command in emmited_commands:
             component_was_rendered = component_was_rendered or (
                 isinstance(command, (SkipRender, Render)) and command.component.id == component.id
             )
@@ -332,13 +328,13 @@ class Repository:
         commands.extend(commands_to_add)
         self.session.store(component)
 
-    def get_components_subscribed_to(
+    async def get_components_subscribed_to(
         self, signals: set[tuple[str, str]]
-    ) -> t.Iterable[HtmxComponent | Destroy]:
-        return (
-            self.get_component_by_id(c_id)
-            for c_id in sorted(self.session.get_component_ids_subscribed_to(signals))
-        )
+    ) -> t.AsyncIterable[HtmxComponent | Destroy]:
+        for c_id in sorted([
+            cid async for cid in self.session.get_component_ids_subscribed_to(signals)
+        ]):
+            yield await self.get_component_by_id(c_id)
 
     def update_params_from(self, component: HtmxComponent) -> set[str]:
         """Updates self.params based on the state of the component
@@ -358,7 +354,7 @@ class Repository:
                 )
         return updated_params
 
-    def get_component_by_id(self, component_id: str):
+    async def get_component_by_id(self, component_id: str):
         """Return (possibly build) the component by its ID.
 
         If the component was already built, get it unchanged, otherwise build
@@ -367,13 +363,34 @@ class Repository:
         If the `component_id` cannot be found, raise a KeyError.
 
         """
-        if state := self.session.get_state(component_id):
-            return self.build(state["hx_name"], state, retrieve_state=False)
+        if state := await self.session.aget_state(component_id):
+            return await self.abuild(state["hx_name"], state, retrieve_state=False)
         else:
             logger.error(
                 "Component with id {} not found in session {}", component_id, self.session.id
             )
             return Destroy(component_id)
+
+    async def abuild(
+        self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True
+    ):
+        """Build (or update) a component's state."""
+
+        with sentry_span("Repository.build", component_name=component_name):
+            # Retrieve state from storage
+            if retrieve_state and (component_id := state.get("id")):
+                state = ((await self.session.aget_state(component_id)) or {}) | state
+
+            # Patch it with whatever is the the GET params if needed
+            for patcher in _get_query_patchers(component_name):
+                state |= await patcher.aget_update_for_state(self.params)
+
+            # Inject component name and user
+            kwargs = state | {
+                "hx_name": component_name,
+                "user": None if isinstance(self.user, AnonymousUser) else self.user,
+            }
+            return await db(REGISTRY[component_name])(**kwargs)
 
     def build(self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True):
         """Build (or update) a component's state."""
@@ -394,12 +411,12 @@ class Repository:
             }
             return REGISTRY[component_name](**kwargs)
 
-    def get_components_by_names(self, *names: str) -> t.Iterable[HtmxComponent]:
+    async def get_components_by_names(self, *names: str) -> t.AsyncIterable[HtmxComponent]:
         # go over awaken components
         for name in names:
-            for state in self.session.get_all_states():
+            async for state in self.session.get_all_states():
                 if state["hx_name"] == name:
-                    yield self.build(name, {"id": state["id"]})
+                    yield await self.abuild(name, {"id": state["id"]})
 
     def render_html(
         self,
@@ -477,26 +494,59 @@ class Session:
         self.unregistered.add(component_id)
         self.is_dirty = True
 
+    async def aget_state(self, component_id: str) -> dict[str, t.Any] | None:
+        await self._aensure_read()
+        if state := self.states.get(component_id):
+            return json.loads(state)
+
     def get_state(self, component_id: str) -> dict[str, t.Any] | None:
         self._ensure_read()
         if state := self.states.get(component_id):
             return json.loads(state)
 
-    def get_component_ids_subscribed_to(self, signals: set[tuple[str, str]]) -> t.Iterable[str]:
-        self._ensure_read()
+    async def get_component_ids_subscribed_to(
+        self, signals: set[tuple[str, str]]
+    ) -> t.AsyncIterable[str]:
+        await self._aensure_read()
         for component_id, subscribed_to in self.subscriptions.items():
             # here we ignore signals emitted by the component it self
             if subscribed_to.intersection(signal for signal, cid in signals if cid != component_id):
                 yield component_id
 
-    def get_all_states(self) -> t.Iterable[dict[str, t.Any]]:
+    async def get_all_states(self) -> t.AsyncIterable[dict[str, t.Any]]:
         self._ensure_read()
-        return [json.loads(state) for state in self.states.values()]
+        for state in self.states.values():
+            yield json.loads(state)
 
-    def _ensure_read(self):
+    async def _aensure_read(self):
+        conn = async_connection()
         if not self.read:
             subscriptions_were_read = False
-            for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
+            states_by_component_id = await conn.hgetall(f"{self.id}:states")  # type: ignore
+            for component_id, state in states_by_component_id.items():
+                component_id = component_id.decode()
+                if component_id == "__subs__":
+                    # dict[component_id -> list[signals]]
+                    for component_id, signals in json.loads(state).items():
+                        self.subscriptions[component_id] = set(signals)
+                    subscriptions_were_read = True
+                else:
+                    self.states[component_id] = state.decode()
+
+            # TODO: delete later, backwards compatible method
+            if not subscriptions_were_read:
+                _, keys = await conn.sscan(f"{self.id}:subs")  # type: ignore
+                for key in keys:
+                    signal, component_id = key.decode().rsplit(":", 1)
+                    self.subscriptions[component_id].add(signal)
+            self.read = True
+
+    def _ensure_read(self):
+        conn = sync_connection()
+        if not self.read:
+            subscriptions_were_read = False
+            states_by_component_id = conn.hgetall(f"{self.id}:states")
+            for component_id, state in states_by_component_id.items():  # type: ignore
                 component_id = component_id.decode()
                 if component_id == "__subs__":
                     # dict[component_id -> list[signals]]
@@ -514,15 +564,47 @@ class Session:
                     self.subscriptions[component_id].add(signal)
             self.read = True
 
-    def flush(self, ttl: int = SESSION_TTL):
+    async def aflush(self, ttl: int = SESSION_TTL):
+        conn = async_connection()
         if self.is_dirty:
             key = f"{self.id}:states"
             if self.unregistered:
-                conn.hdel(key, *self.unregistered)
+                await conn.hdel(key, *self.unregistered)  # type: ignore
                 self.unregistered.clear()
             if self.states:
-                conn.hset(key, mapping=self.states)
-            conn.hset(key, "__subs__", json.dumps(self.subscriptions))
+                await conn.hset(key, mapping=self.states)  # type: ignore
+            await conn.hset(key, "__subs__", json.dumps(self.subscriptions))  # type: ignore
+            await conn.expire(key, ttl)
+            # The command MEMORY USAGE is considered slow:
+            # https://redis.io/docs/latest/commands/memory-usage/
+            #
+            # So we perform a trivial sampling with some prob to test the memory usage of the state.
+            probe = random.random() <= KEY_SIZE_SAMPLE_PROB
+            if probe and isinstance(usage := await conn.memory_usage(key), int):
+                if KEY_SIZE_ERROR_THRESHOLD and usage > KEY_SIZE_ERROR_THRESHOLD:
+                    logger.error(
+                        "HTMX session's size (%s) exceeded the size threshold %s",
+                        usage,
+                        KEY_SIZE_ERROR_THRESHOLD,
+                    )
+                elif KEY_SIZE_WARN_THRESHOLD and usage > KEY_SIZE_WARN_THRESHOLD:
+                    logger.warning(
+                        "HTMX session's size (%s) exceeded the size threshold %s",
+                        usage,
+                        KEY_SIZE_WARN_THRESHOLD,
+                    )
+            self.is_dirty = False
+
+    def flush(self, ttl: int = SESSION_TTL):
+        conn = sync_connection()
+        if self.is_dirty:
+            key = f"{self.id}:states"
+            if self.unregistered:
+                conn.hdel(key, *self.unregistered)  # type: ignore
+                self.unregistered.clear()
+            if self.states:
+                conn.hset(key, mapping=self.states)  # type: ignore
+            conn.hset(key, "__subs__", json.dumps(self.subscriptions))  # type: ignore
             conn.expire(key, ttl)
             # The command MEMORY USAGE is considered slow:
             # https://redis.io/docs/latest/commands/memory-usage/
