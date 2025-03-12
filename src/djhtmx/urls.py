@@ -2,6 +2,7 @@ from functools import partial
 from http import HTTPStatus
 from typing import assert_never
 
+from asgiref.sync import async_to_sync
 from django.apps import apps
 from django.core.signing import Signer
 from django.http.request import HttpRequest
@@ -9,7 +10,16 @@ from django.http.response import HttpResponse
 from django.urls import path, re_path
 from django.utils.html import format_html
 
-from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, Triggers
+from .component import (
+    REGISTRY,
+    Destroy,
+    DispatchDOMEvent,
+    Focus,
+    HandlerType,
+    Open,
+    Redirect,
+    Triggers,
+)
 from .consumer import Consumer
 from .introspection import parse_request_data
 from .repo import PushURL, ReplaceURL, Repository, SendHtml
@@ -88,14 +98,25 @@ def app_name_of_component(cls: type):
     return cls_module
 
 
-urlpatterns = list(
-    path(
-        f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
-        partial(endpoint, component_name=component_name),
-        name=f"djhtmx.{component_name}",
+urlpatterns = []
+
+for component_name, component in REGISTRY.items():
+    component_endpoint = partial(endpoint, component_name=component_name)
+
+    has_sync_event_handler = any(
+        getattr(component, event_handler).handler_type in (HandlerType.SYNC, HandlerType.GENERATOR)
+        for event_handler in component._event_handler_params
     )
-    for component_name, component in REGISTRY.items()
-)
+    if has_sync_event_handler:
+        component_endpoint = async_to_sync(component_endpoint)
+
+    urlpatterns.append(
+        path(
+            f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
+            component_endpoint,
+            name=f"djhtmx.{component_name}",
+        )
+    )
 
 
 ws_urlpatterns = [
