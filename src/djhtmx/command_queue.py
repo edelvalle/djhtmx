@@ -36,7 +36,7 @@ class CommandQueue:
         self,
         sender: type[models.Model],
         instance: models.Model,
-        created: bool = None,
+        created: bool | None = None,
         **kwargs,
     ):
         if created is None:

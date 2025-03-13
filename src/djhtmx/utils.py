@@ -13,7 +13,7 @@ if t.TYPE_CHECKING:
     T = t.TypeVar("T")
     P = t.ParamSpec("P")
 
-    def db(f: t.Callable[P, T]) -> t.Callable[P, t.Awaitable[T]]: ...
+    def db(f: t.Callable[P, T]) -> t.Callable[P, t.Awaitable[T]]: ...  # noqa: UP047
 
 
 def get_params(obj: HttpRequest | QueryDict | str | None) -> QueryDict:
@@ -42,7 +42,7 @@ def get_params(obj: HttpRequest | QueryDict | str | None) -> QueryDict:
 
 
 def get_model_subscriptions(
-    obj: t.Type[models.Model] | models.Model,
+    obj: type[models.Model] | models.Model,
     actions: t.Sequence[str] = ("created", "updated", "deleted"),
 ) -> set[str]:
     """Get the subscriptions to actions of the model.
@@ -66,8 +66,7 @@ def get_model_subscriptions(
     result = {(model_prefix := f"{app}.{name}")}
     if instance:
         result.add(prefix := f"{model_prefix}.{instance.pk}")
-        for action in actions:
-            result.add(f"{prefix}.{action}")
+        result.update(f"{prefix}.{action}" for action in actions)
     return result
 
 

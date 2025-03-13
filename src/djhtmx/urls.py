@@ -86,14 +86,14 @@ def app_name_of_component(cls: type):
     return cls_module
 
 
-urlpatterns = list(
+urlpatterns = [
     path(
         f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
         partial(endpoint, component_name=component_name),
         name=f"djhtmx.{component_name}",
     )
     for component_name, component in REGISTRY.items()
-)
+]
 
 
 ws_urlpatterns = [

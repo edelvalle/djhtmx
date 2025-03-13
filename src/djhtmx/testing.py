@@ -1,6 +1,7 @@
 from collections import defaultdict
+from collections.abc import Callable, Iterable
 from functools import reduce
-from typing import Any, Callable, Iterable, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 from urllib.parse import urlparse
 
 from django.contrib.auth.models import AnonymousUser
@@ -25,7 +26,8 @@ class Htmx:
         self.client = client
 
     def navigate_to(self, url: str, *args, **kwargs):
-        response = self.client.get(url, follow=True, *args, **kwargs)
+        kwargs.setdefault("follow", True)
+        response = self.client.get(url, *args, **kwargs)
         assert 200 <= response.status_code < 300
         self.path = response.request["PATH_INFO"]
         self.query_string = response.request["QUERY_STRING"]
@@ -33,7 +35,7 @@ class Htmx:
         self.dom = html.fromstring(response.content)
         session_id = reduce(
             lambda session, element: (
-                session if session else json.loads(element.attrib["hx-headers"]).get("HX-Session")
+                session or json.loads(element.attrib["hx-headers"]).get("HX-Session")
             ),
             self.dom.cssselect("[hx-headers]"),
             None,
@@ -63,10 +65,8 @@ class Htmx:
         """Sets the value of an input, by "typing" in to it"""
         element = self._select(selector)
         if (
-            element.tag == "input"
-            and element.attrib.get("type", "text") == "text"
-            or element.tag == "textarea"
-        ):
+            element.tag == "input" and element.attrib.get("type", "text") == "text"
+        ) or element.tag == "textarea":
             if clear:
                 element.attrib["value"] = text
             else:

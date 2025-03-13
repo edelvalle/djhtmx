@@ -1,7 +1,7 @@
 import dataclasses
 import enum
 import json
-from typing import Generator
+from collections.abc import Generator
 
 import orjson
 from django.core.serializers import deserialize, serialize
@@ -22,7 +22,7 @@ def encode(instance: models.Model) -> str:
 
 
 def decode(instance: str) -> models.Model:
-    obj: DeserializedObject = list(deserialize("json", instance))[0]
+    obj: DeserializedObject = next(iter(deserialize("json", instance)))
     obj.object.save = obj.save  # type: ignore
     return obj.object
 
@@ -34,15 +34,15 @@ class HtmxEncoder(json.JSONEncoder):
 
 def default(o):
     try:
-        DjangoJSONEncoder().default(o)
-    except TypeError as e:
+        return DjangoJSONEncoder().default(o)
+    except TypeError:
         if hasattr(o, "__json__"):
             return o.__json__()
 
         if isinstance(o, models.Model):
             return o.pk
 
-        if isinstance(o, (Generator, set, frozenset)):
+        if isinstance(o, Generator | set | frozenset):
             return list(o)
 
         if BaseModel and isinstance(o, BaseModel):
@@ -53,4 +53,4 @@ def default(o):
 
         if isinstance(o, enum.Enum):
             return o.value
-        raise e
+        raise

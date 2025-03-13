@@ -5,7 +5,8 @@ import re
 import time
 import typing as t
 from collections import defaultdict
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
 from os.path import basename
 
@@ -28,7 +29,7 @@ from .query import Query, QueryPatcher
 from .tracing import sentry_span
 from .utils import generate_id
 
-__all__ = ("HtmxComponent", "Query", "ComponentNotFound")
+__all__ = ("ComponentNotFound", "HtmxComponent", "Query")
 
 
 class ComponentNotFound(LookupError):
@@ -103,12 +104,12 @@ class DispatchDOMEvent:
 class SkipRender:
     "Instruct the HTMX engine to avoid the render of the component."
 
-    component: "HtmxComponent"
+    component: HtmxComponent
 
 
 @dataclass(slots=True)
 class BuildAndRender:
-    component: type["HtmxComponent"]
+    component: type[HtmxComponent]
     state: dict[str, t.Any]
     oob: str = "true"
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
@@ -306,8 +307,8 @@ class HtmxComponent(BaseModel):
 
         cls.__check_consistent_event_handler(strict=settings.STRICT_EVENT_HANDLER_CONSISTENCY_CHECK)
         if public:
-            if event_handler := getattr(cls, "_handle_event", None):
-                for event_type in get_event_handler_event_types(event_handler):
+            if handle_event := getattr(cls, "_handle_event", None):
+                for event_type in get_event_handler_event_types(handle_event):
                     LISTENERS[event_type].add(component_name)
 
             cls._properties = {
@@ -315,7 +316,7 @@ class HtmxComponent(BaseModel):
                 for attr in dir(cls)
                 if not attr.startswith("_")
                 if attr not in PYDANTIC_MODEL_METHODS
-                if isinstance(getattr(cls, attr), (property, cached_property))
+                if isinstance(getattr(cls, attr), property | cached_property)
             }
 
         return super().__init_subclass__()
@@ -349,7 +350,7 @@ class HtmxComponent(BaseModel):
             if (method := getattr(base, "_handle_event", None)) is not None
         }
         if len(parents) > 1:
-            resolved = getattr(cls, "_handle_event")
+            resolved = cls._handle_event  # type: ignore
             if resolved in parents:
                 bases = ", ".join(
                     base.__name__

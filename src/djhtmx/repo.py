@@ -4,7 +4,8 @@ import logging
 import random
 import typing as t
 from collections import defaultdict
-from dataclasses import dataclass, field as Field
+from dataclasses import dataclass
+from dataclasses import field as Field
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.signing import Signer
@@ -130,7 +131,7 @@ class Repository:
                 session=session,
                 params=get_params(request),
             )
-            setattr(request, "htmx_repo", result)
+            request.htmx_repo = result  # type: ignore
         return result
 
     @classmethod
@@ -207,7 +208,7 @@ class Repository:
             ):
                 yield Redirect(LOGIN_URL)
             else:
-                raise e
+                raise
 
     def dispatch_event(
         self,
@@ -220,8 +221,7 @@ class Repository:
         # Command loop
         try:
             while commands:
-                for command in self._run_command(commands):
-                    yield command
+                yield from self._run_command(commands)
         except ValidationError as e:
             # This is here to detect validation errors derived from an invalid User
             # Meaning that the user type is not the right one so a login redirect has to happen
@@ -232,7 +232,7 @@ class Repository:
             ):
                 yield Redirect(LOGIN_URL)
             else:
-                raise e
+                raise
 
     def _run_command(self, commands: CommandQueue) -> t.Generator[ProcessedCommand, None, None]:
         command = commands.pop()
@@ -308,7 +308,7 @@ class Repository:
         commands_to_add: list[Command] = []
         for command in emmited_commands or []:
             component_was_rendered = component_was_rendered or (
-                isinstance(command, (SkipRender, Render)) and command.component.id == component.id
+                isinstance(command, SkipRender | Render) and command.component.id == component.id
             )
             if (
                 component_was_rendered
@@ -371,7 +371,7 @@ class Repository:
             return self.build(state["hx_name"], state, retrieve_state=False)
         else:
             logger.error(
-                "Component with id {} not found in session {}", component_id, self.session.id
+                "Component with id %s not found in session %s", component_id, self.session.id
             )
             return Destroy(component_id)
 

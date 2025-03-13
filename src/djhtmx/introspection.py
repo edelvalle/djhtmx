@@ -1,6 +1,7 @@
 import datetime
 import enum
 import inspect
+import operator
 import types
 import typing as t
 from collections import defaultdict
@@ -160,7 +161,7 @@ def filter_parameters(f: t.Callable, kwargs: dict[str, t.Any]):
         return {
             param: value
             for param, value in kwargs.items()
-            if param in inspect.signature(f).parameters.keys()
+            if param in inspect.signature(f).parameters
         }
 
 
@@ -200,7 +201,7 @@ def _parse_obj(data: t.Iterable[tuple[list[str], t.Any]], output=None) -> dict[s
             output[fragment] = _parse_obj([(tail, value)]) if tail else value
 
     for field, items in arrays.items():
-        output[field] = [v for _, v in sorted(items.items(), key=lambda kv: kv[0])]
+        output[field] = [v for _, v in sorted(items.items(), key=operator.itemgetter(0))]
     return output
 
 
@@ -231,7 +232,7 @@ def get_annotation_adapter(annotation):
 infallible_bool_adapter = TypeAdapter(
     t.Annotated[
         bool,
-        BeforeValidator(lambda v: True if v == "t" else False),
+        BeforeValidator(lambda v: v == "t"),
         PlainSerializer(lambda v: "t" if v else "f"),
     ]
 )

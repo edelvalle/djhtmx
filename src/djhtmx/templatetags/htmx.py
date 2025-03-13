@@ -73,7 +73,7 @@ def add_delay_jitter(event, arg=None):
 def htmx(
     context,
     _name: str,
-    _state: dict[str, t.Any] = None,
+    _state: dict[str, t.Any] | None = None,
     *,
     lazy: t.Literal["once"] | bool = False,
     **state,
@@ -142,7 +142,7 @@ def on(
     context,
     _trigger,
     _event_handler=None,
-    hx_include: str = None,
+    hx_include: str | None = None,
     **kwargs,
 ):
     """Binds an event to a handler
@@ -180,9 +180,9 @@ def on(
     component: HtmxComponent = context["this"]
 
     if settings.DEBUG:
-        assert (
-            _event_handler in component._event_handler_params
-        ), f"{type(component).__name__}.{_event_handler} event handler not found"
+        assert _event_handler in component._event_handler_params, (
+            f"{type(component).__name__}.{_event_handler} event handler not found"
+        )
 
     if not hx_include:
         has_implicit_params = bool(component._event_handler_params[_event_handler] - set(kwargs))

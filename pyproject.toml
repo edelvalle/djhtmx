@@ -90,6 +90,7 @@ ignore = [
   "S101",   # Do not user asserts (we need assertions to check invariant conditions)
   "S311", # Use pseudo random number generators (we don't do cryptography, I hope)
   "TRY003", # No long messages in exception message (it's fine (╯°□°）╯︵ ┻━┻)
+  "C901", # Complex functions
 ]
 select = [
   "C",
