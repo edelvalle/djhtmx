@@ -16,7 +16,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     ...,
-    "djhtmx.Middleware",
+    "djhtmx.middleware",
 ]
 
 ```
