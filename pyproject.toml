@@ -45,10 +45,9 @@ dev-dependencies = [
     "django-stubs-ext~=5.0.4",
     "djlint~=1.34.1",
     "ipython~=8.26.0",
-    "basedpyright==1.17",
-    "ruff==0.6.1",
+    "basedpyright==1.28.1",
+    "ruff==0.9.10",
     "whitenoise~=6.7.0",
-    "isort~=5.13.2",
     "ipdb~=0.13.13",
     "django-extensions~=3.2.3",
     "uvicorn[standard]>=0.30.6",
@@ -73,19 +72,71 @@ packages = ["src/djhtmx"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
+fix = true
+
+
+[tool.ruff.lint]
+preview = true
+ignore = [
+  "E501", # line too long
+  "E741", # do not use variables named ‘l’, ‘O’, or ‘I’
+  "B011",   # 'assert False' is fine.
+  "ISC001", # {name} should be imported as {asname}
+  "SIM300", # rewrite `4 < rating` as `raging > 4` (this is done to show that 4 is less than rating)
+  "SIM905", # [*] Consider using a list literal instead of `'a b c d....'.split`, (short code)
+  "PLC0415", # import should be at the top of the file, (we have circular imports we need this)
+  "S308",   # It's ok to use mark_safe
+  "S101",   # Do not user asserts (we need assertions to check invariant conditions)
+  "S311", # Use pseudo random number generators (we don't do cryptography, I hope)
+  "TRY003", # No long messages in exception message (it's fine (╯°□°）╯︵ ┻━┻)
+]
+select = [
+  "C",
+  "E",
+  "F",
+  "W",
+  "B",
+  "I",
+  "INT",
+  "ISC",    # Implicit string concat
+  "G",      # f-string, %, and format in loggers is not logger-friendly.
+  "S",      # Bandit (security stuff)
+  "SIM",    # Simplifications
+  "PLC",    # Pylint rule
+  "PLE",    # Basic errors
+  "UP",     # Py upgrade
+  "FURB",   # Refurb
+  "RUF",    # Ruff specific rules
+  "TRY",    # Tryceraptos (Error handling)
+  "DTZ005", # avoid usage of datetime.now()
+  "W191",   # Indentation contains tabs
+  "W605",   # Invalid escape sequence
+  "W291",   # Trailing whitespace
+  "W292",   # No newline at end of file
+  "W293",   # Blank line contains whitespace
+  "TID251", # enable: tool.ruff.lint.flake8-tidy-imports.banned-api
+  "DTZ003", # Disable utcnow: https://docs.astral.sh/ruff/rules/call-datetime-utcnow/#call-datetime-utcnow-dtz003
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"django.utils.functional.cached_property".msg = "Use `from functools import cached_property` instead"
+
+[tool.ruff.lint.per-file-ignores]
+# PLC2801: calling `__enter__()` and `__exit__()` is needed in some test setups
+# S105: hardcoded passwords for testing
+# S106: hardcoded password argument
+# RUF012: Mutable class attributes should be annotated with `typing.ClassVar`
+# RUF039: regex in migrations are translated from raw into string
+"**/tests.py" = ["PLC2801", "S105", "S106"]
+"**/tests/**" = ["PLC2801", "S105", "S106"]
+"**/models.py" = ["RUF012"]
+"**/models/**" = ["RUF012"]
+"**/migrations/**" = ["RUF012", "RUF039"]
+
 
 [tool.ruff.format]
 preview = true
-exclude = ["migrations"]
-
-[tool.isort]
-line_length = 100
-profile ="django"
-src_paths = ["src"]
-skip_glob = ["src/**/migrations/*", "src/**/__init__.py"]
-skip_gitignore = true
-
 
 [tool.basedpyright]
 typeCheckingMode="standard"

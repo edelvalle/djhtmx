@@ -33,7 +33,6 @@ upgrade: bootstrap
 .PHONY: ugprade
 
 format-python:
-	@$(RUN) isort src/
 	@$(RUN) ruff check --fix src/
 	@$(RUN) ruff format src/
 
