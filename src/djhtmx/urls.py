@@ -31,7 +31,12 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
         for command in repo.dispatch_event(
             component_id,
             event_handler,
-            parse_request_data(request.POST),
+            parse_request_data(request.POST)
+            | (
+                {"prompt": prompt}
+                if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
+                else {}
+            ),
         ):
             # Command loop
             match command:
