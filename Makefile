@@ -25,8 +25,9 @@ bootstrap:
 	fi
 .PHONY: bootstrap
 
-install: bootstrap uv.lock
+sync install: bootstrap uv.lock
 	@$(UV) sync --frozen
+.PHONY: install
 
 upgrade: bootstrap
 	@$(UV) sync
