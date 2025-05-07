@@ -6,3 +6,5 @@ __pycache__/
 *.sqlite3
 .python-version
 requirements*.lock
+.envrc
+.env
