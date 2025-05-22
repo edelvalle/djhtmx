@@ -451,6 +451,28 @@ class Triggers:
         return {header: json.dumps(value) for header, value in headers if value}
 
 
+F = t.TypeVar("F")
+
+
+def annotated_handler(**annotations) -> t.Callable[[F], F]:
+    """Annotate the HTMX handler with customized values.
+
+    Some of these annotations are HtmxUnhandledError use the annotations so that the application can
+    have more detailed error recovery handlers.
+
+    """
+
+    def decorator(fn):
+        if not hasattr(fn, "_htmx_annotations_"):
+            fn._htmx_annotations_ = htmx_annotations = {}
+        else:
+            htmx_annotations = fn._htmx_annotations_
+        htmx_annotations.update(annotations)
+        return fn
+
+    return decorator
+
+
 logger = logging.getLogger(__name__)
 
 
