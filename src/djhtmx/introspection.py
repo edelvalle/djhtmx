@@ -16,8 +16,6 @@ from django.db import models
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer, TypeAdapter
 
-# model
-
 
 @dataclass(slots=True)
 class ModelRelatedField:

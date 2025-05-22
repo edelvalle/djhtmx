@@ -29,9 +29,17 @@ sync install: bootstrap uv.lock
 	@$(UV) sync --frozen
 .PHONY: install
 
-upgrade: bootstrap
-	@$(UV) sync
-.PHONY: ugprade
+lock: bootstrap
+ifdef update_all
+	@$(UV) sync -U $(sync_extra_args)
+else
+	@$(UV) sync $(sync_extra_args)
+endif
+.PHONY: lock
+
+upgrade update: bootstrap
+	@$(MAKE) lock update_all=1
+.PHONY: update upgrade
 
 format-python:
 	@$(RUN) ruff check --fix src/
