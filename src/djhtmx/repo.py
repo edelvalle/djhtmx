@@ -15,6 +15,7 @@ from django.utils.safestring import SafeString, mark_safe
 from pydantic import ValidationError
 from uuid6 import uuid7
 
+from djhtmx.global_events import HtmxUnhandledError
 from djhtmx.tracing import sentry_span
 
 from . import json
@@ -191,7 +192,6 @@ class Repository:
         event_data: dict[str, t.Any],
     ) -> t.AsyncIterable[ProcessedCommand]:
         commands = CommandQueue([Execute(component_id, event_handler, event_data)])
-
         # Command loop
         try:
             while commands:
@@ -244,10 +244,20 @@ class Repository:
                 match self.get_component_by_id(component_id):
                     case Destroy() as command:
                         yield command
-                    case component:
+                    case HtmxComponent() as component:
                         handler = getattr(component, event_handler)
                         handler_kwargs = filter_parameters(handler, event_data)
-                        emited_commands = handler(**handler_kwargs)
+                        try:
+                            emited_commands = handler(**handler_kwargs)
+                        except Exception as error:
+                            annotations = getattr(handler, "_htmx_annotations_", None)
+                            logger.exception(
+                                "HTMX unhandled exception in component %s",
+                                component.__class__.__name__,
+                            )
+                            emited_commands = [
+                                Emit(HtmxUnhandledError(error, handler_annotations=annotations))
+                            ]
                         yield from self._process_emited_commands(
                             component, emited_commands, commands, during_execute=True
                         )
@@ -275,7 +285,18 @@ class Repository:
                 for component in self.get_components_by_names(*LISTENERS[type(event)]):
                     commands.processing_component_id = component.id
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
-                    emited_commands = component._handle_event(event)  # type: ignore
+                    try:
+                        emited_commands = component._handle_event(event)  # type: ignore
+                    except Exception as error:
+                        logger.exception(
+                            "HTMX unhandled error in the event handler of %s",
+                            component.__class__.__name__,
+                        )
+                        # Don't enter a spiral of death with HtmxUnhandledError
+                        if not isinstance(event, HtmxUnhandledError):
+                            emited_commands = [Emit(HtmxUnhandledError(error))]
+                        else:
+                            raise
                     yield from self._process_emited_commands(
                         component, emited_commands, commands, during_execute=False
                     )
@@ -358,7 +379,7 @@ class Repository:
                 )
         return updated_params
 
-    def get_component_by_id(self, component_id: str):
+    def get_component_by_id(self, component_id: str) -> Destroy | HtmxComponent:
         """Return (possibly build) the component by its ID.
 
         If the component was already built, get it unchanged, otherwise build
