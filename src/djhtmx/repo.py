@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from uuid6 import uuid7
 
 from djhtmx.global_events import HtmxUnhandledError
-from djhtmx.tracing import sentry_span
+from djhtmx.tracing import tracing_span
 
 from . import json
 from .command_queue import CommandQueue
@@ -399,7 +399,7 @@ class Repository:
     def build(self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True):
         """Build (or update) a component's state."""
 
-        with sentry_span("Repository.build", component_name=component_name):
+        with tracing_span("Repository.build", component_name=component_name):
             # Retrieve state from storage
             if retrieve_state and (component_id := state.get("id")):
                 state = (self.session.get_state(component_id) or {}) | state
@@ -430,7 +430,7 @@ class Repository:
         lazy: bool | None = None,
     ) -> SafeString:
         lazy = component.lazy if lazy is None else lazy
-        with sentry_span(
+        with tracing_span(
             "Repository.render_html",
             component_name=component.hx_name,
             oob=str(oob),

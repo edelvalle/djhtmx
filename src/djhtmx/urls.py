@@ -13,7 +13,7 @@ from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirec
 from .consumer import Consumer
 from .introspection import parse_request_data
 from .repo import PushURL, ReplaceURL, Repository, SendHtml
-from .tracing import sentry_span
+from .tracing import tracing_span
 
 signer = Signer()
 
@@ -22,7 +22,7 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
     if "HTTP_HX_SESSION" not in request.META:
         return HttpResponse("Missing header HX-Session", status=HTTPStatus.BAD_REQUEST)
 
-    with sentry_span(f"{component_name}.{event_handler}"):
+    with tracing_span(f"{component_name}.{event_handler}"):
         repo = Repository.from_request(request)
         content: list[str] = []
         headers: dict[str, str] = {}

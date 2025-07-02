@@ -6,28 +6,31 @@ PYTHON_VERSION ?= 3.12
 SHELL := /bin/bash
 PROJECT_NAME := djhtmx
 
-ifdef INSIDE_EMACS
-	UV ?= NO_COLOR=1 UV_PYTHON=${PYTHON_VERSION} uv
-	UV_RUN ?= $(UV) run
-else
-	UV ?= UV_PYTHON=${PYTHON_VERSION} uv
-	UV_RUN ?= $(UV) run
-endif
-
+UV ?= uv
+UV_RUN ?= uv run
+UV_PYTHON_PREFERENCE ?= only-managed
 RUN ?= $(UV_RUN)
 
-REQUIRED_UV_VERSION ?= 0.5.31
+REQUIRED_UV_VERSION ?= 0.7.3
 bootstrap:
 	@INSTALLED_UV_VERSION=$$(uv --version 2>/dev/null | awk '{print $$2}' || echo "0.0.0"); \
     DETECTED_UV_VERSION=$$(printf '%s\n' "$(REQUIRED_UV_VERSION)" "$$INSTALLED_UV_VERSION" | sort -V | head -n1); \
 	if [ "$$DETECTED_UV_VERSION" != "$(REQUIRED_UV_VERSION)" ]; then \
-		uv self update | curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		uv self update $(REQUIRED_UV_VERSION) || curl -LsSf https://astral.sh/uv/$(REQUIRED_UV_VERSION)/install.sh | sh; \
 	fi
+	@echo $(PYTHON_VERSION) > .python-version
 .PHONY: bootstrap
 
-sync install: bootstrap uv.lock
-	@$(UV) sync --frozen
+install: bootstrap
+	@$(UV) sync --python-preference=$(UV_PYTHON_PREFERENCE) --frozen $(sync_extra_args) \
+      || $(UV) sync --python-preference=$(UV_PYTHON_PREFERENCE) $(sync_extra_args)
 .PHONY: install
+
+sync_extra_args ?=
+sync: bootstrap
+	@$(UV) sync --python-preference=$(UV_PYTHON_PREFERENCE) --frozen $(sync_extra_args)
+.PHONY: sync
+
 
 lock: bootstrap
 ifdef update_all

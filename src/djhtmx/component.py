@@ -26,7 +26,7 @@ from .introspection import (
     get_function_parameters,
 )
 from .query import Query, QueryPatcher
-from .tracing import sentry_span
+from .tracing import tracing_span
 from .utils import generate_id
 
 __all__ = ("ComponentNotFound", "HtmxComponent", "Query")
@@ -404,7 +404,7 @@ class HtmxComponent(BaseModel):
                 cache[attr] = result
             return result
 
-        with sentry_span(f"{FQN[type(self)]}._get_context"):
+        with tracing_span(f"{FQN[type(self)]}._get_context"):
             render_cache = {}
             return {
                 attr: (
