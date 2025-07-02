@@ -1,6 +1,6 @@
 import contextlib
 
-from django.conf import settings
+from djhtmx import settings
 
 # pragma: no cover
 
