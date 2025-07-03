@@ -291,7 +291,16 @@ class HtmxComponent(BaseModel):
         for name in list(cls.__annotations__):
             if not name.startswith("_"):
                 annotation = hints[name]
-                cls.__annotations__[name] = annotate_model(annotation)
+                if isinstance(annotation, type) and issubclass(annotation, models.Model):
+                    # Convert ORM model annotation into property with stub
+                    getter = lambda self: None
+                    setter = lambda self, value: None
+                    prop = property(getter)
+                    prop = prop.setter(setter)
+                    setattr(cls, name, prop)
+                    cls.__annotations__.pop(name, None)
+                else:
+                    cls.__annotations__[name] = annotate_model(annotation)
 
         cls._event_handler_params = {
             name: get_function_parameters(event_handler)
