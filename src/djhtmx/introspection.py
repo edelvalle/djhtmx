@@ -253,6 +253,7 @@ def is_basic_type(ann):
     """
     return (
         ann in _SIMPLE_TYPES
+        #  __origin__ -> model in 'Annotated[model, BeforeValidator(...), PlainSerializer(...)]'
         or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
         or is_collection_annotation(ann)
