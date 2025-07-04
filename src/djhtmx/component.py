@@ -318,26 +318,11 @@ class HtmxComponent(BaseModel):
                 if model_annotation:
                     cls._hx_records_annotations[name] = model_annotation
 
-                    # Convert ORM model annotation into lazy-loading property
-                    def getter(self, _name=name, _model=model_annotation, _optional=model_optional):
-                        if _name not in self._hx_records:
-                            pk = self.hx_record_pks.get(_name)
-                            if pk is not None:
-                                record = _model.objects.get(pk=pk)
-                                self._hx_records[_name] = record
-                            else:
-                                raise _model.DoesNotExist
-                        return self._hx_records.get(_name)
-
-                    def setter(self, value, _name=name):
-                        if value is None:
-                            self._hx_records.pop(_name, None)
-                            self.hx_record_pks[_name] = None
-                        else:
-                            self._hx_records[_name] = value
-                            self.hx_record_pks[_name] = value.pk
-
-                    prop = property(getter, setter)
+                    # Assign lazy-loading property via helper methods.
+                    prop = property(
+                        lambda self, _n=name: self._hx_record_getter(_n),
+                        lambda self, value, _n=name: self._hx_record_setter(_n, value),
+                    )
                     setattr(cls, name, prop)
                     cls.__annotations__.pop(name, None)
                 else:
@@ -440,6 +425,26 @@ class HtmxComponent(BaseModel):
         dict[AttributeName, UUID | str | int | None],
         Field(default_factory=dict, description="The HTMX component state"),
     ]
+
+    # Lazy record accessors
+    def _hx_record_getter(self, name: str):
+        if name not in self._hx_records:
+            model = self._hx_records_annotations[name]
+            pk = self.hx_record_pks.get(name)
+            if pk is not None:
+                record = model.objects.get(pk=pk)
+                self._hx_records[name] = record
+            else:
+                raise model.DoesNotExist
+        return self._hx_records.get(name)
+
+    def _hx_record_setter(self, name: str, value: Any):
+        if value is None:
+            self._hx_records.pop(name, None)
+            self.hx_record_pks[name] = None
+        else:
+            self._hx_records[name] = value
+            self.hx_record_pks[name] = value.pk
 
     def __repr__(self) -> str:
         return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
