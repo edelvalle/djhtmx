@@ -302,12 +302,12 @@ class HtmxComponent(BaseModel):
         # we only need to rewrite the actual annotations of the current class,
         # that's why we iter over the '__annotations__' names.
         # inherit record annotations from base classes in MRO order
-        merged_records_annotation: dict[AttributeName, tuple[type[models.Model], bool]] = {}
+        merged_records_annotations: dict[AttributeName, tuple[type[models.Model], bool]] = {}
         for base in reversed(cls.__mro__[1:]):
-            parent = getattr(base, "_hx_records_annotation", None)
+            parent = getattr(base, "_hx_records_annotations", None)
             if parent:
-                merged_records_annotation.update(parent)
-        cls._hx_records_annotation = merged_records_annotation
+                merged_records_annotations.update(parent)
+        cls._hx_records_annotations = merged_records_annotations
 
         hints = get_type_hints(cls, include_extras=True)
         for name in list(cls.__annotations__):
