@@ -9,7 +9,15 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
 from os.path import basename
-from typing import Annotated, Any, ClassVar, Literal, ParamSpec, TypeVar, get_type_hints, get_origin, get_args, Union
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Literal,
+    ParamSpec,
+    TypeVar,
+    get_type_hints,
+)
 from uuid import UUID
 
 from django.contrib.auth.models import AbstractBaseUser
@@ -24,9 +32,9 @@ from . import json, settings
 from .introspection import (
     Unset,
     annotate_model,
+    get_annotated_model,
     get_event_handler_event_types,
     get_function_parameters,
-    issubclass_safe,
 )
 from .query import Query, QueryPatcher
 from .tracing import tracing_span
@@ -306,16 +314,7 @@ class HtmxComponent(BaseModel):
             if not name.startswith("_"):
                 annotation = hints[name]
                 # detect ORM model and Optional[Model] annotations for lazy loading
-                model_annotation = None
-                if issubclass_safe(annotation, models.Model):
-                    model_annotation = annotation
-                else:
-                    origin = get_origin(annotation)
-                    if origin is Union:
-                        args = get_args(annotation)
-                        non_none = [arg for arg in args if arg is not type(None)]
-                        if len(non_none) == 1 and issubclass_safe(non_none[0], models.Model):
-                            model_annotation = non_none[0]
+                model_annotation, _model_optional = get_annotated_model(annotation)
                 if model_annotation:
                     cls._hx_records_annotations[name] = model_annotation
                     # Convert ORM model annotation into property with stub

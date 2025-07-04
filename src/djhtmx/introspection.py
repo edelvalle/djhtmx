@@ -293,6 +293,10 @@ def get_annotated_model(annotation) -> tuple[type[models.Model], bool] | tuple[N
     tuple with the model, and a boolean indicating if its optional.
 
     """
+    # unwrap Annotated[...] types
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        annotation = get_args(annotation)[0]
     if issubclass_safe(annotation, models.Model):
         return annotation, False
     elif type_ := get_origin(annotation):
