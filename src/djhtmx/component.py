@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 import re
 import time
-import typing as t
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
 from os.path import basename
+from typing import Annotated, Any, Literal, ParamSpec, TypeVar, get_type_hints
 
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import models
@@ -41,7 +42,7 @@ class Destroy:
     "Destroys the given component in the browser and in the caches."
 
     component_id: str
-    command: t.Literal["destroy"] = "destroy"
+    command: Literal["destroy"] = "destroy"
 
 
 @dataclass(slots=True)
@@ -49,10 +50,10 @@ class Redirect:
     "Executes a browser redirection to the given URL."
 
     url: str
-    command: t.Literal["redirect"] = "redirect"
+    command: Literal["redirect"] = "redirect"
 
     @classmethod
-    def to(cls, to: t.Callable[[], t.Any] | models.Model | str, *args, **kwargs):
+    def to(cls, to: Callable[[], Any] | models.Model | str, *args, **kwargs):
         return cls(resolve_url(to, *args, **kwargs))
 
 
@@ -65,10 +66,10 @@ class Open:
     rel: str = "noopener noreferrer"
     target: str = "_blank"
 
-    command: t.Literal["open-tab"] = "open-tab"
+    command: Literal["open-tab"] = "open-tab"
 
     @classmethod
-    def to(cls, to: t.Callable[[], t.Any] | models.Model | str, *args, **kwargs):
+    def to(cls, to: Callable[[], Any] | models.Model | str, *args, **kwargs):
         return cls(resolve_url(to, *args, **kwargs))
 
 
@@ -77,14 +78,14 @@ class Focus:
     "Executes a '.focus()' on the browser element that matches `selector`"
 
     selector: str
-    command: t.Literal["focus"] = "focus"
+    command: Literal["focus"] = "focus"
 
 
 @dataclass(slots=True)
 class Execute:
     component_id: str
     event_handler: str
-    event_data: dict[str, t.Any]
+    event_data: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -93,11 +94,11 @@ class DispatchDOMEvent:
 
     target: str
     event: str
-    detail: t.Any
+    detail: Any
     bubbles: bool = False
     cancelable: bool = False
     composed: bool = False
-    command: t.Literal["dispatch_dom_event"] = "dispatch_dom_event"
+    command: Literal["dispatch_dom_event"] = "dispatch_dom_event"
 
 
 @dataclass(slots=True)
@@ -110,7 +111,7 @@ class SkipRender:
 @dataclass(slots=True)
 class BuildAndRender:
     component: type[HtmxComponent]
-    state: dict[str, t.Any]
+    state: dict[str, Any]
     oob: str = "true"
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
@@ -148,7 +149,7 @@ class Render:
 class Emit:
     "Emit a backend-only event."
 
-    event: t.Any
+    event: Any
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 
@@ -175,7 +176,7 @@ Command = (
 )
 
 
-RenderFunction = t.Callable[[Context | dict[str, t.Any] | None], SafeString]
+RenderFunction = Callable[[Context | dict[str, Any] | None], SafeString]
 
 PYDANTIC_MODEL_METHODS = {
     attr_name for attr_name in dir(BaseModel) if not attr_name.startswith("_")
@@ -200,12 +201,12 @@ def _get_querystring_subscriptions(component_name: str) -> frozenset[str]:
     })
 
 
-A = t.TypeVar("A")
-B = t.TypeVar("B")
-P = t.ParamSpec("P")
+A = TypeVar("A")
+B = TypeVar("B")
+P = ParamSpec("P")
 
 
-def _compose(f: t.Callable[P, A], g: t.Callable[[A], B]) -> t.Callable[P, B]:
+def _compose(f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B]:
     def result(*args: P.args, **kwargs: P.kwargs):
         return g(f(*args, **kwargs))
 
@@ -286,7 +287,7 @@ class HtmxComponent(BaseModel):
         # We use 'get_type_hints' to resolve the forward refs if needed, but
         # we only need to rewrite the actual annotations of the current class,
         # that's why we iter over the '__annotations__' names.
-        hints = t.get_type_hints(cls, include_extras=True)
+        hints = get_type_hints(cls, include_extras=True)
         for name in list(cls.__annotations__):
             if not name.startswith("_"):
                 annotation = hints[name]
@@ -370,8 +371,8 @@ class HtmxComponent(BaseModel):
                     )
 
     # State
-    id: t.Annotated[str, Field(default_factory=generate_id)]
-    user: t.Annotated[AbstractBaseUser | None, Field(exclude=True)]
+    id: Annotated[str, Field(default_factory=generate_id)]
+    user: Annotated[AbstractBaseUser | None, Field(exclude=True)]
     hx_name: str
     lazy: bool = False
 
@@ -387,7 +388,7 @@ class HtmxComponent(BaseModel):
     def _get_all_subscriptions(self) -> set[str]:
         return self.subscriptions | _get_querystring_subscriptions(self.hx_name)
 
-    def _get_template(self, template: str | None = None) -> t.Callable[..., SafeString]:
+    def _get_template(self, template: str | None = None) -> Callable[..., SafeString]:
         return get_template(template or self._template_name)
 
     def _get_lazy_context(self):
@@ -426,19 +427,17 @@ class Triggers:
 
     """
 
-    _trigger: dict[str, list[t.Any]] = dataclass_field(default_factory=lambda: defaultdict(list))
-    _after_swap: dict[str, list[t.Any]] = dataclass_field(default_factory=lambda: defaultdict(list))
-    _after_settle: dict[str, list[t.Any]] = dataclass_field(
-        default_factory=lambda: defaultdict(list)
-    )
+    _trigger: dict[str, list[Any]] = dataclass_field(default_factory=lambda: defaultdict(list))
+    _after_swap: dict[str, list[Any]] = dataclass_field(default_factory=lambda: defaultdict(list))
+    _after_settle: dict[str, list[Any]] = dataclass_field(default_factory=lambda: defaultdict(list))
 
-    def add(self, name, what: t.Any):
+    def add(self, name, what: Any):
         self._trigger[name].append(what)
 
-    def after_swap(self, name, what: t.Any):
+    def after_swap(self, name, what: Any):
         self._after_swap[name].append(what)
 
-    def after_settle(self, name, what: t.Any):
+    def after_settle(self, name, what: Any):
         self._after_settle[name].append(what)
 
     @property
@@ -451,10 +450,10 @@ class Triggers:
         return {header: json.dumps(value) for header, value in headers if value}
 
 
-F = t.TypeVar("F")
+F = TypeVar("F")
 
 
-def annotated_handler(**annotations) -> t.Callable[[F], F]:
+def annotated_handler(**annotations) -> Callable[[F], F]:
     """Annotate the HTMX handler with customized values.
 
     Some of these annotations are HtmxUnhandledError use the annotations so that the application can

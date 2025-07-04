@@ -1,5 +1,5 @@
 import random
-import typing as t
+from typing import Any, Literal
 
 from django import template
 from django.core.signing import Signer
@@ -73,9 +73,9 @@ def add_delay_jitter(event, arg=None):
 def htmx(
     context,
     _name: str,
-    _state: dict[str, t.Any] | None = None,
+    _state: dict[str, Any] | None = None,
     *,
-    lazy: t.Literal["once"] | bool = False,
+    lazy: Literal["once"] | bool = False,
     **state,
 ):
     """Inserts an HTMX Component.
@@ -199,7 +199,7 @@ def on(
     return format_html_attrs(attrs)
 
 
-def format_html_attrs(attrs: dict[str, t.Any]):
+def format_html_attrs(attrs: dict[str, Any]):
     return format_html_join(
         "\n",
         '{}="{}"',
