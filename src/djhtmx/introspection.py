@@ -3,12 +3,22 @@ import enum
 import inspect
 import operator
 import types
-import typing as t
 from collections import defaultdict
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date
 from functools import cache
 from inspect import Parameter, _ParameterKind
+from typing import (
+    Annotated,
+    Any,
+    TypedDict,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    is_typeddict,
+)
 from uuid import UUID
 
 from django.apps import apps
@@ -28,7 +38,7 @@ MODEL_RELATED_FIELDS: dict[type[models.Model], tuple[ModelRelatedField, ...]] = 
 
 
 def Model(model: type[models.Model]):
-    return t.Annotated[
+    return Annotated[
         model,
         BeforeValidator(
             lambda value: (
@@ -44,7 +54,7 @@ def Model(model: type[models.Model]):
 
 def QuerySet(qs: type[models.QuerySet]):
     [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
-    return t.Annotated[
+    return Annotated[
         qs,
         BeforeValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
         PlainSerializer(
@@ -63,18 +73,18 @@ def annotate_model(annotation):
         return Model(annotation)
     elif issubclass_safe(annotation, models.QuerySet):
         return QuerySet(annotation)
-    elif t.is_typeddict(annotation):
-        return t.TypedDict(
+    elif is_typeddict(annotation):
+        return TypedDict(
             annotation.__name__,  # type: ignore
             {
                 k: annotate_model(v)  # type: ignore
-                for k, v in t.get_type_hints(annotation).items()
+                for k, v in get_type_hints(annotation).items()
             },
         )
-    elif type_ := t.get_origin(annotation):
-        if type_ is types.UnionType or type_ is t.Union:
-            type_ = t.Union
-        match t.get_args(annotation):
+    elif type_ := get_origin(annotation):
+        if type_ is types.UnionType or type_ is Union:
+            type_ = Union
+        match get_args(annotation):
             case ():
                 return type_
             case (param,):
@@ -113,7 +123,7 @@ def issubclass_safe(o, types):
 
 
 def get_function_parameters(
-    function: t.Callable,
+    function: Callable,
     exclude_kinds: tuple[_ParameterKind, ...] = (),
 ) -> frozenset[str]:
     return frozenset(
@@ -149,7 +159,7 @@ def get_related_fields(model):
 # filtering
 
 
-def filter_parameters(f: t.Callable, kwargs: dict[str, t.Any]):
+def filter_parameters(f: Callable, kwargs: dict[str, Any]):
     has_kwargs = any(
         param.kind == Parameter.VAR_KEYWORD for param in inspect.signature(f).parameters.values()
     )
@@ -166,7 +176,7 @@ def filter_parameters(f: t.Callable, kwargs: dict[str, t.Any]):
 # Decoder for client requests
 
 
-def parse_request_data(data: MultiValueDict[str, t.Any] | dict[str, t.Any]):
+def parse_request_data(data: MultiValueDict[str, Any] | dict[str, Any]):
     if not isinstance(data, MultiValueDict):
         data = MultiValueDict({
             key: value if isinstance(value, list) else [value] for key, value in data.items()
@@ -174,7 +184,7 @@ def parse_request_data(data: MultiValueDict[str, t.Any] | dict[str, t.Any]):
     return _parse_obj(_extract_data(data))
 
 
-def _extract_data(data: MultiValueDict[str, t.Any]):
+def _extract_data(data: MultiValueDict[str, Any]):
     for key in set(data):
         if key.endswith("[]"):
             value = data.getlist(key)
@@ -184,7 +194,7 @@ def _extract_data(data: MultiValueDict[str, t.Any]):
         yield key.split("."), value
 
 
-def _parse_obj(data: t.Iterable[tuple[list[str], t.Any]], output=None) -> dict[str, t.Any] | t.Any:
+def _parse_obj(data: Iterable[tuple[list[str], Any]], output=None) -> dict[str, Any] | Any:
     output = output or {}
     arrays = defaultdict(lambda: defaultdict(dict))  # field -> index -> value
     for key, value in data:
@@ -203,13 +213,13 @@ def _parse_obj(data: t.Iterable[tuple[list[str], t.Any]], output=None) -> dict[s
     return output
 
 
-def get_event_handler_event_types(f: t.Callable[..., t.Any]) -> set[type]:
+def get_event_handler_event_types(f: Callable[..., Any]) -> set[type]:
     "Extract the types of the annotations of parameter 'event'."
-    event = t.get_type_hints(f)["event"]
-    origin = t.get_origin(event)
-    if origin is types.UnionType or origin is t.Union:
+    event = get_type_hints(f)["event"]
+    origin = get_origin(event)
+    if origin is types.UnionType or origin is Union:
         return {
-            arg for arg in t.get_args(event) if isinstance(arg, type) and arg is not types.NoneType
+            arg for arg in get_args(event) if isinstance(arg, type) and arg is not types.NoneType
         }
     elif isinstance(event, type):
         return {event}
@@ -228,7 +238,7 @@ def get_annotation_adapter(annotation):
 # Infallible adapter for boolean values.  't' is True, everything else is
 # False.
 infallible_bool_adapter = TypeAdapter(
-    t.Annotated[
+    Annotated[
         bool,
         BeforeValidator(lambda v: v == "t"),
         PlainSerializer(lambda v: "t" if v else "f"),
@@ -262,9 +272,9 @@ def is_basic_type(ann):
 
 def is_union_of_basic(ann):
     """Returns True Union of simple types (as is_simple_annotation)"""
-    type_ = t.get_origin(ann)
-    if type_ is types.UnionType or type_ is t.Union:
-        return all(is_basic_type(arg) for arg in t.get_args(ann))
+    type_ = get_origin(ann)
+    if type_ is types.UnionType or type_ is Union:
+        return all(is_basic_type(arg) for arg in get_args(ann))
     return False
 
 

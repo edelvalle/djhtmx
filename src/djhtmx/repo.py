@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 import random
-import typing as t
 from collections import defaultdict
+from collections.abc import AsyncIterable, Generator, Iterable
 from dataclasses import dataclass
 from dataclasses import field as Field
+from typing import Any, Literal
 
 from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.signing import Signer
@@ -65,7 +66,7 @@ class SendHtml:
 @dataclass(slots=True)
 class PushURL:
     url: str
-    command: t.Literal["push_url"] = "push_url"
+    command: Literal["push_url"] = "push_url"
 
     @classmethod
     def from_params(cls, params: QueryDict):
@@ -75,7 +76,7 @@ class PushURL:
 @dataclass(slots=True)
 class ReplaceURL:
     url: str
-    command: t.Literal["replace_url"] = "replace_url"
+    command: Literal["replace_url"] = "replace_url"
 
     @classmethod
     def from_params(cls, params: QueryDict):
@@ -147,14 +148,14 @@ class Repository:
         )
 
     @staticmethod
-    def load_states_by_id(states: list[str]) -> dict[str, dict[str, t.Any]]:
+    def load_states_by_id(states: list[str]) -> dict[str, dict[str, Any]]:
         return {
             state["id"]: state for state in [json.loads(signer.unsign(state)) for state in states]
         }
 
     @staticmethod
     def load_subscriptions(
-        states_by_id: dict[str, dict[str, t.Any]], subscriptions: dict[str, str]
+        states_by_id: dict[str, dict[str, Any]], subscriptions: dict[str, str]
     ) -> dict[str, set[str]]:
         subscriptions_to_ids: dict[str, set[str]] = defaultdict(set)
         for component_id, component_subscriptions in subscriptions.items():
@@ -189,8 +190,8 @@ class Repository:
         self,
         component_id: str,
         event_handler: str,
-        event_data: dict[str, t.Any],
-    ) -> t.AsyncIterable[ProcessedCommand]:
+        event_data: dict[str, Any],
+    ) -> AsyncIterable[ProcessedCommand]:
         commands = CommandQueue([Execute(component_id, event_handler, event_data)])
         # Command loop
         try:
@@ -214,8 +215,8 @@ class Repository:
         self,
         component_id: str,
         event_handler: str,
-        event_data: dict[str, t.Any],
-    ) -> t.Iterable[ProcessedCommand]:
+        event_data: dict[str, Any],
+    ) -> Iterable[ProcessedCommand]:
         commands = CommandQueue([Execute(component_id, event_handler, event_data)])
 
         # Command loop
@@ -234,7 +235,7 @@ class Repository:
             else:
                 raise
 
-    def _run_command(self, commands: CommandQueue) -> t.Generator[ProcessedCommand, None, None]:
+    def _run_command(self, commands: CommandQueue) -> Generator[ProcessedCommand, None, None]:
         command = commands.pop()
         logger.debug("COMMAND: %s", command)
         commands_to_append: list[Command] = []
@@ -321,10 +322,10 @@ class Repository:
     def _process_emited_commands(
         self,
         component: HtmxComponent,
-        emmited_commands: t.Iterable[Command] | None,
+        emmited_commands: Iterable[Command] | None,
         commands: CommandQueue,
         during_execute: bool,
-    ) -> t.Iterable[ProcessedCommand]:
+    ) -> Iterable[ProcessedCommand]:
         component_was_rendered = False
         commands_to_add: list[Command] = []
         for command in emmited_commands or []:
@@ -355,7 +356,7 @@ class Repository:
 
     def get_components_subscribed_to(
         self, signals: set[tuple[str, str]]
-    ) -> t.Iterable[HtmxComponent | Destroy]:
+    ) -> Iterable[HtmxComponent | Destroy]:
         return (
             self.get_component_by_id(c_id)
             for c_id in sorted(self.session.get_component_ids_subscribed_to(signals))
@@ -396,7 +397,7 @@ class Repository:
             )
             return Destroy(component_id)
 
-    def build(self, component_name: str, state: dict[str, t.Any], retrieve_state: bool = True):
+    def build(self, component_name: str, state: dict[str, Any], retrieve_state: bool = True):
         """Build (or update) a component's state."""
 
         with tracing_span("Repository.build", component_name=component_name):
@@ -415,7 +416,7 @@ class Repository:
             }
             return REGISTRY[component_name](**kwargs)
 
-    def get_components_by_names(self, *names: str) -> t.Iterable[HtmxComponent]:
+    def get_components_by_names(self, *names: str) -> Iterable[HtmxComponent]:
         # go over awaken components
         for name in names:
             for state in self.session.get_all_states():
@@ -498,19 +499,19 @@ class Session:
         self.unregistered.add(component_id)
         self.is_dirty = True
 
-    def get_state(self, component_id: str) -> dict[str, t.Any] | None:
+    def get_state(self, component_id: str) -> dict[str, Any] | None:
         self._ensure_read()
         if state := self.states.get(component_id):
             return json.loads(state)
 
-    def get_component_ids_subscribed_to(self, signals: set[tuple[str, str]]) -> t.Iterable[str]:
+    def get_component_ids_subscribed_to(self, signals: set[tuple[str, str]]) -> Iterable[str]:
         self._ensure_read()
         for component_id, subscribed_to in self.subscriptions.items():
             # here we ignore signals emitted by the component it self
             if subscribed_to.intersection(signal for signal, cid in signals if cid != component_id):
                 yield component_id
 
-    def get_all_states(self) -> t.Iterable[dict[str, t.Any]]:
+    def get_all_states(self) -> Iterable[dict[str, Any]]:
         self._ensure_read()
         return [json.loads(state) for state in self.states.values()]
 
