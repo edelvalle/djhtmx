@@ -289,8 +289,10 @@ def is_collection_annotation(ann):
 def get_annotated_model(annotation) -> tuple[type[models.Model], bool] | tuple[None, None]:
     """Extract Model or Optional[Model].
 
-    Return None if the annotation is not a model or optional model annotation.  Otherwise return a
-    tuple with the model, and a boolean indicating if its optional.
+    The model can be possibly wrapped in 'Annotated'.
+
+    Return None, None if the annotation is not a model or optional model annotation.  Otherwise
+    return a tuple with the model, and a boolean indicating if its optional.
 
     """
     # unwrap Annotated[...] types
