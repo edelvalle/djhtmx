@@ -17,6 +17,7 @@ from typing import (
     Optional,
     ParamSpec,
     TypeVar,
+    cast,
     get_type_hints,
 )
 from uuid import UUID
@@ -412,7 +413,7 @@ class HtmxComponent(BaseModel):
 
     # State and cache of the ORM records.
     _hx_records_annotations: ClassVar[dict[AttributeName, tuple[type[models.Model], bool]]] = {}
-    hx_records: Annotated[
+    _hx_records: Annotated[
         dict[AttributeName, models.Model | None],
         Field(
             default_factory=dict,
@@ -426,28 +427,32 @@ class HtmxComponent(BaseModel):
     ]
 
     # Lazy record accessors
+    def model_post_init(self, __context: Any) -> None:
+        super().model_post_init(__context)
+        self._hx_records = {}
+
     def _hx_record_getter(self, name: str):
-        if name not in self.hx_records:
+        if name not in self._hx_records:
             model, optional = self._hx_records_annotations[name]
             pk = self.hx_record_pks.get(name)
             if pk is not None:
                 record = model.objects.get(pk=pk)
-                self.hx_records[name] = record
+                self._hx_records[name] = record
             else:
                 if not optional:
                     raise model.DoesNotExist
-                self.hx_records[name] = None
-        return self.hx_records.get(name)
+                self._hx_records[name] = None
+        return self._hx_records.get(name)
 
     def _hx_record_setter(self, name: str, value: Any):
         _model, optional = self._hx_records_annotations[name]
         if value is None:
             if not optional:
                 raise ValueError(f"{name} is not optional and cannot be set to None")
-            self.hx_records.pop(name, None)
+            self._hx_records.pop(name, None)
             self.hx_record_pks[name] = None
         else:
-            self.hx_records[name] = value
+            self._hx_records[name] = value
             self.hx_record_pks[name] = value.pk
 
     @classmethod
@@ -455,10 +460,10 @@ class HtmxComponent(BaseModel):
         cls, name: str, model: type[models.Model], optional: bool
     ) -> property:
         def getter(self):
-            return self._hx_record_getter(name)
+            return cast(HtmxComponent, self)._hx_record_getter(name)
 
         def setter(self, value):
-            self._hx_record_setter(name, value)
+            cast(HtmxComponent, self)._hx_record_setter(name, value)
 
         # set annotations so get_type_hints resolves to exact model type or Optional[model]
         getter.__annotations__["return"] = model if not optional else Optional[model]  # noqa # type: ignore
