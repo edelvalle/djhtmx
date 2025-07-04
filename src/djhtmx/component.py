@@ -293,12 +293,13 @@ class HtmxComponent(BaseModel):
         # We use 'get_type_hints' to resolve the forward refs if needed, but
         # we only need to rewrite the actual annotations of the current class,
         # that's why we iter over the '__annotations__' names.
-        # inherit model annotations from base classes
-        cls._hx_records_annotations = {}
-        for base in cls.__mro__[1:]:
+        # inherit model annotations from base classes in MRO order
+        merged_records_annotations: dict[AttributeName, type[models.Model]] = {}
+        for base in reversed(cls.__mro__[1:]):
             parent_ann = getattr(base, "_hx_records_annotations", None)
             if parent_ann:
-                cls._hx_records_annotations.update(parent_ann)
+                merged_records_annotations.update(parent_ann)
+        cls._hx_records_annotations = merged_records_annotations
 
         hints = get_type_hints(cls, include_extras=True)
         for name in list(cls.__annotations__):
