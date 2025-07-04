@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
 from os.path import basename
-from typing import Annotated, Any, ClassVar, Literal, ParamSpec, TypeVar, get_type_hints
+from typing import Annotated, Any, ClassVar, Literal, ParamSpec, TypeVar, get_type_hints, get_origin, get_args, Union
 from uuid import UUID
 
 from django.contrib.auth.models import AbstractBaseUser
@@ -305,9 +305,19 @@ class HtmxComponent(BaseModel):
         for name in list(cls.__annotations__):
             if not name.startswith("_"):
                 annotation = hints[name]
+                # detect ORM model and Optional[Model] annotations for lazy loading
+                model_annotation = None
                 if issubclass_safe(annotation, models.Model):
-                    # record ORM model annotation for lazy loading
-                    cls._hx_records_annotations[name] = annotation
+                    model_annotation = annotation
+                else:
+                    origin = get_origin(annotation)
+                    if origin is Union:
+                        args = get_args(annotation)
+                        non_none = [arg for arg in args if arg is not type(None)]
+                        if len(non_none) == 1 and issubclass_safe(non_none[0], models.Model):
+                            model_annotation = non_none[0]
+                if model_annotation:
+                    cls._hx_records_annotations[name] = model_annotation
                     # Convert ORM model annotation into property with stub
                     getter = lambda self: None  # noqa
                     setter = lambda self, value: None  # noqa
