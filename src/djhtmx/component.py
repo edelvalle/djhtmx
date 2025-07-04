@@ -314,14 +314,30 @@ class HtmxComponent(BaseModel):
             if not name.startswith("_"):
                 annotation = hints[name]
                 # detect ORM model and Optional[Model] annotations for lazy loading
-                model_annotation, _model_optional = get_annotated_model(annotation)
+                model_annotation, model_optional = get_annotated_model(annotation)
                 if model_annotation:
                     cls._hx_records_annotations[name] = model_annotation
-                    # Convert ORM model annotation into property with stub
-                    getter = lambda self: None  # noqa
-                    setter = lambda self, value: None  # noqa
-                    prop = property(getter)
-                    prop = prop.setter(setter)
+
+                    # Convert ORM model annotation into lazy-loading property
+                    def getter(self, _name=name, _model=model_annotation, _optional=model_optional):
+                        if _name not in self._hx_records:
+                            pk = self.hx_record_pks.get(_name)
+                            if pk is not None:
+                                record = _model.objects.get(pk=pk)
+                                self._hx_records[_name] = record
+                            else:
+                                raise _model.DoesNotExist
+                        return self._hx_records.get(_name)
+
+                    def setter(self, value, _name=name):
+                        if value is None:
+                            self._hx_records.pop(_name, None)
+                            self.hx_record_pks[_name] = None
+                        else:
+                            self._hx_records[_name] = value
+                            self.hx_record_pks[_name] = value.pk
+
+                    prop = property(getter, setter)
                     setattr(cls, name, prop)
                     cls.__annotations__.pop(name, None)
                 else:
