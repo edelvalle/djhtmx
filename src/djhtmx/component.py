@@ -412,7 +412,7 @@ class HtmxComponent(BaseModel):
 
     # State and cache of the ORM records.
     _hx_records_annotations: ClassVar[dict[AttributeName, tuple[type[models.Model], bool]]] = {}
-    _hx_records: Annotated[
+    hx_records: Annotated[
         dict[AttributeName, models.Model | None],
         Field(
             default_factory=dict,
@@ -427,27 +427,27 @@ class HtmxComponent(BaseModel):
 
     # Lazy record accessors
     def _hx_record_getter(self, name: str):
-        if name not in self._hx_records:
+        if name not in self.hx_records:
             model, optional = self._hx_records_annotations[name]
             pk = self.hx_record_pks.get(name)
             if pk is not None:
                 record = model.objects.get(pk=pk)
-                self._hx_records[name] = record
+                self.hx_records[name] = record
             else:
                 if not optional:
                     raise model.DoesNotExist
-                self._hx_records[name] = None
-        return self._hx_records.get(name)
+                self.hx_records[name] = None
+        return self.hx_records.get(name)
 
     def _hx_record_setter(self, name: str, value: Any):
         _model, optional = self._hx_records_annotations[name]
         if value is None:
             if not optional:
                 raise ValueError(f"{name} is not optional and cannot be set to None")
-            self._hx_records.pop(name, None)
+            self.hx_records.pop(name, None)
             self.hx_record_pks[name] = None
         else:
-            self._hx_records[name] = value
+            self.hx_records[name] = value
             self.hx_record_pks[name] = value.pk
 
     @classmethod
