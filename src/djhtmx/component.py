@@ -316,6 +316,7 @@ class HtmxComponent(BaseModel):
                 # detect ORM model and Optional[Model] annotations for lazy loading
                 model_annotation, model_optional = get_annotated_model(annotation)
                 if model_annotation:
+                    assert model_optional is not None
                     cls._hx_records_annotations[name] = (model_annotation, model_optional)
 
                     # Assign lazy-loading property via helper methods.
@@ -441,7 +442,7 @@ class HtmxComponent(BaseModel):
         return self._hx_records.get(name)
 
     def _hx_record_setter(self, name: str, value: Any):
-        model, optional = self._hx_records_annotations[name]
+        _model, optional = self._hx_records_annotations[name]
         if value is None:
             if not optional:
                 raise ValueError(f"{name} is not optional and cannot be set to None")
