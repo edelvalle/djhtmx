@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
 from os.path import basename
-from typing import Annotated, Any, Literal, ParamSpec, TypeVar, get_type_hints
+from typing import Annotated, Any, ClassVar, Literal, ParamSpec, TypeVar, get_type_hints
+from uuid import UUID
 
 from django.contrib.auth.models import AbstractBaseUser
 from django.db import models
@@ -25,6 +26,7 @@ from .introspection import (
     annotate_model,
     get_event_handler_event_types,
     get_function_parameters,
+    issubclass_safe,
 )
 from .query import Query, QueryPatcher
 from .tracing import tracing_span
@@ -226,6 +228,10 @@ def get_template(template: str) -> RenderFunction:  # pragma: no cover
         return render
 
 
+type AttributeName = str
+type ModelName = str
+
+
 class HtmxComponent(BaseModel):
     _template_name: str = ...  # type: ignore
     _template_name_lazy: str = settings.DEFAULT_LAZY_TEMPLATE
@@ -291,10 +297,10 @@ class HtmxComponent(BaseModel):
         for name in list(cls.__annotations__):
             if not name.startswith("_"):
                 annotation = hints[name]
-                if isinstance(annotation, type) and issubclass(annotation, models.Model):
+                if issubclass_safe(annotation, models.Model):
                     # Convert ORM model annotation into property with stub
-                    getter = lambda self: None
-                    setter = lambda self, value: None
+                    getter = lambda self: None  # noqa
+                    setter = lambda self, value: None  # noqa
                     prop = property(getter)
                     prop = prop.setter(setter)
                     setattr(cls, name, prop)
@@ -384,6 +390,21 @@ class HtmxComponent(BaseModel):
     user: Annotated[AbstractBaseUser | None, Field(exclude=True)]
     hx_name: str
     lazy: bool = False
+
+    # State and cache of the ORM records.
+    _hx_records_annotations: ClassVar[dict[AttributeName, type[models.Model]]]
+    _hx_records: Annotated[
+        dict[AttributeName, models.Model | None],
+        Field(
+            default_factory=dict,
+            exclude=True,
+            description="Internal cache of the ORM instances",
+        ),
+    ]
+    hx_record_pks: Annotated[
+        dict[AttributeName, UUID | str | int | None],
+        Field(default_factory=dict, description="The HTMX component state"),
+    ]
 
     def __repr__(self) -> str:
         return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
