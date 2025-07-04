@@ -286,6 +286,30 @@ def is_collection_annotation(ann):
     return issubclass_safe(ann, _COLLECTION_TYPES)
 
 
+def get_annotated_model(annotation) -> tuple[type[models.Model], bool] | tuple[None, None]:
+    """Extract Model or Optional[Model].
+
+    Return None if the annotation is not a model or optional model annotation.  Otherwise return a
+    tuple with the model, and a boolean indicating if its optional.
+
+    """
+    if issubclass_safe(annotation, models.Model):
+        return annotation, False
+    elif type_ := get_origin(annotation):
+        if type_ is types.UnionType or type_ is Union:
+            type_ = Union
+        match get_args(annotation):
+            case (param, nonetype) | (nonetype, param):
+                if nonetype is types.NoneType and issubclass_safe(param, models.Model):
+                    return param, True
+                else:
+                    return None, None
+            case _:
+                return None, None
+    else:
+        return None, None
+
+
 Unset = object()
 _SIMPLE_TYPES = (int, str, float, UUID, types.NoneType, date, datetime, bool)
 _COLLECTION_TYPES = (dict, tuple, list, set)
