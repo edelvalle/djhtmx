@@ -100,10 +100,13 @@ class ListHeader(HtmxComponent):
         yield BuildAndRender.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
 
 
-class TodoItem(HtmxComponent):
-    _template_name = "todo/TodoItem.html"
-
+# This class is here just to test the inheritance of (lazy) fields annotated with ORM models.
+class BaseTodoItem(HtmxComponent):
     item: Item
+
+
+class TodoItem(BaseTodoItem):
+    _template_name = "todo/TodoItem.html"
     editing: bool = False
 
     def delete(self):
