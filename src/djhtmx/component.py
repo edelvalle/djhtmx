@@ -293,11 +293,20 @@ class HtmxComponent(BaseModel):
         # We use 'get_type_hints' to resolve the forward refs if needed, but
         # we only need to rewrite the actual annotations of the current class,
         # that's why we iter over the '__annotations__' names.
+        # inherit model annotations from base classes
+        cls._hx_records_annotations = {}
+        for base in cls.__mro__[1:]:
+            parent_ann = getattr(base, "_hx_records_annotations", None)
+            if parent_ann:
+                cls._hx_records_annotations.update(parent_ann)
+
         hints = get_type_hints(cls, include_extras=True)
         for name in list(cls.__annotations__):
             if not name.startswith("_"):
                 annotation = hints[name]
                 if issubclass_safe(annotation, models.Model):
+                    # record ORM model annotation for lazy loading
+                    cls._hx_records_annotations[name] = annotation
                     # Convert ORM model annotation into property with stub
                     getter = lambda self: None  # noqa
                     setter = lambda self, value: None  # noqa
