@@ -401,7 +401,7 @@ class HtmxComponent(BaseModel):
     lazy: bool = False
 
     # State and cache of the ORM records.
-    _hx_records_annotations: ClassVar[dict[AttributeName, type[models.Model]]]
+    _hx_records_annotations: ClassVar[dict[AttributeName, type[models.Model]]] = {}
     _hx_records: Annotated[
         dict[AttributeName, models.Model | None],
         Field(
