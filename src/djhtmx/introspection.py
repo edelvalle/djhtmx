@@ -90,8 +90,7 @@ def annotate_model(annotation):
             case (param,):
                 return type_[annotate_model(param)]  # type: ignore
             case params:
-                annotated_params = tuple(annotate_model(p) for p in params)
-                return type_.__getitem__(annotated_params)  # type: ignore
+                return type_[*(annotate_model(p) for p in params)]  # type: ignore
     else:
         return annotation
 
