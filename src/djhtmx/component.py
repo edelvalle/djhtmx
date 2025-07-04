@@ -309,6 +309,14 @@ class HtmxComponent(BaseModel):
                 merged_records_annotations.update(parent_ann)
         cls._hx_records_annotations = merged_records_annotations
 
+        # inherit optional flags for model annotations
+        merged_records_optionals: dict[AttributeName, bool] = {}
+        for base in reversed(cls.__mro__[1:]):
+            parent_opts = getattr(base, "_hx_records_optionals", None)
+            if parent_opts:
+                merged_records_optionals.update(parent_opts)
+        cls._hx_records_optionals = merged_records_optionals
+
         hints = get_type_hints(cls, include_extras=True)
         for name in list(cls.__annotations__):
             if not name.startswith("_"):
@@ -317,6 +325,7 @@ class HtmxComponent(BaseModel):
                 model_annotation, model_optional = get_annotated_model(annotation)
                 if model_annotation:
                     cls._hx_records_annotations[name] = model_annotation
+                    cls._hx_records_optionals[name] = model_optional
 
                     # Assign lazy-loading property via helper methods.
                     prop = property(
@@ -413,6 +422,7 @@ class HtmxComponent(BaseModel):
 
     # State and cache of the ORM records.
     _hx_records_annotations: ClassVar[dict[AttributeName, type[models.Model]]] = {}
+    _hx_records_optionals: ClassVar[dict[AttributeName, bool]] = {}
     _hx_records: Annotated[
         dict[AttributeName, models.Model | None],
         Field(
@@ -435,7 +445,10 @@ class HtmxComponent(BaseModel):
                 record = model.objects.get(pk=pk)
                 self._hx_records[name] = record
             else:
-                raise model.DoesNotExist
+                # if optional, return None; otherwise, raise DoesNotExist
+                if not self._hx_records_optionals.get(name, False):
+                    raise model.DoesNotExist
+                self._hx_records[name] = None
         return self._hx_records.get(name)
 
     def _hx_record_setter(self, name: str, value: Any):
