@@ -441,7 +441,10 @@ class HtmxComponent(BaseModel):
         return self._hx_records.get(name)
 
     def _hx_record_setter(self, name: str, value: Any):
+        model, optional = self._hx_records_annotations[name]
         if value is None:
+            if not optional:
+                raise ValueError(f"{name} is not optional and cannot be set to None")
             self._hx_records.pop(name, None)
             self.hx_record_pks[name] = None
         else:
