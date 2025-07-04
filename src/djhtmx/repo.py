@@ -39,7 +39,7 @@ from .component import (
     SkipRender,
     _get_query_patchers,
 )
-from .introspection import filter_parameters
+from .introspection import filter_parameters, isinstance_safe
 from .settings import (
     KEY_SIZE_ERROR_THRESHOLD,
     KEY_SIZE_SAMPLE_PROB,
@@ -414,7 +414,22 @@ class Repository:
                 "hx_name": component_name,
                 "user": None if isinstance(self.user, AnonymousUser) else self.user,
             }
-            return REGISTRY[component_name](**kwargs)
+            component_cls = REGISTRY[component_name]
+            component = component_cls(**kwargs)
+
+            # Assign record fields from state
+            for name, (model, optional) in component_cls._hx_records_annotations.items():
+                record = state.get(name)
+                if record is None:
+                    if not optional:
+                        raise TypeError(f"Missing non-optional record field '{name}'")
+                    setattr(component, name, None)
+                elif isinstance_safe(record, model):
+                    setattr(component, name, model)
+                else:
+                    raise TypeError(f"Expected an instance of '{model}', got '{type(record)}'")
+
+            return component
 
     def get_components_by_names(self, *names: str) -> Iterable[HtmxComponent]:
         # go over awaken components
