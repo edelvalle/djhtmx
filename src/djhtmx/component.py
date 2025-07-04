@@ -14,6 +14,7 @@ from typing import (
     Any,
     ClassVar,
     Literal,
+    Optional,
     ParamSpec,
     TypeVar,
     get_type_hints,
@@ -450,11 +451,18 @@ class HtmxComponent(BaseModel):
             self.hx_record_pks[name] = value.pk
 
     @classmethod
-    def _create_hx_record_prop(cls, name: str, model: type[models.Model], optional: bool) -> property:
-        def getter(self) -> model | None:
+    def _create_hx_record_prop(
+        cls, name: str, model: type[models.Model], optional: bool
+    ) -> property:
+        def getter(self):
             return self._hx_record_getter(name)
-        def setter(self, value: model | None) -> None:
+
+        def setter(self, value):
             self._hx_record_setter(name, value)
+
+        # set annotations so get_type_hints resolves to exact model type or Optional[model]
+        getter.__annotations__["return"] = model if not optional else Optional[model]  # noqa # type: ignore
+        setter.__annotations__["value"] = model if not optional else Optional[model]  # noqa # type: ignore
         return property(getter, setter)
 
     def __repr__(self) -> str:
