@@ -316,7 +316,7 @@ class HtmxComponent(BaseModel):
                 # detect ORM model and Optional[Model] annotations for lazy loading
                 model_annotation, model_optional = get_annotated_model(annotation)
                 if model_annotation:
-                    cls._hx_records_annotation[name] = (model_annotation, model_optional)
+                    cls._hx_records_annotations[name] = (model_annotation, model_optional)
 
                     # Assign lazy-loading property via helper methods.
                     prop = property(
@@ -412,7 +412,7 @@ class HtmxComponent(BaseModel):
     lazy: bool = False
 
     # State and cache of the ORM records.
-    _hx_records_annotation: ClassVar[dict[AttributeName, tuple[type[models.Model], bool]]] = {}
+    _hx_records_annotations: ClassVar[dict[AttributeName, tuple[type[models.Model], bool]]] = {}
     _hx_records: Annotated[
         dict[AttributeName, models.Model | None],
         Field(
@@ -429,7 +429,7 @@ class HtmxComponent(BaseModel):
     # Lazy record accessors
     def _hx_record_getter(self, name: str):
         if name not in self._hx_records:
-            model, optional = self._hx_records_annotation[name]
+            model, optional = self._hx_records_annotations[name]
             pk = self.hx_record_pks.get(name)
             if pk is not None:
                 record = model.objects.get(pk=pk)
