@@ -320,10 +320,7 @@ class HtmxComponent(BaseModel):
                     cls._hx_records_annotations[name] = (model_annotation, model_optional)
 
                     # Assign lazy-loading property via helper methods.
-                    prop = property(
-                        lambda self, _n=name: self._hx_record_getter(_n),
-                        lambda self, value, _n=name: self._hx_record_setter(_n, value),
-                    )
+                    prop = cls._create_hx_record_prop(name, model_annotation, model_optional)
                     setattr(cls, name, prop)
                     cls.__annotations__.pop(name, None)
                 else:
@@ -451,6 +448,14 @@ class HtmxComponent(BaseModel):
         else:
             self._hx_records[name] = value
             self.hx_record_pks[name] = value.pk
+
+    @classmethod
+    def _create_hx_record_prop(cls, name: str, model: type[models.Model], optional: bool) -> property:
+        def getter(self) -> Any:
+            return self._hx_record_getter(name)
+        def setter(self, value: Any) -> None:
+            self._hx_record_setter(name, value)
+        return property(getter, setter)
 
     def __repr__(self) -> str:
         return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
