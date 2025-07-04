@@ -299,11 +299,12 @@ def get_annotated_model(annotation) -> tuple[type[models.Model], bool] | tuple[N
     origin = get_origin(annotation)
     if origin is Annotated:
         annotation = get_args(annotation)[0]
+
     if issubclass_safe(annotation, models.Model):
         return annotation, False
-    elif type_ := get_origin(annotation):
-        if type_ is types.UnionType or type_ is Union:
-            type_ = Union
+    elif origin:
+        if origin is types.UnionType or origin is Union:
+            origin = Union
         match get_args(annotation):
             case (param, nonetype) | (nonetype, param):
                 if nonetype is types.NoneType and issubclass_safe(param, models.Model):
