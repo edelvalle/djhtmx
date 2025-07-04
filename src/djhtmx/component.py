@@ -451,9 +451,9 @@ class HtmxComponent(BaseModel):
 
     @classmethod
     def _create_hx_record_prop(cls, name: str, model: type[models.Model], optional: bool) -> property:
-        def getter(self) -> Any:
+        def getter(self) -> models.Model | None:
             return self._hx_record_getter(name)
-        def setter(self, value: Any) -> None:
+        def setter(self, value: models.Model | None) -> None:
             self._hx_record_setter(name, value)
         return property(getter, setter)
 
