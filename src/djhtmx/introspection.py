@@ -12,7 +12,9 @@ from inspect import Parameter, _ParameterKind
 from typing import (
     Annotated,
     Any,
+    Generic,
     TypedDict,
+    TypeVar,
     Union,
     get_args,
     get_origin,
@@ -35,6 +37,36 @@ class ModelRelatedField:
 
 
 MODEL_RELATED_FIELDS: dict[type[models.Model], tuple[ModelRelatedField, ...]] = {}
+
+
+M = TypeVar("M", bound=models.Model)
+
+
+class LazyModelProxy(Generic[M]):  # noqa
+    """Deferred proxy for a Django model instance; only fetches from the database on access."""
+
+    __slots__ = ("_instance", "_model", "_pk")
+
+    def __init__(self, model: type[M], value: Any):
+        self._model = model
+        if value is None or isinstance(value, model):
+            self._instance = value
+            self._pk = getattr(value, "pk", None)
+        else:
+            self._instance = None
+            self._pk = value
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "pk":
+            return self._pk
+        if self._instance is None:
+            self._instance = self._model.objects.get(pk=self._pk)  # type: ignore[attr-defined]
+        return getattr(self._instance, name)
+
+    def __repr__(self) -> str:
+        if self._instance is not None:
+            return repr(self._instance)
+        return f"<Lazy{self._model.__name__}Proxy pk={self._pk}>"
 
 
 def Model(model: type[models.Model]):
@@ -263,8 +295,7 @@ def is_basic_type(ann):
     """
     return (
         ann in _SIMPLE_TYPES
-        #  __origin__ -> model in 'Annotated[model, BeforeValidator(...), PlainSerializer(...)]'
-        or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
+        or get_annotated_model(ann)[0] is not None
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
         or is_collection_annotation(ann)
     )
@@ -285,6 +316,57 @@ def is_simple_annotation(ann):
 
 def is_collection_annotation(ann):
     return issubclass_safe(ann, _COLLECTION_TYPES)
+
+
+def get_annotated_model(annotation) -> tuple[type[models.Model], bool] | tuple[None, None]:
+    """Extract Model or Optional[Model].
+
+    Return None if the annotation is not a model or optional model annotation.  Otherwise return a
+    tuple with the model, and a boolean indicating if its optional.
+
+    """
+    if issubclass_safe(annotation, models.Model):
+        return annotation, False
+    elif get_origin(annotation) is Annotated:
+        inner_annotation = getattr(annotation, "__origin__", None)
+        return get_annotated_model(inner_annotation)
+    elif type_ := get_origin(annotation):
+        if type_ is types.UnionType or type_ is Union:
+            type_ = Union
+
+        if type_ is Annotated:
+            pass
+        elif type_ is Union:
+            pass
+        else:
+            pass
+
+        def _extract_inner_model(p):
+            if get_origin(p) is Annotated:
+                for param in get_args(p):
+                    model, _ = get_annotated_model(param)
+                    if model:
+                        yield model
+            else:
+                yield p
+
+        params = [
+            m
+            for p in get_args(annotation)
+            if p is not _LazyModelProxy
+            for m in _extract_inner_model(p)
+        ]
+
+        match params:
+            case (param, nonetype) | (nonetype, param):
+                if nonetype is types.NoneType and issubclass_safe(param, models.Model):
+                    return param, True
+                else:
+                    return None, None
+            case _:
+                return None, None
+    else:
+        return None, None
 
 
 Unset = object()
