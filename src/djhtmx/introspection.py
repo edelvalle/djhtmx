@@ -4,7 +4,7 @@ import inspect
 import operator
 import types
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from functools import cache
@@ -25,6 +25,7 @@ from uuid import UUID
 
 from django.apps import apps
 from django.db import models
+from django.db.models import Prefetch
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer, TypeAdapter
 
@@ -41,116 +42,111 @@ class ModelRelatedField:
 MODEL_RELATED_FIELDS: dict[type[models.Model], tuple[ModelRelatedField, ...]] = {}
 
 
-class LazyModel:
-    """Mark the model as lazy."""
+@dataclass(slots=True, unsafe_hash=True)
+class HxModelAnnotation:
+    """Annotation to fetch the models/querysets in HTMX components."""
 
-    pass
+    lazy: bool = False
+    """If set to True, annotations of models.Model will return a _LazyModelProxy instead of the
+       actual model instance.
+
+    """
+
+    select_related: Sequence[str] | None = None
+    prefetch_related: Sequence[str | Prefetch] | None = None
+
+
+_DEFAULT_HX_MODEL_ANNOTATION = HxModelAnnotation()
 
 
 @dataclass(slots=True, init=False)
 class _LazyModelProxy(Generic[M]):  # noqa
     """Deferred proxy for a Django model instance; only fetches from the database on access."""
 
-    _model: type[M]
-    _instance: M | None
-    _pk: Any | None
+    __model: type[M]
+    __instance: M | None
+    __pk: Any | None
+    __select_related: Sequence[str] | None
+    __prefetch_related: Sequence[str | Prefetch] | None
 
-    def __init__(self, model: type[M], value: Any):
-        self._model = model
+    def __init__(
+        self,
+        model: type[M],
+        value: Any,
+        model_annotation: HxModelAnnotation | None = None,
+    ):
+        self.__model = model
         if value is None or isinstance(value, model):
-            self._instance = value
-            self._pk = getattr(value, "pk", None)
+            self.__instance = value
+            self.__pk = getattr(value, "pk", None)
         else:
-            self._instance = None
-            self._pk = value
+            self.__instance = None
+            self.__pk = value
+        if model_annotation:
+            self.__select_related = model_annotation.select_related
+            self.__prefetch_related = model_annotation.prefetch_related
+        else:
+            self.__select_related = None
+            self.__prefetch_related = None
 
     def __getattr__(self, name: str) -> Any:
         if name == "pk":
-            return self._pk
-        if self._instance is None:
-            self._instance = self._model.objects.get(pk=self._pk)
-        return getattr(self._instance, name)
+            return self.__pk
+        if self.__instance is None:
+            self.__ensure_instance()
+        return getattr(self.__instance, name)
+
+    def __ensure_instance(self):
+        if not self.__instance:
+            manager = self.__model.objects
+            if select_related := self.__select_related:
+                manager = manager.select_related(*select_related)
+            if prefetch_related := self.__prefetch_related:
+                manager = manager.prefetch_related(*prefetch_related)
+            self.__instance = manager.get(pk=self.__pk)
+        return self.__instance
 
     def __repr__(self) -> str:
-        return f"<_LazyModelProxy model={self._model}, pk={self._pk}, instance={self._instance}>"
-
-    @classmethod
-    def _get_before_validator(cls, model: type[M]):
-        return BeforeValidator(_LazyModelBeforeValidator.from_modelclass(model))
-
-    @classmethod
-    def _get_plain_serializer(cls, model: type[M]):
-        return PlainSerializer(
-            func=_LazyModelPlainSerializer.from_modelclass(model),
-            return_type=guess_pk_type(model),
-        )
-
-    @classmethod
-    def _get_annotation(cls, model: type[M]):
-        return Annotated[
-            _LazyModelProxy[model],
-            cls._get_before_validator(model),
-            cls._get_plain_serializer(model),
-        ]
-
-
-@dataclass(slots=True)
-class _LazyModelBeforeValidator(Generic[M]):  # noqa
-    model: type[M]
-
-    def __call__(self, value):
-        if isinstance(value, _LazyModelProxy):
-            instance = value._instance or value._pk
-            return _LazyModelProxy(self.model, instance)
-        else:
-            return _LazyModelProxy(self.model, value)
-
-    @classmethod
-    @cache
-    def from_modelclass(cls, model: type[M]):
-        return cls(model)
-
-
-@dataclass(slots=True)
-class _LazyModelPlainSerializer(Generic[M]):  # noqa
-    model: type[M]
-
-    def __call__(self, value):
-        if isinstance(value, _LazyModelProxy):
-            return value._pk
-        elif isinstance(value, self.model):
-            return value.pk
-        else:
-            raise TypeError(f"Unexpected value {value}")
-
-    @classmethod
-    @cache
-    def from_modelclass(cls, model: type[M]):
-        return cls(model)
+        return f"<_LazyModelProxy model={self.__model}, pk={self.__pk}, instance={self.__instance}>"
 
 
 @dataclass(slots=True)
 class _ModelBeforeValidator(Generic[M]):  # noqa
     model: type[M]
+    hx_model_annotation: HxModelAnnotation
 
     def __call__(self, value):
+        if self.hx_model_annotation.lazy:
+            return self._get_lazy_proxy(value)
+        else:
+            return self._get_instance(value)
+
+    def _get_lazy_proxy(self, value):
+        if isinstance(value, _LazyModelProxy):
+            instance = value._LazyModelProxy__instance or value._LazyModelProxy__pk
+            return _LazyModelProxy(self.model, instance)
+        else:
+            return _LazyModelProxy(self.model, value)
+
+    def _get_instance(self, value):
         if value is None or isinstance(value, self.model):
             return value
         # If a component has a lazy model proxy, and passes it down to another component that
         # doesn't allow lazy proxies, we need to materialize it.
         elif isinstance(value, _LazyModelProxy):
-            if value._pk is None:
-                return None
-            if value._instance is None:
-                value._instance = value._model.objects.get(pk=value._pk)
-            return value._instance
+            return value._LazyModelProxy__ensure_instance()
         else:
-            return self.model.objects.get(pk=value)
+            manager = self.model.objects
+            if select_related := self.hx_model_annotation.select_related:
+                manager = manager.select_related(*select_related)
+            if prefetch_related := self.hx_model_annotation.prefetch_related:
+                manager = manager.prefetch_related(*prefetch_related)
+            return manager.get(pk=value)
 
     @classmethod
     @cache
-    def from_modelclass(cls, model: type[M]):
-        return cls(model)
+    def from_modelclass(cls, model: type[M], hx_model_annotation: HxModelAnnotation):
+        return cls(model, hx_model_annotation=hx_model_annotation)
 
 
 @dataclass(slots=True)
@@ -166,11 +162,12 @@ class _ModelPlainSerializer(Generic[M]):  # noqa
         return cls(model)
 
 
-def Model(model: type[models.Model]):
+def _Model(model: type[models.Model], hx_model_annotation: HxModelAnnotation | None = None):
     assert issubclass_safe(model, models.Model)
+    hx_model_annotation = hx_model_annotation or _DEFAULT_HX_MODEL_ANNOTATION
     return Annotated[
-        model,
-        BeforeValidator(_ModelBeforeValidator.from_modelclass(model)),
+        model if not hx_model_annotation.lazy else _LazyModelProxy[model],
+        BeforeValidator(_ModelBeforeValidator.from_modelclass(model, hx_model_annotation)),
         PlainSerializer(
             func=_ModelPlainSerializer.from_modelclass(model),
             return_type=guess_pk_type(model),
@@ -178,7 +175,7 @@ def Model(model: type[models.Model]):
     ]
 
 
-def QuerySet(qs: type[models.QuerySet]):
+def _QuerySet(qs: type[models.QuerySet]):
     [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
     return Annotated[
         qs,
@@ -194,14 +191,11 @@ def QuerySet(qs: type[models.QuerySet]):
     ]
 
 
-def annotate_model(annotation, *, _lazymodel: bool = False):
+def annotate_model(annotation, *, hx_model_annotation: HxModelAnnotation | None = None):
     if issubclass_safe(annotation, models.Model):
-        if not _lazymodel:
-            return Model(annotation)
-        else:
-            return _LazyModelProxy._get_annotation(annotation)
+        return _Model(annotation, hx_model_annotation)
     elif issubclass_safe(annotation, models.QuerySet):
-        return QuerySet(annotation)
+        return _QuerySet(annotation)
     elif is_typeddict(annotation):
         return TypedDict(
             annotation.__name__,  # type: ignore
@@ -219,9 +213,13 @@ def annotate_model(annotation, *, _lazymodel: bool = False):
             case (param,):
                 return type_[annotate_model(param)]  # type: ignore
             case params:
-                new_params = [p for p in params if not isinstance(p, LazyModel)]
-                _lazymodel = set(new_params) != set(params)
-                return type_[*(annotate_model(p, _lazymodel=_lazymodel) for p in params)]  # type: ignore
+                model_annotation = next(
+                    (p for p in params if isinstance(p, HxModelAnnotation)),
+                    None,
+                )
+                return type_[
+                    *(annotate_model(p, hx_model_annotation=model_annotation) for p in params)
+                ]  # type: ignore
     else:
         return annotation
 
