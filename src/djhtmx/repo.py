@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from dataclasses import field as Field
 from typing import Any, Literal
 
-from django.contrib.auth.models import AbstractBaseUser, AnonymousUser
 from django.core.signing import Signer
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
@@ -118,6 +117,8 @@ class Repository:
         to the request.
 
         """
+        from django.contrib.auth.models import AnonymousUser
+
         if (result := getattr(request, "htmx_repo", None)) is None:
             if (signed_session := request.META.get("HTTP_HX_SESSION")) and not bool(
                 request.META.get("HTTP_HX_BOOSTED")
@@ -137,10 +138,7 @@ class Repository:
         return result
 
     @classmethod
-    def from_websocket(
-        cls,
-        user: AbstractBaseUser | AnonymousUser,
-    ):
+    def from_websocket(cls, user):
         return cls(
             user=user,
             session=Session(cls.new_session_id()),  # TODO: take the session from the websocket url
@@ -171,7 +169,7 @@ class Repository:
 
     def __init__(
         self,
-        user: AbstractBaseUser | AnonymousUser,
+        user,
         session: Session,
         params: QueryDict,
     ):
@@ -399,6 +397,7 @@ class Repository:
 
     def build(self, component_name: str, state: dict[str, Any], retrieve_state: bool = True):
         """Build (or update) a component's state."""
+        from django.contrib.auth.models import AnonymousUser
 
         with tracing_span("Repository.build", component_name=component_name):
             # Retrieve state from storage

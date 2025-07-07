@@ -12,7 +12,9 @@ from inspect import Parameter, _ParameterKind
 from typing import (
     Annotated,
     Any,
+    Generic,
     TypedDict,
+    TypeVar,
     Union,
     get_args,
     get_origin,
@@ -26,6 +28,8 @@ from django.db import models
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer, TypeAdapter
 
+M = TypeVar("M", bound=models.Model)
+
 
 @dataclass(slots=True)
 class ModelRelatedField:
@@ -37,16 +41,138 @@ class ModelRelatedField:
 MODEL_RELATED_FIELDS: dict[type[models.Model], tuple[ModelRelatedField, ...]] = {}
 
 
+class LazyModel:
+    """Mark the model as lazy."""
+
+    pass
+
+
+@dataclass(slots=True, init=False)
+class _LazyModelProxy(Generic[M]):  # noqa
+    """Deferred proxy for a Django model instance; only fetches from the database on access."""
+
+    _model: type[M]
+    _instance: M | None
+    _pk: Any | None
+
+    def __init__(self, model: type[M], value: Any):
+        self._model = model
+        if value is None or isinstance(value, model):
+            self._instance = value
+            self._pk = getattr(value, "pk", None)
+        else:
+            self._instance = None
+            self._pk = value
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "pk":
+            return self._pk
+        if self._instance is None:
+            self._instance = self._model.objects.get(pk=self._pk)
+        return getattr(self._instance, name)
+
+    def __repr__(self) -> str:
+        return f"<_LazyModelProxy model={self._model}, pk={self._pk}, instance={self._instance}>"
+
+    @classmethod
+    def _get_before_validator(cls, model: type[M]):
+        return BeforeValidator(_LazyModelBeforeValidator.from_modelclass(model))
+
+    @classmethod
+    def _get_plain_serializer(cls, model: type[M]):
+        return PlainSerializer(
+            func=_LazyModelPlainSerializer.from_modelclass(model),
+            return_type=guess_pk_type(model),
+        )
+
+    @classmethod
+    def _get_annotation(cls, model: type[M]):
+        return Annotated[
+            _LazyModelProxy[model],
+            cls._get_before_validator(model),
+            cls._get_plain_serializer(model),
+        ]
+
+
+@dataclass(slots=True)
+class _LazyModelBeforeValidator(Generic[M]):  # noqa
+    model: type[M]
+
+    def __call__(self, value):
+        if isinstance(value, _LazyModelProxy):
+            instance = value._instance or value._pk
+            return _LazyModelProxy(self.model, instance)
+        else:
+            return _LazyModelProxy(self.model, value)
+
+    @classmethod
+    @cache
+    def from_modelclass(cls, model: type[M]):
+        return cls(model)
+
+
+@dataclass(slots=True)
+class _LazyModelPlainSerializer(Generic[M]):  # noqa
+    model: type[M]
+
+    def __call__(self, value):
+        if isinstance(value, _LazyModelProxy):
+            return value._pk
+        elif isinstance(value, self.model):
+            return value.pk
+        else:
+            raise TypeError(f"Unexpected value {value}")
+
+    @classmethod
+    @cache
+    def from_modelclass(cls, model: type[M]):
+        return cls(model)
+
+
+@dataclass(slots=True)
+class _ModelBeforeValidator(Generic[M]):  # noqa
+    model: type[M]
+
+    def __call__(self, value):
+        if value is None or isinstance(value, self.model):
+            return value
+        # If a component has a lazy model proxy, and passes it down to another component that
+        # doesn't allow lazy proxies, we need to materialize it.
+        elif isinstance(value, _LazyModelProxy):
+            if value._pk is None:
+                return None
+            if value._instance is None:
+                value._instance = value._model.objects.get(pk=value._pk)
+            return value._instance
+        else:
+            return self.model.objects.get(pk=value)
+
+    @classmethod
+    @cache
+    def from_modelclass(cls, model: type[M]):
+        return cls(model)
+
+
+@dataclass(slots=True)
+class _ModelPlainSerializer(Generic[M]):  # noqa
+    model: type[M]
+
+    def __call__(self, value):
+        return value.pk
+
+    @classmethod
+    @cache
+    def from_modelclass(cls, model: type[M]):
+        return cls(model)
+
+
 def Model(model: type[models.Model]):
+    assert issubclass_safe(model, models.Model)
     return Annotated[
         model,
-        BeforeValidator(
-            lambda value: (
-                value if value is None or isinstance(value, model) else model.objects.get(pk=value)
-            )
-        ),
+        BeforeValidator(_ModelBeforeValidator.from_modelclass(model)),
         PlainSerializer(
-            func=lambda v: v.pk,
+            func=_ModelPlainSerializer.from_modelclass(model),
             return_type=guess_pk_type(model),
         ),
     ]
@@ -68,9 +194,12 @@ def QuerySet(qs: type[models.QuerySet]):
     ]
 
 
-def annotate_model(annotation):
+def annotate_model(annotation, *, _lazymodel: bool = False):
     if issubclass_safe(annotation, models.Model):
-        return Model(annotation)
+        if not _lazymodel:
+            return Model(annotation)
+        else:
+            return _LazyModelProxy._get_annotation(annotation)
     elif issubclass_safe(annotation, models.QuerySet):
         return QuerySet(annotation)
     elif is_typeddict(annotation):
@@ -90,7 +219,9 @@ def annotate_model(annotation):
             case (param,):
                 return type_[annotate_model(param)]  # type: ignore
             case params:
-                return type_[*(annotate_model(p) for p in params)]  # type: ignore
+                new_params = [p for p in params if not isinstance(p, LazyModel)]
+                _lazymodel = set(new_params) != set(params)
+                return type_[*(annotate_model(p, _lazymodel=_lazymodel) for p in params)]  # type: ignore
     else:
         return annotation
 

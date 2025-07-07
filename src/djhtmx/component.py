@@ -9,9 +9,8 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
 from os.path import basename
-from typing import Annotated, Any, Literal, ParamSpec, TypeVar, get_type_hints
+from typing import TYPE_CHECKING, Annotated, Any, Literal, ParamSpec, TypeVar, get_type_hints
 
-from django.contrib.auth.models import AbstractBaseUser
 from django.db import models
 from django.shortcuts import resolve_url
 from django.template import Context, loader
@@ -20,7 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field, validate_call
 from pydantic.fields import ModelPrivateAttr
 
 from . import json, settings
+from .exceptions import ComponentNotFound
 from .introspection import (
+    LazyModel,
     Unset,
     annotate_model,
     get_event_handler_event_types,
@@ -30,11 +31,7 @@ from .query import Query, QueryPatcher
 from .tracing import tracing_span
 from .utils import generate_id
 
-__all__ = ("ComponentNotFound", "HtmxComponent", "Query")
-
-
-class ComponentNotFound(LookupError):
-    pass
+__all__ = ("ComponentNotFound", "HtmxComponent", "LazyModel", "Query")
 
 
 @dataclass(slots=True)
@@ -372,7 +369,13 @@ class HtmxComponent(BaseModel):
 
     # State
     id: Annotated[str, Field(default_factory=generate_id)]
-    user: Annotated[AbstractBaseUser | None, Field(exclude=True)]
+
+    user: Annotated[Any | None, Field(exclude=True)]  # type: ignore
+    if TYPE_CHECKING:
+        from django.contrib.auth.models import AbstractBaseUser
+
+        user: Annotated[AbstractBaseUser | None, Field(exclude=True)]
+
     hx_name: str
     lazy: bool = False
 

@@ -17,7 +17,7 @@ from djhtmx.introspection import (
 from djhtmx.utils import compact_hash
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, unsafe_hash=True)
 class Query:
     """Annotation to integrate the state with the URL's query string.
 
