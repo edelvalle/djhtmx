@@ -41,6 +41,28 @@ def get_params(obj: HttpRequest | QueryDict | str | None) -> QueryDict:
         return QueryDict(None, mutable=True)
 
 
+def get_instance_subscriptions(
+    obj: models.Model,
+    actions: t.Sequence[str] = ("created", "updated", "deleted"),
+):
+    """Get the subscriptions to actions of a single instance of a model.
+
+    This won't return model-level subscriptions.
+
+    The `actions` is the set of actions to subscribe to, including any possible relation (e.g
+    'users.deleted').  If actions is empty, return only instance-level subscription.
+
+    """
+    cls = type(obj)
+    app = cls._meta.app_label
+    name = cls._meta.model_name
+    prefix = f"{app}.{name}.{obj.pk}"
+    if not actions:
+        return {prefix}
+    else:
+        return {f"{prefix}.{action}" for action in actions}
+
+
 def get_model_subscriptions(
     obj: type[models.Model] | models.Model,
     actions: t.Sequence[str] = ("created", "updated", "deleted"),
