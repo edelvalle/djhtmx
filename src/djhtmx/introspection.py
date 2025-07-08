@@ -175,18 +175,49 @@ def _Model(model: type[models.Model], hx_model_annotation: HxModelAnnotation | N
     ]
 
 
-def _QuerySet(qs: type[models.QuerySet]):
-    [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
+@dataclass(slots=True)
+class _QuerySetBeforeValidator(Generic[M]):  # noqa
+    qs: type[models.QuerySet[M]]
+    model: type[M]
+    hx_model_annotation: HxModelAnnotation
+
+    def __call__(self, value):
+        result = value if isinstance(value, self.qs) else self.model.objects.filter(pk__in=value)
+        if select_related := self.hx_model_annotation.select_related:
+            result = result.select_related(*select_related)
+        if prefetch_related := self.hx_model_annotation.prefetch_related:
+            result = result.prefetch_related(*prefetch_related)
+        return value
+
+    @classmethod
+    @cache
+    def from_queryset_class(cls, qs: type[models.QuerySet], hx_model_annotation: HxModelAnnotation):
+        [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
+        return cls(qs, model, hx_model_annotation=hx_model_annotation)  # type: ignore
+
+
+@dataclass(slots=True)
+class _QuerySetSerializer(Generic[M]):  # noqa
+    model: type[M]
+
+    def __call__(self, value):
+        return [instance.pk for instance in value]
+
+    @classmethod
+    @cache
+    def from_modelclass(cls, model: type[M]):
+        return cls(model)
+
+
+def _QuerySet(qs: type[models.QuerySet], hx_model_annotation: HxModelAnnotation | None = None):
+    hx_model_annotation = hx_model_annotation or _DEFAULT_HX_MODEL_ANNOTATION
+    validator = _QuerySetBeforeValidator.from_queryset_class(qs, hx_model_annotation)
     return Annotated[
         qs,
-        BeforeValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
+        BeforeValidator(validator),
         PlainSerializer(
-            func=lambda v: (
-                [instance.pk for instance in v]
-                if v._result_cache
-                else list(v.values_list("pk", flat=True))
-            ),
-            return_type=guess_pk_type(model),
+            func=_QuerySetSerializer.from_modelclass(validator.model),
+            return_type=guess_pk_type(validator.model),
         ),
     ]
 
@@ -195,7 +226,7 @@ def annotate_model(annotation, *, hx_model_annotation: HxModelAnnotation | None 
     if issubclass_safe(annotation, models.Model):
         return _Model(annotation, hx_model_annotation)
     elif issubclass_safe(annotation, models.QuerySet):
-        return _QuerySet(annotation)
+        return _QuerySet(annotation, hx_model_annotation)
     elif is_typeddict(annotation):
         return TypedDict(
             annotation.__name__,  # type: ignore
