@@ -21,7 +21,7 @@ from pydantic.fields import ModelPrivateAttr
 from . import json, settings
 from .exceptions import ComponentNotFound
 from .introspection import (
-    HxModelAnnotation,
+    ModelConfig,
     Unset,
     annotate_model,
     get_event_handler_event_types,
@@ -31,7 +31,7 @@ from .query import Query, QueryPatcher
 from .tracing import tracing_span
 from .utils import generate_id
 
-__all__ = ("ComponentNotFound", "HtmxComponent", "HxModelAnnotation", "Query")
+__all__ = ("ComponentNotFound", "HtmxComponent", "ModelConfig", "Query")
 
 
 @dataclass(slots=True)

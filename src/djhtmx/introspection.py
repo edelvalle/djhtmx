@@ -43,8 +43,13 @@ MODEL_RELATED_FIELDS: dict[type[models.Model], tuple[ModelRelatedField, ...]] = 
 
 
 @dataclass(slots=True, unsafe_hash=True)
-class HxModelAnnotation:
-    """Annotation to fetch the models/querysets in HTMX components."""
+class ModelConfig:
+    """Annotation to configure fetching the models/querysets in pydantic models.
+
+    For this configuration to take place the pydantic model has to call `annotate_model`.  HTMX
+    components require no extra steps.
+
+    """
 
     lazy: bool = False
     """If set to True, annotations of models.Model will return a _LazyModelProxy instead of the
@@ -52,11 +57,14 @@ class HxModelAnnotation:
 
     """
 
-    select_related: Sequence[str] | None = None
-    prefetch_related: Sequence[str | Prefetch] | None = None
+    select_related: list[str] | tuple[str, ...] | None = None
+    """The arguments to `model.objects.select_related(*select_related)`."""
+
+    prefetch_related: list[str | Prefetch] | tuple[str | Prefetch, ...] | None = None
+    """The arguments to `model.objects.prefetch_related(*prefetch_related)`."""
 
 
-_DEFAULT_HX_MODEL_ANNOTATION = HxModelAnnotation()
+_DEFAULT_MODEL_CONFIG = ModelConfig()
 
 
 @dataclass(slots=True, init=False)
@@ -73,7 +81,7 @@ class _LazyModelProxy(Generic[M]):  # noqa
         self,
         model: type[M],
         value: Any,
-        model_annotation: HxModelAnnotation | None = None,
+        model_annotation: ModelConfig | None = None,
     ):
         self.__model = model
         if value is None or isinstance(value, model):
@@ -113,10 +121,10 @@ class _LazyModelProxy(Generic[M]):  # noqa
 @dataclass(slots=True)
 class _ModelBeforeValidator(Generic[M]):  # noqa
     model: type[M]
-    hx_model_annotation: HxModelAnnotation
+    model_config: ModelConfig
 
     def __call__(self, value):
-        if self.hx_model_annotation.lazy:
+        if self.model_config.lazy:
             return self._get_lazy_proxy(value)
         else:
             return self._get_instance(value)
@@ -137,16 +145,16 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
             return value._LazyModelProxy__ensure_instance()
         else:
             manager = self.model.objects
-            if select_related := self.hx_model_annotation.select_related:
+            if select_related := self.model_config.select_related:
                 manager = manager.select_related(*select_related)
-            if prefetch_related := self.hx_model_annotation.prefetch_related:
+            if prefetch_related := self.model_config.prefetch_related:
                 manager = manager.prefetch_related(*prefetch_related)
             return manager.get(pk=value)
 
     @classmethod
     @cache
-    def from_modelclass(cls, model: type[M], hx_model_annotation: HxModelAnnotation):
-        return cls(model, hx_model_annotation=hx_model_annotation)
+    def from_modelclass(cls, model: type[M], model_config: ModelConfig):
+        return cls(model, model_config=model_config)
 
 
 @dataclass(slots=True)
@@ -162,12 +170,12 @@ class _ModelPlainSerializer(Generic[M]):  # noqa
         return cls(model)
 
 
-def _Model(model: type[models.Model], hx_model_annotation: HxModelAnnotation | None = None):
+def _Model(model: type[models.Model], model_config: ModelConfig | None = None):
     assert issubclass_safe(model, models.Model)
-    hx_model_annotation = hx_model_annotation or _DEFAULT_HX_MODEL_ANNOTATION
+    model_config = model_config or _DEFAULT_MODEL_CONFIG
     return Annotated[
-        model if not hx_model_annotation.lazy else _LazyModelProxy[model],
-        BeforeValidator(_ModelBeforeValidator.from_modelclass(model, hx_model_annotation)),
+        model if not model_config.lazy else _LazyModelProxy[model],
+        BeforeValidator(_ModelBeforeValidator.from_modelclass(model, model_config)),
         PlainSerializer(
             func=_ModelPlainSerializer.from_modelclass(model),
             return_type=guess_pk_type(model),
@@ -179,21 +187,21 @@ def _Model(model: type[models.Model], hx_model_annotation: HxModelAnnotation | N
 class _QuerySetBeforeValidator(Generic[M]):  # noqa
     qs: type[models.QuerySet[M]]
     model: type[M]
-    hx_model_annotation: HxModelAnnotation
+    model_config: ModelConfig
 
     def __call__(self, value):
         result = value if isinstance(value, self.qs) else self.model.objects.filter(pk__in=value)
-        if select_related := self.hx_model_annotation.select_related:
+        if select_related := self.model_config.select_related:
             result = result.select_related(*select_related)
-        if prefetch_related := self.hx_model_annotation.prefetch_related:
+        if prefetch_related := self.model_config.prefetch_related:
             result = result.prefetch_related(*prefetch_related)
         return value
 
     @classmethod
     @cache
-    def from_queryset_class(cls, qs: type[models.QuerySet], hx_model_annotation: HxModelAnnotation):
+    def from_queryset_class(cls, qs: type[models.QuerySet], model_config: ModelConfig):
         [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
-        return cls(qs, model, hx_model_annotation=hx_model_annotation)  # type: ignore
+        return cls(qs, model, model_config=model_config)  # type: ignore
 
 
 @dataclass(slots=True)
@@ -209,9 +217,9 @@ class _QuerySetSerializer(Generic[M]):  # noqa
         return cls(model)
 
 
-def _QuerySet(qs: type[models.QuerySet], hx_model_annotation: HxModelAnnotation | None = None):
-    hx_model_annotation = hx_model_annotation or _DEFAULT_HX_MODEL_ANNOTATION
-    validator = _QuerySetBeforeValidator.from_queryset_class(qs, hx_model_annotation)
+def _QuerySet(qs: type[models.QuerySet], model_config: ModelConfig | None = None):
+    model_config = model_config or _DEFAULT_MODEL_CONFIG
+    validator = _QuerySetBeforeValidator.from_queryset_class(qs, model_config)
     return Annotated[
         qs,
         BeforeValidator(validator),
@@ -222,11 +230,11 @@ def _QuerySet(qs: type[models.QuerySet], hx_model_annotation: HxModelAnnotation 
     ]
 
 
-def annotate_model(annotation, *, hx_model_annotation: HxModelAnnotation | None = None):
+def annotate_model(annotation, *, model_config: ModelConfig | None = None):
     if issubclass_safe(annotation, models.Model):
-        return _Model(annotation, hx_model_annotation)
+        return _Model(annotation, model_config)
     elif issubclass_safe(annotation, models.QuerySet):
-        return _QuerySet(annotation, hx_model_annotation)
+        return _QuerySet(annotation, model_config)
     elif is_typeddict(annotation):
         return TypedDict(
             annotation.__name__,  # type: ignore
@@ -245,12 +253,10 @@ def annotate_model(annotation, *, hx_model_annotation: HxModelAnnotation | None 
                 return type_[annotate_model(param)]  # type: ignore
             case params:
                 model_annotation = next(
-                    (p for p in params if isinstance(p, HxModelAnnotation)),
+                    (p for p in params if isinstance(p, ModelConfig)),
                     None,
                 )
-                return type_[
-                    *(annotate_model(p, hx_model_annotation=model_annotation) for p in params)
-                ]  # type: ignore
+                return type_[*(annotate_model(p, model_config=model_annotation) for p in params)]  # type: ignore
     else:
         return annotation
 
