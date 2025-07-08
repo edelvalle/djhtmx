@@ -183,49 +183,18 @@ def _Model(model: type[models.Model], model_config: ModelConfig | None = None):
     ]
 
 
-@dataclass(slots=True)
-class _QuerySetBeforeValidator(Generic[M]):  # noqa
-    qs: type[models.QuerySet[M]]
-    model: type[M]
-    model_config: ModelConfig
-
-    def __call__(self, value):
-        result = value if isinstance(value, self.qs) else self.model.objects.filter(pk__in=value)
-        if select_related := self.model_config.select_related:
-            result = result.select_related(*select_related)
-        if prefetch_related := self.model_config.prefetch_related:
-            result = result.prefetch_related(*prefetch_related)
-        return value
-
-    @classmethod
-    @cache
-    def from_queryset_class(cls, qs: type[models.QuerySet], model_config: ModelConfig):
-        [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
-        return cls(qs, model, model_config=model_config)  # type: ignore
-
-
-@dataclass(slots=True)
-class _QuerySetSerializer(Generic[M]):  # noqa
-    model: type[M]
-
-    def __call__(self, value):
-        return [instance.pk for instance in value]
-
-    @classmethod
-    @cache
-    def from_modelclass(cls, model: type[M]):
-        return cls(model)
-
-
-def _QuerySet(qs: type[models.QuerySet], model_config: ModelConfig | None = None):
-    model_config = model_config or _DEFAULT_MODEL_CONFIG
-    validator = _QuerySetBeforeValidator.from_queryset_class(qs, model_config)
+def _QuerySet(qs: type[models.QuerySet]):
+    [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
     return Annotated[
         qs,
-        BeforeValidator(validator),
+        BeforeValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
         PlainSerializer(
-            func=_QuerySetSerializer.from_modelclass(validator.model),
-            return_type=guess_pk_type(validator.model),
+            func=lambda v: (
+                [instance.pk for instance in v]
+                if v._result_cache
+                else list(v.values_list("pk", flat=True))
+            ),
+            return_type=guess_pk_type(model),
         ),
     ]
 
@@ -234,7 +203,7 @@ def annotate_model(annotation, *, model_config: ModelConfig | None = None):
     if issubclass_safe(annotation, models.Model):
         return _Model(annotation, model_config)
     elif issubclass_safe(annotation, models.QuerySet):
-        return _QuerySet(annotation, model_config)
+        return _QuerySet(annotation)
     elif is_typeddict(annotation):
         return TypedDict(
             annotation.__name__,  # type: ignore
