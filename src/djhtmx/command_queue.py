@@ -3,6 +3,8 @@ from typing import assert_never
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
 
+from djhtmx.repo import PushURL, ReplaceURL
+
 from .component import (
     BuildAndRender,
     Command,
@@ -84,6 +86,8 @@ class CommandQueue:
                     | Redirect()
                     | DispatchDOMEvent()
                     | Open()
+                    | PushURL()
+                    | ReplaceURL()
                 ):
                     new_commands.append(command)
 
@@ -132,7 +136,7 @@ class CommandQueue:
                     return 6, component.id, timestamp
                 else:
                     return 7, component.id, timestamp
-            case Focus() | Redirect() | DispatchDOMEvent() | Open():
+            case Focus() | Redirect() | DispatchDOMEvent() | Open() | ReplaceURL() | PushURL():
                 return 8, "", 0
             case _ as unreachable:
                 assert_never(unreachable)

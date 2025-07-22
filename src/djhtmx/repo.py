@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Generator, Iterable
 from dataclasses import dataclass
 from dataclasses import field as Field
-from typing import Any, Literal
+from typing import Any
 
 from django.core.signing import Signer
 from django.http import HttpRequest, QueryDict
@@ -20,6 +20,7 @@ from djhtmx.tracing import tracing_span
 
 from . import json
 from .command_queue import CommandQueue
+from .commands import PushURL, ReplaceURL, SendHtml
 from .component import (
     LISTENERS,
     REGISTRY,
@@ -52,34 +53,6 @@ from .utils import db, get_params
 signer = Signer()
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
-class SendHtml:
-    content: SafeString
-
-    # XXX: Just to debug...
-    debug_trace: str | None = None
-
-
-@dataclass(slots=True)
-class PushURL:
-    url: str
-    command: Literal["push_url"] = "push_url"
-
-    @classmethod
-    def from_params(cls, params: QueryDict):
-        return cls("?" + params.urlencode())
-
-
-@dataclass(slots=True)
-class ReplaceURL:
-    url: str
-    command: Literal["replace_url"] = "replace_url"
-
-    @classmethod
-    def from_params(cls, params: QueryDict):
-        return cls("?" + params.urlencode())
 
 
 ProcessedCommand = (
@@ -310,7 +283,14 @@ class Repository:
                             logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                             commands_to_append.append(Render(component))
 
-            case Open() | Redirect() | Focus() | DispatchDOMEvent() as command:
+            case (
+                Open()
+                | ReplaceURL()
+                | PushURL()
+                | Redirect()
+                | Focus()
+                | DispatchDOMEvent() as command
+            ):
                 commands.processing_component_id = ""
                 yield command
 

@@ -9,10 +9,11 @@ from django.http.response import HttpResponse
 from django.urls import path, re_path
 from django.utils.html import format_html
 
+from .commands import PushURL, ReplaceURL, SendHtml
 from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, Triggers
 from .consumer import Consumer
 from .introspection import parse_request_data
-from .repo import PushURL, ReplaceURL, Repository, SendHtml
+from .repo import Repository
 from .tracing import tracing_span
 
 signer = Signer()

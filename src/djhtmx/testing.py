@@ -12,9 +12,10 @@ from pygments.formatters import TerminalTrueColorFormatter
 from pygments.lexers import HtmlLexer
 
 from . import json
+from .commands import PushURL, ReplaceURL, SendHtml
 from .component import Destroy, DispatchDOMEvent, Focus, HtmxComponent, Open, Redirect
 from .introspection import parse_request_data
-from .repo import PushURL, ReplaceURL, Repository, SendHtml, Session, signer
+from .repo import Repository, Session, signer
 from .utils import get_params
 
 P = ParamSpec("P")
