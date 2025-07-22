@@ -3,7 +3,7 @@ from typing import assert_never
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
 
-from djhtmx.repo import PushURL, ReplaceURL
+from djhtmx.commands import PushURL, ReplaceURL
 
 from .component import (
     BuildAndRender,
