@@ -9,7 +9,15 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
 from os.path import basename
-from typing import TYPE_CHECKING, Annotated, Any, Literal, ParamSpec, TypeVar, get_type_hints
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    ParamSpec,
+    TypeVar,
+    get_type_hints,
+)
 
 from django.db import models
 from django.shortcuts import resolve_url
@@ -19,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, validate_call
 from pydantic.fields import ModelPrivateAttr
 
 from . import json, settings
+from .commands import PushURL, ReplaceURL
 from .exceptions import ComponentNotFound
 from .introspection import (
     ModelConfig,
@@ -170,6 +179,8 @@ Command = (
     | Signal
     | Execute
     | Open
+    | PushURL
+    | ReplaceURL
 )
 
 
