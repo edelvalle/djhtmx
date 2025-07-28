@@ -76,6 +76,10 @@ test:
 coverage-html: test
 	@cd src/tests; $(RUN) coverage html --rcfile=../../pyproject.toml
 
+coverage: test
+	@cd src/tests; $(RUN) coverage report --rcfile=../../pyproject.toml
+.PHONY: coverage
+
 
 makemigrations:
 	@$(RUN) python src/tests/manage.py makemigrations

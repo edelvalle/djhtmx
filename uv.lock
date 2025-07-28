@@ -282,32 +282,15 @@ wheels = [
 ]
 
 [[package]]
-name = "django-stubs"
-version = "5.0.4"
+name = "django-types"
+version = "0.22.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "asgiref" },
-    { name = "django" },
-    { name = "django-stubs-ext" },
-    { name = "types-pyyaml" },
-    { name = "typing-extensions" },
+    { name = "types-psycopg2" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/f4/2dfc77809e4d04164ec614755e2359ec2e68a32f7b5428909fa0b7f8f4e0/django_stubs-5.0.4.tar.gz", hash = "sha256:78e3764488fdfd2695f12502136548ec22f8d4b1780541a835042b8238d11514", size = 262238, upload-time = "2024-07-28T18:10:22.041Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3d/26/5f2873f7208dee0791710fda494a8d3ef7fb1d34785069b55168a23e2ac2/django_types-0.22.0.tar.gz", hash = "sha256:4cecc9eee846e7ff2a398bec9dfe6543e76efb922a7a58c5d6064bcb0e6a3dc5", size = 187214, upload-time = "2025-07-15T01:05:48.039Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/f0/36c0f82ed7b4ef630b39e165590645c4fe4361f52d41bca5001327d62f57/django_stubs-5.0.4-py3-none-any.whl", hash = "sha256:c2502f5ecbae50c68f9a86d52b5b2447d8648fd205036dad0ccb41e19a445927", size = 466530, upload-time = "2024-07-28T18:10:19.978Z" },
-]
-
-[[package]]
-name = "django-stubs-ext"
-version = "5.0.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "django" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/91/77/ef453a8286fff87db8efd7fe93c1a86f05aeddcc78973c883af91b667f74/django_stubs_ext-5.0.4.tar.gz", hash = "sha256:85da065224204774208be29c7d02b4482d5a69218a728465c2fbe41725fdc819", size = 9410, upload-time = "2024-07-28T18:09:42.706Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cc/54/66a7ccb1f4e4a8e37e0881a3dfdcabaee9fc0c0c91cbe64170e794acebd7/django_stubs_ext-5.0.4-py3-none-any.whl", hash = "sha256:910cbaff3d1e8e806a5c27d5ddd4088535aae8371ea921b7fd680fdfa5f14e30", size = 8954, upload-time = "2024-07-28T18:09:41.325Z" },
+    { url = "https://files.pythonhosted.org/packages/82/3a/0ecbaab07cfe7b0a4fd72dfde4be8e7c11aad2b88c816cfcbb800c14cbda/django_types-0.22.0-py3-none-any.whl", hash = "sha256:ba15c756c7a732e58afd0737e54489f1c5e6f1bd24132e9199c637b1f88b057c", size = 376869, upload-time = "2025-07-15T01:05:46.621Z" },
 ]
 
 [[package]]
@@ -345,8 +328,7 @@ dev = [
     { name = "cssselect" },
     { name = "django-click" },
     { name = "django-extensions" },
-    { name = "django-stubs" },
-    { name = "django-stubs-ext" },
+    { name = "django-types" },
     { name = "djlint" },
     { name = "ipdb" },
     { name = "ipython" },
@@ -376,8 +358,7 @@ test = [
 ]
 typing = [
     { name = "basedpyright" },
-    { name = "django-stubs" },
-    { name = "django-stubs-ext" },
+    { name = "django-types" },
     { name = "types-lxml" },
 ]
 
@@ -408,8 +389,7 @@ dev = [
     { name = "cssselect", specifier = ">=1.2.0" },
     { name = "django-click", specifier = ">=2.3.0,<3" },
     { name = "django-extensions", specifier = "~=3.2.3" },
-    { name = "django-stubs", specifier = "~=5.0.4" },
-    { name = "django-stubs-ext", specifier = "~=5.0.4" },
+    { name = "django-types", specifier = ">=0.22.0" },
     { name = "djlint", specifier = "~=1.34.1" },
     { name = "ipdb", specifier = "~=0.13.13" },
     { name = "ipython", specifier = "~=8.26.0" },
@@ -439,8 +419,7 @@ test = [
 ]
 typing = [
     { name = "basedpyright", specifier = "==1.28.1" },
-    { name = "django-stubs", specifier = "~=5.0.4" },
-    { name = "django-stubs-ext", specifier = "~=5.0.4" },
+    { name = "django-types", specifier = ">=0.22.0" },
     { name = "types-lxml", specifier = ">=2024.11.8" },
 ]
 
@@ -1494,12 +1473,12 @@ wheels = [
 ]
 
 [[package]]
-name = "types-pyyaml"
-version = "6.0.12.20240808"
+name = "types-psycopg2"
+version = "2.9.21.20250718"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/dd/08/6f5737f645571b7a0b1ebd2fe8b5cf1ee4ec3e707866ca96042a86fc1d10/types-PyYAML-6.0.12.20240808.tar.gz", hash = "sha256:b8f76ddbd7f65440a8bda5526a9607e4c7a322dc2f8e1a8c405644f9a6f4b9af", size = 12359, upload-time = "2024-08-08T02:30:32.727Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/7c/d514803e4dbc5361c4b4600a143d6bd4fd593832bd8673f23423328bb26d/types_psycopg2-2.9.21.20250718.tar.gz", hash = "sha256:dc09a97272ef67e739e57b9f4740b761208f4514257e311c0b05c8c7a37d04b4", size = 26597, upload-time = "2025-07-18T03:22:39.09Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/ad/ffbad24e2bc8f20bf047ec22af0c0a92f6ce2071eb21c9103df600cda6de/types_PyYAML-6.0.12.20240808-py3-none-any.whl", hash = "sha256:deda34c5c655265fc517b546c902aa6eed2ef8d3e921e4765fe606fe2afe8d35", size = 15298, upload-time = "2024-08-08T02:30:31.101Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/df/9bb191e6e1662e8697d56fad044381df3bce2f5aabc57334063dc5a48907/types_psycopg2-2.9.21.20250718-py3-none-any.whl", hash = "sha256:bcf085d4293bda48f5943a46dadf0389b2f98f7e8007722f7e1c12ee0f541858", size = 24878, upload-time = "2025-07-18T03:22:37.798Z" },
 ]
 
 [[package]]

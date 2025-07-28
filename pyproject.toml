@@ -53,9 +53,8 @@ test = [
 ]
 typing = [
     "basedpyright==1.28.1",
+    "django-types>=0.22.0",
     "types-lxml>=2024.11.8",
-    "django-stubs~=5.0.4",
-    "django-stubs-ext~=5.0.4",
 ]
 lint = [
     "ruff==0.11.*",
