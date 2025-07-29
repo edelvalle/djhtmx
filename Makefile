@@ -70,7 +70,7 @@ run: install
 .PHONY: run
 
 test:
-	@cd src/tests; $(RUN) pytest --cov --cov-branch --cov-report=xml
+	@cd src/tests; $(RUN) coverage run --rcfile=../../pyproject.toml -m manage test
 .PHONY: test
 
 coverage-html: test
