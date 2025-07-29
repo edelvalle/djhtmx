@@ -166,10 +166,11 @@ class QueryPatcher:
                 )
         except ValueError:
             previous_value = self.default_value
+
         if serialized_value == previous_value:
             return []
         else:
-            params[self.param_name] = serialized_value
+            params[self.param_name] = serialized_value  # type: ignore
             return [self.signal_name]
 
 

@@ -1,5 +1,6 @@
 import random
-from typing import Any, Literal
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
 from django import template
 from django.core.signing import Signer
@@ -277,7 +278,7 @@ class ClassNode(Node):
 
     def render(self, context: Context):
         class_names = [
-            class_name.resolve(context)
+            class_name.resolve(cast(Mapping[str, Any], context))
             for condition, class_name in self.condition_and_classes
             if condition.eval(context)  # type: ignore
         ]

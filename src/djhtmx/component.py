@@ -16,6 +16,7 @@ from typing import (
     Literal,
     ParamSpec,
     TypeVar,
+    cast,
     get_type_hints,
 )
 
@@ -226,10 +227,10 @@ RENDER_FUNC: dict[str, RenderFunction] = {}
 
 def get_template(template: str) -> RenderFunction:  # pragma: no cover
     if settings.DEBUG:
-        return _compose(loader.get_template(template).render, mark_safe)
+        return cast(RenderFunction, _compose(loader.get_template(template).render, mark_safe))
     else:
         if (render := RENDER_FUNC.get(template)) is None:
-            render = _compose(loader.get_template(template).render, mark_safe)
+            render = cast(RenderFunction, _compose(loader.get_template(template).render, mark_safe))
             RENDER_FUNC[template] = render
         return render
 

@@ -28,7 +28,7 @@ else:
 
 
 try:
-    import logfire
+    import logfire  # pyright: ignore[reportMissingImports]
 except ImportError:
     logfire = None
 
