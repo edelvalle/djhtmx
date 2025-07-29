@@ -94,14 +94,14 @@ jobs:
         timeout 30 bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 1; done'
 
     - name: Run tests with coverage
-      run: make coverage
+      run: make coverage-xml
       env:
         DJHTMX_REDIS_URL: redis://localhost:6379/0
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
       with:
-        file: ./src/tests/.coverage
+        file: ./src/tests/coverage.xml
         fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
       if: always()  # Upload coverage even if tests fail

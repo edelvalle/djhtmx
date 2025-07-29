@@ -80,6 +80,10 @@ coverage: test
 	@cd src/tests; $(RUN) coverage report --rcfile=../../pyproject.toml
 .PHONY: coverage
 
+coverage-xml: test
+	@cd src/tests; $(RUN) coverage xml --rcfile=../../pyproject.toml
+.PHONY: coverage-xml
+
 
 makemigrations:
 	@$(RUN) python src/tests/manage.py makemigrations

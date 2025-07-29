@@ -1,5 +1,8 @@
 # djhtmx
 
+[![CI](https://github.com/edelvalle/djhtmx/actions/workflows/ci.yml/badge.svg)](https://github.com/edelvalle/djhtmx/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/edelvalle/djhtmx/branch/master/graph/badge.svg)](https://codecov.io/gh/edelvalle/djhtmx)
+
 Interactive UI Components for Django using [htmx](https://htmx.org)
 
 ## Install
