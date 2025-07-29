@@ -59,6 +59,17 @@ jobs:
     name: "Tests & Coverage"
     needs: [lint-and-format]  # Only run if linting passes
     
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -75,8 +86,14 @@ jobs:
     - name: Install dependencies
       run: make install
 
+    - name: Wait for Redis to be ready
+      run: |
+        timeout 30 bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 1; done'
+
     - name: Run tests with coverage
       run: make coverage
+      env:
+        DJHTMX_REDIS_URL: redis://localhost:6379/0
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
