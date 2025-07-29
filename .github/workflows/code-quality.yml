@@ -1,0 +1,65 @@
+name: Code Quality Check
+
+on:
+  workflow_dispatch:  # Allow manual triggering
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+
+jobs:
+  comprehensive-check:
+    runs-on: ubuntu-latest
+    name: "Comprehensive Code Quality Check"
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.7.3"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: make install
+
+    - name: Check code formatting
+      run: |
+        echo "::group::Checking code formatting"
+        make lint
+        echo "::endgroup::"
+
+    - name: Run type checking
+      continue-on-error: true
+      run: |
+        echo "::group::Running type checks"
+        make pyright || echo "Type checking found issues (non-blocking)"
+        echo "::endgroup::"
+
+    - name: Run tests with coverage
+      run: |
+        echo "::group::Running tests"
+        make test
+        echo "::endgroup::"
+
+    - name: Generate coverage report
+      run: |
+        echo "::group::Coverage Report"
+        make coverage
+        echo "::endgroup::"
+
+    - name: Generate HTML coverage report
+      run: |
+        echo "::group::Generating HTML coverage"
+        make coverage-html
+        echo "::endgroup::"
+
+    - name: Upload coverage HTML as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: src/tests/htmlcov/
+        retention-days: 30

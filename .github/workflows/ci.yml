@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint-and-format:
+    runs-on: ubuntu-latest
+    name: "Lint & Format Check"
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.7.3"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: make install
+
+    - name: Check formatting and linting
+      run: make lint
+
+  type-check:
+    runs-on: ubuntu-latest
+    name: "Type Check"
+    continue-on-error: true  # Allow this to fail without failing the whole CI
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.7.3"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: make install
+
+    - name: Run type checking
+      run: make pyright
+
+  test:
+    runs-on: ubuntu-latest
+    name: "Tests & Coverage"
+    needs: [lint-and-format]  # Only run if linting passes
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.7.3"
+        enable-cache: true
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: make install
+
+    - name: Run tests with coverage
+      run: make coverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./src/tests/.coverage
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+      if: always()  # Upload coverage even if tests fail
