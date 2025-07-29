@@ -129,7 +129,7 @@ class CommandQueue:
                 return 3, "", 0
             case SkipRender():
                 return 4, "", 0
-            case BuildAndRender(_, _, _, timestamp):
+            case BuildAndRender(_, _, _, _, timestamp):
                 return 5, "", timestamp
             case Render(component, template, _, _, timestamp):
                 if template:

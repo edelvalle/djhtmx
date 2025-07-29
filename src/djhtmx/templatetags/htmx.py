@@ -90,7 +90,11 @@ def htmx(
     state = (_state or {}) | state
     repo: Repository = context["htmx_repo"]
     state |= {"lazy": lazy is True}
-    component = repo.build(_name, state)
+
+    # Extract parent component ID from context if available
+    parent_id = getattr(context.get("this"), "id", None)
+
+    component = repo.build(_name, state, parent_id=parent_id)
     return repo.render_html(
         component,
         lazy=lazy if isinstance(lazy, bool) else False,

@@ -238,9 +238,14 @@ class Repository:
                 commands.processing_component_id = component.id
                 self.session.store(component)
 
-            case BuildAndRender(component_type, state, oob):
+            case BuildAndRender(component_type, state, oob, parent_id):
                 commands.processing_component_id = state.get("id", "")
                 component = self.build(component_type.__name__, state)
+
+                # Automatically track parent-child relationship if parent_id is specified
+                child_id = component.id
+                self.session.register_child(parent_id, child_id)
+
                 commands_to_append.append(Render(component, oob=oob))
 
             case Render(component, template, oob, lazy):
@@ -375,7 +380,13 @@ class Repository:
             )
             return Destroy(component_id)
 
-    def build(self, component_name: str, state: dict[str, Any], retrieve_state: bool = True):
+    def build(
+        self,
+        component_name: str,
+        state: dict[str, Any],
+        retrieve_state: bool = True,
+        parent_id: str | None = None,
+    ):
         """Build (or update) a component's state."""
         from django.contrib.auth.models import AnonymousUser
 
@@ -393,7 +404,12 @@ class Repository:
                 "hx_name": component_name,
                 "user": None if isinstance(self.user, AnonymousUser) else self.user,
             }
-            return REGISTRY[component_name](**kwargs)
+            component = REGISTRY[component_name](**kwargs)
+
+            # Automatically track parent-child relationship if parent_id is specified
+            self.session.register_child(parent_id, component.id)
+
+            return component
 
     def get_components_by_names(self, *names: str) -> Iterable[HtmxComponent]:
         # go over awaken components
@@ -458,6 +474,9 @@ class Session:
     # dict[component_id -> set[signals]]
     subscriptions: defaultdict[str, set[str]] = Field(default_factory=lambda: defaultdict(set))
 
+    # dict[parent_id -> set[child_ids]]
+    children: defaultdict[str, set[str]] = Field(default_factory=lambda: defaultdict(set))
+
     # set[component_id]
     unregistered: set[str] = Field(default_factory=set)
 
@@ -473,10 +492,31 @@ class Session:
             self.is_dirty = True
 
     def unregister_component(self, component_id: str):
+        # Recursively unregister all children first
+        if child_ids := self.children.get(component_id):
+            for child_id in child_ids.copy():  # Copy to avoid modification during iteration
+                self.unregister_component(child_id)
+
+        # Remove from parent's children list
+        for child_ids in self.children.values():
+            if component_id in child_ids:
+                child_ids.remove(component_id)
+                break
+
+        # Remove this component's children mapping
+        self.children.pop(component_id, None)
+
+        # Remove component state and subscriptions
         self.states.pop(component_id, None)
         self.subscriptions.pop(component_id, None)
         self.unregistered.add(component_id)
         self.is_dirty = True
+
+    def register_child(self, parent_id: str | None, child_id: str):
+        """Register a parent-child relationship between components."""
+        if parent_id and parent_id != child_id and child_id not in self.children[parent_id]:
+            self.children[parent_id].add(child_id)
+            self.is_dirty = True
 
     def get_state(self, component_id: str) -> dict[str, Any] | None:
         self._ensure_read()
@@ -496,23 +536,18 @@ class Session:
 
     def _ensure_read(self):
         if not self.read:
-            subscriptions_were_read = False
             for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
                 component_id = component_id.decode()
                 if component_id == "__subs__":
                     # dict[component_id -> list[signals]]
                     for component_id, signals in json.loads(state).items():
                         self.subscriptions[component_id] = set(signals)
-                    subscriptions_were_read = True
+                elif component_id == "__children__":
+                    # dict[parent_id -> list[child_ids]]
+                    for parent_id, child_ids in json.loads(state).items():
+                        self.children[parent_id] = set(child_ids)
                 else:
                     self.states[component_id] = state.decode()
-
-            # TODO: delete later, backwards compatible method
-            if not subscriptions_were_read:
-                _, keys = conn.sscan(f"{self.id}:subs")  # type: ignore
-                for key in keys:
-                    signal, component_id = key.decode().rsplit(":", 1)
-                    self.subscriptions[component_id].add(signal)
             self.read = True
 
     def flush(self, ttl: int = SESSION_TTL):
@@ -524,6 +559,7 @@ class Session:
             if self.states:
                 conn.hset(key, mapping=self.states)
             conn.hset(key, "__subs__", json.dumps(self.subscriptions))
+            conn.hset(key, "__children__", json.dumps(self.children))
             conn.expire(key, ttl)
             # The command MEMORY USAGE is considered slow:
             # https://redis.io/docs/latest/commands/memory-usage/

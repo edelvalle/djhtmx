@@ -8,3 +8,8 @@ __pycache__/
 requirements*.lock
 .envrc
 .env
+
+# Coverage files
+.coverage
+.coverage.*
+htmlcov/
