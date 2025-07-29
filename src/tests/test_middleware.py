@@ -1,6 +1,6 @@
 import asyncio
-from unittest.mock import Mock
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 from django.http import HttpRequest, HttpResponse
 from django.test import TestCase
@@ -8,7 +8,7 @@ from django.test import TestCase
 from djhtmx.middleware import middleware
 
 if TYPE_CHECKING:
-    from typing import Any
+    pass
 
 
 class TestMiddleware(TestCase):

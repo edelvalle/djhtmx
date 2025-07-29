@@ -1,4 +1,3 @@
-
 from django.http import HttpRequest, QueryDict
 from django.test import TestCase
 from fision.todo.models import Item  # type: ignore[import-untyped]

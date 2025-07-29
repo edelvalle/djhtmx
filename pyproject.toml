@@ -145,9 +145,10 @@ select = [
 # S105: hardcoded passwords for testing
 # S106: hardcoded password argument
 # RUF012: Mutable class attributes should be annotated with `typing.ClassVar`
+# RUF029: async functions without await are needed for testing async middleware compatibility
 # RUF039: regex in migrations are translated from raw into string
-"**/tests.py" = ["PLC2801", "S105", "S106"]
-"**/tests/**" = ["PLC2801", "S105", "S106"]
+"**/tests.py" = ["PLC2801", "S105", "S106", "RUF029"]
+"**/tests/**" = ["PLC2801", "S105", "S106", "RUF029"]
 "**/models.py" = ["RUF012"]
 "**/models/**" = ["RUF012"]
 "**/migrations/**" = ["RUF012", "RUF039"]

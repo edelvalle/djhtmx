@@ -2,10 +2,10 @@ from http import HTTPStatus
 from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, TestCase
+from django.utils.safestring import mark_safe
 from fision.todo.htmx import TodoItem  # type: ignore[import-untyped]
 
 from djhtmx.commands import PushURL, ReplaceURL, SendHtml
-from django.utils.safestring import mark_safe
 from djhtmx.component import Destroy, DispatchDOMEvent, Focus, Open, Redirect
 from djhtmx.urls import APP_CONFIGS, app_name_of_component, endpoint
 
