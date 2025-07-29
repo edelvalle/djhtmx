@@ -293,7 +293,6 @@ class Notification(HtmxComponent):
         yield Destroy(self.id)
 ```
 
-
 ### Skip renders
 
 Sometimes when reacting to a front-end event is handy to skip the default render of the current component, to achieve this do:
@@ -565,6 +564,57 @@ class ItemComponent(HtmxComponent):
 ```
 
 Use the `BuildAndRender.<helper>(target: str, ...)` to send a component to be inserted somewhere or updated.
+
+### Cascade Deletion
+
+You can establish parent-child relationships so that when a parent component is destroyed, all its children are automatically destroyed recursively. This prevents memory leaks in complex component hierarchies.
+
+#### Using BuildAndRender with parent_id
+
+```python
+class TodoListComponent(HtmxComponent):
+    def create(self, name: str):
+        item = self.todo_list.items.create(name=name)
+        # Child component that will be automatically destroyed when parent is destroyed
+        yield BuildAndRender.append(
+            "#todo-items", 
+            ItemComponent, 
+            parent_id=self.id,  # Establishes parent-child relationship
+            id=f"item-{item.id}",
+            item=item
+        )
+
+class Dashboard(HtmxComponent):
+    def show_modal(self):
+        # Modal becomes child of dashboard - destroyed when dashboard is destroyed
+        yield BuildAndRender.prepend("body", SettingsModal, parent_id=self.id)
+```
+
+#### Template Tag Automatic Tracking
+
+When you use `{% htmx "ComponentName" %}` inside another component's template, parent-child relationships are automatically established:
+
+```html
+<!-- In TodoList.html template -->
+{% load htmx %}
+<div {% hx-tag %}>
+  {% for item in items %}
+    <!-- Each TodoItem automatically becomes a child of this TodoList -->
+    {% htmx "ItemComponent" id="item-"|add:item.id item=item %}
+  {% endfor %}
+</div>
+```
+
+When the parent TodoList is destroyed, all child ItemComponent instances are automatically cleaned up.
+
+#### Updating Components
+
+Use `BuildAndRender.update()` to update existing components (preserves existing parent-child relationships):
+
+```python
+# Update existing component without changing relationships
+yield BuildAndRender.update(SidebarWidget, data=sidebar_data)
+```
 
 
 ## Focusing an item after render

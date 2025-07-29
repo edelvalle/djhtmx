@@ -238,9 +238,14 @@ class Repository:
                 commands.processing_component_id = component.id
                 self.session.store(component)
 
-            case BuildAndRender(component_type, state, oob):
+            case BuildAndRender(component_type, state, oob, parent_id):
                 commands.processing_component_id = state.get("id", "")
                 component = self.build(component_type.__name__, state)
+
+                # Automatically track parent-child relationship if parent_id is specified
+                child_id = component.id
+                self.session.register_child(parent_id, child_id)
+
                 commands_to_append.append(Render(component, oob=oob))
 
             case Render(component, template, oob, lazy):
@@ -375,7 +380,13 @@ class Repository:
             )
             return Destroy(component_id)
 
-    def build(self, component_name: str, state: dict[str, Any], retrieve_state: bool = True):
+    def build(
+        self,
+        component_name: str,
+        state: dict[str, Any],
+        retrieve_state: bool = True,
+        parent_id: str | None = None,
+    ):
         """Build (or update) a component's state."""
         from django.contrib.auth.models import AnonymousUser
 
@@ -393,7 +404,12 @@ class Repository:
                 "hx_name": component_name,
                 "user": None if isinstance(self.user, AnonymousUser) else self.user,
             }
-            return REGISTRY[component_name](**kwargs)
+            component = REGISTRY[component_name](**kwargs)
+
+            # Automatically track parent-child relationship if parent_id is specified
+            self.session.register_child(parent_id, component.id)
+
+            return component
 
     def get_components_by_names(self, *names: str) -> Iterable[HtmxComponent]:
         # go over awaken components
@@ -496,9 +512,9 @@ class Session:
         self.unregistered.add(component_id)
         self.is_dirty = True
 
-    def register_child(self, parent_id: str, child_id: str):
+    def register_child(self, parent_id: str | None, child_id: str):
         """Register a parent-child relationship between components."""
-        if child_id not in self.children[parent_id]:
+        if parent_id and parent_id != child_id and child_id not in self.children[parent_id]:
             self.children[parent_id].add(child_id)
             self.is_dirty = True
 

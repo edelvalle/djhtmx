@@ -120,23 +120,40 @@ class BuildAndRender:
     component: type[HtmxComponent]
     state: dict[str, Any]
     oob: str = "true"
+    parent_id: str | None = None
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
     @classmethod
-    def append(cls, target_: str, component_: type[HtmxComponent], **state):
-        return cls(component=component_, state=state, oob=f"beforeend: {target_}")
+    def append(
+        cls, target_: str, component_: type[HtmxComponent], parent_id: str | None = None, **state
+    ):
+        return cls(
+            component=component_, state=state, oob=f"beforeend: {target_}", parent_id=parent_id
+        )
 
     @classmethod
-    def prepend(cls, target_: str, component_: type[HtmxComponent], **state):
-        return cls(component=component_, state=state, oob=f"afterbegin: {target_}")
+    def prepend(
+        cls, target_: str, component_: type[HtmxComponent], parent_id: str | None = None, **state
+    ):
+        return cls(
+            component=component_, state=state, oob=f"afterbegin: {target_}", parent_id=parent_id
+        )
 
     @classmethod
-    def after(cls, target_: str, component_: type[HtmxComponent], **state):
-        return cls(component=component_, state=state, oob=f"afterend: {target_}")
+    def after(
+        cls, target_: str, component_: type[HtmxComponent], parent_id: str | None = None, **state
+    ):
+        return cls(
+            component=component_, state=state, oob=f"afterend: {target_}", parent_id=parent_id
+        )
 
     @classmethod
-    def before(cls, target_: str, component_: type[HtmxComponent], **state):
-        return cls(component=component_, state=state, oob=f"beforebegin: {target_}")
+    def before(
+        cls, target_: str, component_: type[HtmxComponent], parent_id: str | None = None, **state
+    ):
+        return cls(
+            component=component_, state=state, oob=f"beforebegin: {target_}", parent_id=parent_id
+        )
 
     @classmethod
     def update(cls, component: type[HtmxComponent], **state):

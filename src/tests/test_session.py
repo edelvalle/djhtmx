@@ -196,3 +196,362 @@ class TestRepositoryWithRecursiveDestruction(TestCase):
 
         # Children mappings should be cleaned up
         self.assertEqual(len(session.children), 0, "All children mappings should be removed")
+
+
+class TestAutomaticRelationshipTracking(TestCase):
+    """Test automatic parent-child relationship tracking during component creation."""
+
+    @patch("djhtmx.repo.conn")
+    def test_build_and_render_automatically_tracks_parent_child_relationship(self, mock_conn):
+        """Test that BuildAndRender automatically establishes parent-child relationships."""
+        from django.contrib.auth.models import AnonymousUser
+        from django.http import QueryDict
+
+        from djhtmx.command_queue import CommandQueue
+        from djhtmx.component import BuildAndRender
+        from djhtmx.repo import Repository, Session
+
+        # Mock Redis to return empty data
+        mock_conn.hgetall.return_value = {}
+
+        session = Session("test-session-id")
+        repo = Repository(user=AnonymousUser(), session=session, params=QueryDict())
+
+        parent_id = "parent-component"
+        child_id = "child-component"
+
+        # Set up parent component state
+        session.states[parent_id] = '{"id": "parent-component", "hx_name": "MockComponent"}'
+
+        # Create a BuildAndRender command with explicit parent_id
+        build_command = BuildAndRender(
+            component=MockComponent, state={"id": child_id}, oob="true", parent_id=parent_id
+        )
+
+        # Process the command through the repository
+        commands = CommandQueue([build_command])
+        list(repo._run_command(commands))
+
+        # Verify parent-child relationship was automatically established
+        self.assertIn(parent_id, session.children)
+        self.assertIn(child_id, session.children[parent_id])
+
+    @patch("djhtmx.repo.conn")
+    def test_build_and_render_ignores_self_relationships(self, mock_conn):
+        """Test BuildAndRender doesn't create self-relationships."""
+        from django.contrib.auth.models import AnonymousUser
+        from django.http import QueryDict
+
+        from djhtmx.command_queue import CommandQueue
+        from djhtmx.component import BuildAndRender
+        from djhtmx.repo import Repository, Session
+
+        # Mock Redis to return empty data
+        mock_conn.hgetall.return_value = {}
+
+        session = Session("test-session-id")
+        repo = Repository(user=AnonymousUser(), session=session, params=QueryDict())
+
+        component_id = "same-component"
+
+        # Create a BuildAndRender command where parent and child are the same
+        build_command = BuildAndRender(
+            component=MockComponent, state={"id": component_id}, oob="true", parent_id=component_id
+        )
+
+        commands = CommandQueue([build_command])
+
+        # Process the command
+        list(repo._run_command(commands))
+
+        # Verify no self-relationship was created
+        self.assertEqual(len(session.children), 0)
+
+    @patch("djhtmx.repo.conn")
+    def test_build_and_render_ignores_empty_parent_id(self, mock_conn):
+        """Test BuildAndRender doesn't track relationships when no parent is executing."""
+        from django.contrib.auth.models import AnonymousUser
+        from django.http import QueryDict
+
+        from djhtmx.command_queue import CommandQueue
+        from djhtmx.component import BuildAndRender
+        from djhtmx.repo import Repository, Session
+
+        # Mock Redis to return empty data
+        mock_conn.hgetall.return_value = {}
+
+        session = Session("test-session-id")
+        repo = Repository(user=AnonymousUser(), session=session, params=QueryDict())
+
+        child_id = "child-component"
+
+        # Create a BuildAndRender command with no parent_id
+        build_command = BuildAndRender(
+            component=MockComponent, state={"id": child_id}, oob="true", parent_id=None
+        )
+
+        commands = CommandQueue([build_command])
+
+        # Process the command
+        list(repo._run_command(commands))
+
+        # Verify no relationship was created
+        self.assertEqual(len(session.children), 0)
+
+    @patch("djhtmx.repo.conn")
+    def test_automatic_recursive_destruction_with_built_children(self, mock_conn):
+        """Test that automatically tracked children are recursively destroyed."""
+        from django.contrib.auth.models import AnonymousUser
+        from django.http import QueryDict
+
+        from djhtmx.command_queue import CommandQueue
+        from djhtmx.component import BuildAndRender
+        from djhtmx.repo import Repository, Session
+
+        # Mock Redis to return empty data
+        mock_conn.hgetall.return_value = {}
+
+        session = Session("test-session-id")
+        repo = Repository(user=AnonymousUser(), session=session, params=QueryDict())
+
+        parent_id = "parent-component"
+        child1_id = "child1-component"
+        child2_id = "child2-component"
+
+        # Set up parent component
+        session.states[parent_id] = '{"id": "parent-component", "hx_name": "MockComponent"}'
+
+        # Simulate parent creating two child components
+        for child_id in [child1_id, child2_id]:
+            build_command = BuildAndRender(
+                component=MockComponent, state={"id": child_id}, oob="true", parent_id=parent_id
+            )
+            commands = CommandQueue([build_command])
+            list(repo._run_command(commands))
+
+        # Verify relationships were established
+        self.assertEqual(len(session.children[parent_id]), 2)
+        self.assertIn(child1_id, session.children[parent_id])
+        self.assertIn(child2_id, session.children[parent_id])
+
+        # Add states for children (they would exist from BuildAndRender processing)
+        session.states[child1_id] = '{"id": "child1-component", "hx_name": "MockComponent"}'
+        session.states[child2_id] = '{"id": "child2-component", "hx_name": "MockComponent"}'
+
+        # Destroy parent component
+        session.unregister_component(parent_id)
+
+        # Verify all components were recursively destroyed
+        for comp_id in [parent_id, child1_id, child2_id]:
+            self.assertNotIn(comp_id, session.states)
+            self.assertIn(comp_id, session.unregistered)
+
+    def test_build_and_render_api_usage_examples(self):
+        """Test different ways to use BuildAndRender with parent_id."""
+        from djhtmx.component import BuildAndRender
+
+        # Example 1: Child component appended to parent's container
+        child_in_parent = BuildAndRender.append(
+            "#todo-list", MockComponent, parent_id="parent-todo-list", id="new-todo-item"
+        )
+        self.assertEqual(child_in_parent.parent_id, "parent-todo-list")
+        self.assertEqual(child_in_parent.oob, "beforeend: #todo-list")
+
+        # Example 2: Update existing component (preserves existing relationships)
+        update_component = BuildAndRender.update(MockComponent, id="sidebar-widget")
+        self.assertIsNone(update_component.parent_id)  # update() doesn't set parent_id
+
+        # Example 3: Modal dialog created by parent component
+        modal_dialog = BuildAndRender.prepend(
+            "body", MockComponent, parent_id="main-dashboard", id="settings-modal"
+        )
+        self.assertEqual(modal_dialog.parent_id, "main-dashboard")
+        self.assertEqual(modal_dialog.oob, "afterbegin: body")
+
+
+class TestTemplateTagAutomaticTracking(TestCase):
+    """Test automatic parent-child relationship tracking through template tags."""
+
+    @patch("djhtmx.component.get_template")
+    @patch("djhtmx.repo.conn")
+    def test_htmx_template_tag_automatically_tracks_parent_child_relationship(
+        self, mock_conn, mock_get_template
+    ):
+        """Test that {% htmx %} template tag automatically establishes parent-child relationships."""
+        from django.contrib.auth.models import AnonymousUser
+        from django.http import QueryDict
+        from django.template import Context, Template
+
+        from djhtmx.repo import Repository, Session
+
+        # Mock Redis to return empty data
+        mock_conn.hgetall.return_value = {}
+
+        # Mock template rendering
+        mock_get_template.return_value = lambda context: "<div>Mock HTML</div>"
+
+        session = Session("test-session-id")
+        repo = Repository(user=AnonymousUser(), session=session, params=QueryDict())
+
+        parent_id = "parent-component"
+        child_id = "child-component"
+
+        # Create parent component
+        parent_component = MockComponent(id=parent_id, hx_name="MockComponent", user=None)
+        session.states[parent_id] = '{"id": "parent-component", "hx_name": "MockComponent"}'
+
+        # Template that renders a child component inside parent
+        template = Template("{% load htmx %}{% htmx 'MockComponent' id=child_id %}")
+
+        # Context with parent component as "this" (simulating template rendering within parent)
+        context = Context({
+            "htmx_repo": repo,
+            "this": parent_component,
+            "child_id": child_id,
+        })
+
+        # Render the template (this should create the child with automatic parent tracking)
+        template.render(context)
+
+        # Verify parent-child relationship was automatically established
+        self.assertIn(parent_id, session.children)
+        self.assertIn(child_id, session.children[parent_id])
+
+    @patch("djhtmx.repo.Repository.render_html")
+    @patch("djhtmx.repo.conn")
+    def test_htmx_template_tag_ignores_self_relationships(self, mock_conn, mock_render_html):
+        """Test that template tag doesn't create self-relationships."""
+        from django.contrib.auth.models import AnonymousUser
+        from django.http import QueryDict
+        from django.template import Context, Template
+
+        from djhtmx.repo import Repository, Session
+
+        # Mock Redis to return empty data
+        mock_conn.hgetall.return_value = {}
+
+        # Mock template rendering
+        mock_render_html.return_value = "<div>Mock HTML</div>"
+
+        session = Session("test-session-id")
+        repo = Repository(user=AnonymousUser(), session=session, params=QueryDict())
+
+        component_id = "same-component"
+
+        # Create component
+        component = MockComponent(id=component_id, hx_name="MockComponent", user=None)
+        session.states[component_id] = '{"id": "same-component", "hx_name": "MockComponent"}'
+
+        # Template that renders itself (should not create self-relationship)
+        template = Template("{% load htmx %}{% htmx 'MockComponent' id=component_id %}")
+
+        # Context with component as "this" and trying to render same component
+        context = Context({
+            "htmx_repo": repo,
+            "this": component,
+            "component_id": component_id,
+        })
+
+        # Render the template
+        template.render(context)
+
+        # Verify no self-relationship was created
+        self.assertEqual(len(session.children), 0)
+
+    @patch("djhtmx.repo.Repository.render_html")
+    @patch("djhtmx.repo.conn")
+    def test_htmx_template_tag_works_without_parent_context(self, mock_conn, mock_render_html):
+        """Test that template tag works normally when no parent context is available."""
+        from django.contrib.auth.models import AnonymousUser
+        from django.http import QueryDict
+        from django.template import Context, Template
+
+        from djhtmx.repo import Repository, Session
+
+        # Mock Redis to return empty data
+        mock_conn.hgetall.return_value = {}
+
+        # Mock template rendering
+        mock_render_html.return_value = "<div>Mock HTML</div>"
+
+        session = Session("test-session-id")
+        repo = Repository(user=AnonymousUser(), session=session, params=QueryDict())
+
+        child_id = "child-component"
+
+        # Template that renders a component without parent context
+        template = Template("{% load htmx %}{% htmx 'MockComponent' id=child_id %}")
+
+        # Context without "this" (simulating top-level rendering)
+        context = Context({
+            "htmx_repo": repo,
+            "child_id": child_id,
+        })
+
+        # Render the template (should work normally without establishing relationships)
+        template.render(context)
+
+        # Verify no relationship was created (since no parent context exists)
+        self.assertEqual(len(session.children), 0)
+
+    @patch("djhtmx.repo.Repository.render_html")
+    @patch("djhtmx.repo.conn")
+    def test_template_tag_recursive_destruction_integration(self, mock_conn, mock_render_html):
+        """Test end-to-end integration: template tag creates hierarchy, destruction works recursively."""
+        from django.contrib.auth.models import AnonymousUser
+        from django.http import QueryDict
+        from django.template import Context, Template
+
+        from djhtmx.repo import Repository, Session
+
+        # Mock Redis to return empty data
+        mock_conn.hgetall.return_value = {}
+
+        # Mock template rendering
+        mock_render_html.return_value = "<div>Mock HTML</div>"
+
+        session = Session("test-session-id")
+        repo = Repository(user=AnonymousUser(), session=session, params=QueryDict())
+
+        parent_id = "todo-list"
+        child1_id = "todo-item-1"
+        child2_id = "todo-item-2"
+
+        # Create parent component
+        parent_component = MockComponent(id=parent_id, hx_name="MockComponent", user=None)
+        session.states[parent_id] = '{"id": "todo-list", "hx_name": "MockComponent"}'
+
+        # Template that renders two child components
+        template = Template("""
+            {% load htmx %}
+            {% htmx 'MockComponent' id=child1_id %}
+            {% htmx 'MockComponent' id=child2_id %}
+        """)
+
+        # Context with parent component (simulating rendering within parent template)
+        context = Context({
+            "htmx_repo": repo,
+            "this": parent_component,
+            "child1_id": child1_id,
+            "child2_id": child2_id,
+        })
+
+        # Render the template (creates both children with automatic tracking)
+        template.render(context)
+
+        # Verify parent-child relationships were established
+        self.assertEqual(len(session.children[parent_id]), 2)
+        self.assertIn(child1_id, session.children[parent_id])
+        self.assertIn(child2_id, session.children[parent_id])
+
+        # Add states for children manually (in real usage, this would happen in render_html)
+        session.states[child1_id] = '{"id": "todo-item-1", "hx_name": "MockComponent"}'
+        session.states[child2_id] = '{"id": "todo-item-2", "hx_name": "MockComponent"}'
+
+        # Destroy parent component (should recursively destroy children)
+        session.unregister_component(parent_id)
+
+        # Verify all components were recursively destroyed
+        for comp_id in [parent_id, child1_id, child2_id]:
+            self.assertNotIn(comp_id, session.states)
+            self.assertIn(comp_id, session.unregistered)
