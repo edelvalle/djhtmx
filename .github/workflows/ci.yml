@@ -86,6 +86,9 @@ jobs:
     - name: Install dependencies
       run: make install
 
+    - name: Install Redis CLI
+      run: sudo apt-get update && sudo apt-get install -y redis-tools
+
     - name: Wait for Redis to be ready
       run: |
         timeout 30 bash -c 'until redis-cli -h localhost -p 6379 ping; do sleep 1; done'
