@@ -131,7 +131,7 @@ class CommandQueue:
                 return 4, "", 0
             case BuildAndRender(_, _, _, _, timestamp):
                 return 5, "", timestamp
-            case Render(component, template, _, _, timestamp):
+            case Render(component, template, _, _, _, timestamp):
                 if template:
                     return 6, component.id, timestamp
                 else:

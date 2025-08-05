@@ -248,9 +248,11 @@ class Repository:
 
                 commands_to_append.append(Render(component, oob=oob))
 
-            case Render(component, template, oob, lazy):
+            case Render(component, template, oob, lazy, context):
                 commands.processing_component_id = component.id
-                html = self.render_html(component, oob=oob, template=template, lazy=lazy)
+                html = self.render_html(
+                    component, oob=oob, template=template, lazy=lazy, context=context
+                )
                 yield SendHtml(html, debug_trace=f"{component.hx_name}({component.id})")
 
             case Destroy(component_id) as command:
@@ -424,6 +426,7 @@ class Repository:
         oob: str | None = None,
         template: str | None = None,
         lazy: bool | None = None,
+        context: dict[str, Any] | None = None,
     ) -> SafeString:
         lazy = component.lazy if lazy is None else lazy
         with tracing_span(
@@ -435,7 +438,7 @@ class Repository:
         ):
             self.session.store(component)
 
-            context = {
+            base_context = {
                 "htmx_repo": self,
                 "hx_oob": oob == "true",
                 "this": component,
@@ -443,11 +446,22 @@ class Repository:
 
             if lazy:
                 template = template or component._template_name_lazy
-                context |= {"hx_lazy": True} | component._get_lazy_context()
+                base_context |= {"hx_lazy": True} | component._get_lazy_context()
             else:
-                context |= component._get_context()
+                base_context |= component._get_context()
 
-            html = mark_safe(component._get_template(template)(context).strip())
+            # If context is provided, it should override the component context
+            if context is not None:
+                # Keep base_context (htmx_repo, hx_oob, this) but let provided context override everything else
+                final_context = {
+                    "htmx_repo": self,
+                    "hx_oob": oob == "true",
+                    "this": component,
+                } | context
+            else:
+                final_context = base_context
+
+            html = mark_safe(component._get_template(template)(final_context).strip())
 
             # if performing some kind of append, the component has to be wrapped
             if oob and oob != "true":

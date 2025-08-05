@@ -166,6 +166,7 @@ class Render:
     template: str | None = None
     oob: str = "true"
     lazy: bool | None = None
+    context: dict[str, Any] | None = None
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 
