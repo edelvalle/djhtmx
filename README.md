@@ -89,7 +89,7 @@ Counters: <br />
 {% htmx "Counter" counter=3 %}
 ```
 
-##  Doing more complicated stuff
+## Doing more complicated stuff
 
 ### Authentication
 
@@ -255,7 +255,7 @@ class DeleteSelection(HtmxComponent):
 
 ## Commands
 
-Each event handler in a component can yield commands for the library to execute. These are useful for skipping the default component render, redirecting the user, remove the component from the front-end, and updating other components.
+Each event handler in a component can yield commands for the library to execute. These are useful for skipping the default component render, redirecting the user, remove the component from the front-end, updating other components, and rendering components with custom context.
 
 ### Redirects
 
@@ -359,6 +359,38 @@ class SmartFilter(HtmxComponent):
 - For readability prefix the name of the partials with the name of the parent.
 - The partials need a single root HTML Element with an id and the `{% oob %}` tag next to it.
 - When you wanna do the partial render you have to `yield Render(self, template=...)` with the name of the partial template, this will automatically skip the default full render and render the component with that partial template.
+
+### Rendering with Custom Context
+
+Sometimes you need to render a component with custom context data that differs from the component's state. The `Render` command supports an optional `context` parameter that allows you to override the component's context:
+
+```python
+from djhtmx.component import HtmxComponent, Render
+
+class DataVisualization(HtmxComponent):
+    _template_name = "DataVisualization.html"
+    
+    def show_filtered_data(self, filter_type: str):
+        # Get some custom data that's not part of component state
+        custom_data = self.get_filtered_data(filter_type)
+        
+        # Render with custom context
+        yield Render(
+            self, 
+            template="DataVisualization_filtered.html",
+            context={
+                "filtered_data": custom_data,
+                "filter_applied": filter_type,
+                "timestamp": datetime.now()
+            }
+        )
+```
+
+When using custom context:
+- The provided context overrides the component's default context
+- Essential HTMX variables (`htmx_repo`, `hx_oob`, `this`) are preserved
+- The component's state remains unchanged - only the rendering context is modified
+- This is particularly useful for displaying computed data, temporary states, or external data that shouldn't be part of the component's persistent state
 
 ## Query Parameters & State
 
