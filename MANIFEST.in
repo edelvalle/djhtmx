@@ -1,2 +1,19 @@
+# Include package metadata and documentation
+include README.md
+include CHANGELOG.md
+include LICENSE
+include pyproject.toml
+
+# Include package code with templates and static files
+recursive-include src/djhtmx *.py
+recursive-include src/djhtmx *.html *.js
+
+# Exclude development and build artifacts
 exclude tests
-recursive-include djhtmx/ *.html *.js
+prune src/tests
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude *.egg-info
+global-exclude .DS_Store

@@ -98,3 +98,25 @@ SHELL_CMD ?= shell_plus
 shell:
 	@$(RUN) python src/tests/manage.py $(SHELL_CMD) || @$(RUN) src/tests/manage.py shell
 .PHONY: shell
+
+# PyPI publishing targets
+build:
+	@rm -rf dist/
+	@$(UV) build
+.PHONY: build
+
+publish-test: build
+	@echo "Publishing to TestPyPI..."
+	@$(UV) publish --index-url https://test.pypi.org/simple/
+.PHONY: publish-test
+
+publish: build
+	@echo "Publishing to PyPI..."
+	@$(UV) publish
+.PHONY: publish
+
+check-dist: build
+	@echo "Distribution files built successfully:"
+	@ls -la dist/
+	@echo "Note: Skipping twine check due to version compatibility issue with new metadata fields"
+.PHONY: check-dist
