@@ -1,14 +1,10 @@
 import asyncio
-from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 from django.http import HttpRequest, HttpResponse
 from django.test import TestCase
 
 from djhtmx.middleware import middleware
-
-if TYPE_CHECKING:
-    pass
 
 
 class TestMiddleware(TestCase):
