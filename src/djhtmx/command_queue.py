@@ -48,7 +48,10 @@ class CommandQueue:
         else:
             action = "updated"
 
-        signals = get_model_subscriptions(instance, actions=(action,))
+        signals = get_model_subscriptions(
+            instance, actions=(action, None)
+        ) | get_model_subscriptions(type(instance), actions=(action, None))
+
         for field in get_related_fields(sender):
             fk_id = getattr(instance, field.name)
             signal = f"{field.related_model_name}.{fk_id}.{field.relation_name}"

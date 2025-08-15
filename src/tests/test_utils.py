@@ -138,11 +138,7 @@ class TestSubscriptions(TestCase):
         result = get_model_subscriptions(self.item)
 
         expected = {
-            "todo.item",
             f"todo.item.{self.item.pk}",
-            f"todo.item.{self.item.pk}.created",
-            f"todo.item.{self.item.pk}.updated",
-            f"todo.item.{self.item.pk}.deleted",
         }
         self.assertEqual(result, expected)
 
@@ -155,14 +151,20 @@ class TestSubscriptions(TestCase):
 
     def test_get_model_subscriptions_custom_actions(self):
         """Test get_model_subscriptions with custom actions."""
-        actions = ["published", "archived"]
-        result = get_model_subscriptions(self.item, actions)
-
+        result = get_model_subscriptions(self.item, ["created", "updated"])
         expected = {
-            "todo.item",
+            f"todo.item.{self.item.pk}.created",
+            f"todo.item.{self.item.pk}.updated",
+        }
+        self.assertEqual(result, expected)
+
+    def test_get_model_subscriptions_custom_actions_and_none(self):
+        """Test get_model_subscriptions with custom actions."""
+        result = get_model_subscriptions(self.item, ["created", "updated", None])
+        expected = {
             f"todo.item.{self.item.pk}",
-            f"todo.item.{self.item.pk}.published",
-            f"todo.item.{self.item.pk}.archived",
+            f"todo.item.{self.item.pk}.created",
+            f"todo.item.{self.item.pk}.updated",
         }
         self.assertEqual(result, expected)
 

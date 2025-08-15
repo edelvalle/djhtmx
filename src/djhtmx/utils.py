@@ -63,9 +63,12 @@ def get_instance_subscriptions(
         return {f"{prefix}.{action}" for action in actions}
 
 
+Action = t.Literal["created", "updated", "deleted"]
+
+
 def get_model_subscriptions(
     obj: type[models.Model] | models.Model,
-    actions: t.Sequence[str] = ("created", "updated", "deleted"),
+    actions: t.Sequence[Action | None] = (),
 ) -> set[str]:
     """Get the subscriptions to actions of the model.
 
@@ -77,6 +80,7 @@ def get_model_subscriptions(
     possible relation (e.g 'users.deleted').
 
     """
+    actions = actions or (None,)
     if isinstance(obj, models.Model):
         cls = type(obj)
         instance = obj
@@ -85,10 +89,9 @@ def get_model_subscriptions(
         instance = None
     app = cls._meta.app_label
     name = cls._meta.model_name
-    result = {(model_prefix := f"{app}.{name}")}
-    if instance:
-        result.add(prefix := f"{model_prefix}.{instance.pk}")
-        result.update(f"{prefix}.{action}" for action in actions)
+    model_prefix = f"{app}.{name}"
+    prefix = f"{model_prefix}.{instance.pk}" if instance else model_prefix
+    result = {(f"{prefix}.{action}" if action else prefix) for action in actions}
     return result
 
 
