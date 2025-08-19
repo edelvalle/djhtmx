@@ -11,12 +11,12 @@ UV_RUN ?= uv run
 UV_PYTHON_PREFERENCE ?= only-managed
 RUN ?= $(UV_RUN)
 
-REQUIRED_UV_VERSION ?= 0.7.3
+REQUIRED_UV_VERSION ?= 0.8.12
 bootstrap:
 	@INSTALLED_UV_VERSION=$$(uv --version 2>/dev/null | awk '{print $$2}' || echo "0.0.0"); \
     DETECTED_UV_VERSION=$$(printf '%s\n' "$(REQUIRED_UV_VERSION)" "$$INSTALLED_UV_VERSION" | sort -V | head -n1); \
 	if [ "$$DETECTED_UV_VERSION" != "$(REQUIRED_UV_VERSION)" ]; then \
-		uv self update $(REQUIRED_UV_VERSION) || curl -LsSf https://astral.sh/uv/$(REQUIRED_UV_VERSION)/install.sh | sh; \
+		uv self update $(REQUIRED_UV_VERSION) 2>/dev/null || curl -LsSf https://astral.sh/uv/$(REQUIRED_UV_VERSION)/install.sh | sh; \
 	fi
 	@echo $(PYTHON_VERSION) > .python-version
 .PHONY: bootstrap
