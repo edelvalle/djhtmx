@@ -74,7 +74,7 @@ typing = [
     "types-lxml>=2024.11.8",
 ]
 lint = [
-    "ruff==0.11.*",
+    "ruff==0.12.*",
     "djlint~=1.34.1",
 ]
 devtools = [
