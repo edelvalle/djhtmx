@@ -7,8 +7,19 @@ Interactive UI Components for Django using [htmx](https://htmx.org)
 
 ## Install
 
-Add `djhtmx` to your `INSTALLED_APPS` and install the Middleware as the last one
-of the list:
+```bash
+uv add djhtmx
+```
+
+or 
+
+```bash
+pip install djhtmx
+```
+
+# Configuration
+
+Add `djhtmx` to your `INSTALLED_APPS`.
 
 ```python
 INSTALLED_APPS = [
@@ -16,10 +27,32 @@ INSTALLED_APPS = [
     "djhtmx",
     ...
 ]
+```
 
+Install the Middleware as the last one  of the list 
+
+```python
 MIDDLEWARE = [
     ...,
     "djhtmx.middleware",
+]
+```
+
+Add `djhtmx.context.component_repo` to the list of context processors:
+
+```python
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                ...,
+                "djhtmx.context.component_repo",
+            ],
+        },
+    },
 ]
 
 ```
