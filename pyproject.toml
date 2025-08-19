@@ -69,8 +69,8 @@ test = [
    "coverage[toml]>=7.6.9",
 ]
 typing = [
-    "basedpyright==1.28.1",
-    "django-types>=0.22.0",
+    "basedpyright==1.31.1",
+    "django-types==0.22.0",
     "types-lxml>=2024.11.8",
 ]
 lint = [
