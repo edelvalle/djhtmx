@@ -63,12 +63,9 @@ def get_instance_subscriptions(
         return {f"{prefix}.{action}" for action in actions}
 
 
-Action = t.Literal["created", "updated", "deleted"]
-
-
 def get_model_subscriptions(
     obj: type[models.Model] | models.Model,
-    actions: t.Sequence[Action | None] = (),
+    actions: t.Sequence[str | None] = (),
 ) -> set[str]:
     """Get the subscriptions to actions of the model.
 
