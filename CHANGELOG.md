@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2025-08-23
+
+- Remove `get_model_subscriptions` `Action` annotation as string literals, as this does not reflect model relationships
+
 ## [1.1.0] - 2025-08-15
 
 ### Changed
