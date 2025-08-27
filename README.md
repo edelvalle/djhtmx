@@ -131,6 +131,10 @@ In your base template you need to load the necessary scripts to make this work
 
 ## Getting started
 
+**Important**: djhtmx is a framework for building interactive components, not a component library. No pre-built components, templates, or behaviors are provided. You need to create your own components from scratch using the framework's base classes and conventions.
+
+This library is opinionated about how to use HTMX with Django, but it is not opinionated about components, styling, or specific functionality. You have complete freedom to design and implement your components as needed for your application.
+
 This app will look for `htmx.py` files in your app and registers all components found there, but if you load any module where you have components manually when Django boots up, that also works.
 
 ```python
