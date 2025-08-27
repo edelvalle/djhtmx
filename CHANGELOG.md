@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2025-08-27
+
+### Fixed
+- **Python 3.13 Compatibility**: Added support for `defaultdict[..., ...]` type annotations in Query introspection
+- Fixed type checking for generic aliases in collection annotations
+
+### Documentation
+- **Redis Dependency**: Added clear documentation that Redis is required and must be installed separately
+- **Framework Clarification**: Clarified that djhtmx is a framework, not a component library - no pre-built components are provided
+- **Settings Documentation**: Added comprehensive documentation for all available Django settings
+- **Installation Guide**: Added Redis installation instructions for different platforms
+
 ## [1.1.1] - 2025-08-23
 
 - Remove `get_model_subscriptions` `Action` annotation as string literals, as this does not reflect model relationships
