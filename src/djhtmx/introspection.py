@@ -419,9 +419,12 @@ def is_simple_annotation(ann):
 
 
 def is_collection_annotation(ann):
-    return issubclass_safe(ann, _COLLECTION_TYPES)
+    if isinstance(ann, types.GenericAlias):
+        return issubclass_safe(ann.__origin__, _COLLECTION_TYPES)
+    else:
+        return issubclass_safe(ann, _COLLECTION_TYPES)
 
 
 Unset = object()
 _SIMPLE_TYPES = (int, str, float, UUID, types.NoneType, date, datetime, bool)
-_COLLECTION_TYPES = (dict, tuple, list, set)
+_COLLECTION_TYPES = (dict, tuple, list, set, defaultdict)
