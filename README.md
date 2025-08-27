@@ -19,6 +19,20 @@ pip install djhtmx
 
 # Configuration
 
+## Requirements
+
+djhtmx requires **Redis** to be running for session storage and component state management. 
+
+**Important**: Redis is not included with djhtmx and must be installed separately on your system. Make sure Redis is installed and accessible before using djhtmx.
+
+### Installing Redis
+
+- **macOS**: `brew install redis`
+- **Ubuntu/Debian**: `sudo apt-get install redis-server`
+- **CentOS/RHEL**: `sudo yum install redis` or `sudo dnf install redis`
+- **Docker**: `docker run -d -p 6379:6379 redis:alpine`
+- **Windows**: Download from [Redis for Windows](https://github.com/microsoftarchive/redis/releases)
+
 Add `djhtmx` to your `INSTALLED_APPS`.
 
 ```python
@@ -67,6 +81,40 @@ urlpatterns = [
     path("_htmx/", include("djhtmx.urls")),
     # ...
 ]
+```
+
+## Settings
+
+djhtmx can be configured through Django settings:
+
+### Required Settings
+
+- **`DJHTMX_REDIS_URL`** (default: `"redis://localhost/0"`): Redis connection URL for session storage and component state management.
+
+### Optional Settings
+
+- **`DJHTMX_SESSION_TTL`** (default: `3600`): Session timeout in seconds. Can be an integer or a `datetime.timedelta` object.
+- **`DJHTMX_DEFAULT_LAZY_TEMPLATE`** (default: `"htmx/lazy.html"`): Default template for lazy-loaded components.
+- **`DJHTMX_ENABLE_SENTRY_TRACING`** (default: `True`): Enable Sentry tracing integration.
+- **`DJHTMX_ENABLE_LOGFIRE_TRACING`** (default: `False`): Enable Logfire tracing integration.
+- **`DJHTMX_STRICT_EVENT_HANDLER_CONSISTENCY_CHECK`** (default: `False`): Enable strict consistency checking for event handlers.
+- **`DJHTMX_KEY_SIZE_ERROR_THRESHOLD`** (default: `0`): Threshold in bytes for session key size errors (0 = disabled).
+- **`DJHTMX_KEY_SIZE_WARN_THRESHOLD`** (default: `51200`): Threshold in bytes for session key size warnings (50KB).
+- **`DJHTMX_KEY_SIZE_SAMPLE_PROB`** (default: `0.1`): Probability for sampling session key size checks.
+
+### Example Configuration
+
+```python
+# settings.py
+
+# Redis connection (required)
+DJHTMX_REDIS_URL = "redis://localhost:6379/0"  # or redis://user:password@host:port/db
+
+# Optional settings
+DJHTMX_SESSION_TTL = 7200  # 2 hours
+DJHTMX_DEFAULT_LAZY_TEMPLATE = "my_app/lazy_component.html"
+DJHTMX_ENABLE_SENTRY_TRACING = True
+DJHTMX_KEY_SIZE_WARN_THRESHOLD = 100 * 1024  # 100KB
 ```
 
 In your base template you need to load the necessary scripts to make this work
