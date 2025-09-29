@@ -129,6 +129,7 @@ def autodiscover_htmx_modules():
     - htmx.py files (like standard autodiscover_modules("htmx"))
     - All Python files under htmx/ directories in apps (recursively)
     """
+
     def _import_modules_recursively(module_name):
         """Recursively import a module and all its submodules."""
         with contextlib.suppress(ImportError):
