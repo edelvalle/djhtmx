@@ -71,6 +71,33 @@ def check_unused(fname):
         sys.exit(1)
 
 
+@htmx.command("check-unused-non-public")  # type: ignore
+def check_unused_non_public():
+    """Check if there are any unused non-public HTMX components.
+
+    Non-public components that are final subclasses (have no subclasses themselves)
+    are considered unused since they can't be instantiated from templates and serve
+    no purpose as base classes.
+    """
+    final_subclasses = set(
+        get_final_subclasses(
+            HtmxComponent,  # type: ignore
+            without_duplicates=True,
+        )
+    )
+    registered = set(REGISTRY.values())
+    unused_non_public = list(final_subclasses - registered)
+
+    if unused_non_public:
+        unused_non_public.sort(key=lambda cls: cls.__name__)
+        for cls in unused_non_public:
+            click.echo(
+                f"Unused non-public component detected {bold(yellow(cls.__name__))}",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
+
 @htmx.command("check-shadowing")  # type: ignore
 def check_shadowing():
     "Checks if there are components that might shadow one another."
