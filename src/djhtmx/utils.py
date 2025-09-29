@@ -1,8 +1,12 @@
+import contextlib
+import importlib
+import pkgutil
 import typing as t
 from urllib.parse import urlparse
 
 import mmh3
 from channels.db import database_sync_to_async as db  # type: ignore
+from django.apps import apps
 from django.db import models
 from django.http.request import HttpRequest, QueryDict
 from uuid6 import uuid7
@@ -115,3 +119,26 @@ def compact_hash(value: str) -> str:
 # The symbols are chosen to avoid extra encoding in the URL and HTML, and
 # allowed in plain CSS selectors.
 _BASE = "ZmBeUHhTgusXNW_Y1b05KPiFcQJD86joqnIRE7Lfkrdp3AOMCvltSwzVG9yxa42"
+
+
+def autodiscover_htmx_modules():
+    """
+    Auto-discover HTMX modules in Django apps.
+
+    This discovers both:
+    - htmx.py files (like standard autodiscover_modules("htmx"))
+    - All Python files under htmx/ directories in apps (recursively)
+    """
+    def _import_modules_recursively(module_name):
+        """Recursively import a module and all its submodules."""
+        with contextlib.suppress(ImportError):
+            module = importlib.import_module(module_name)
+
+            # If this is a package, recursively import all modules in it
+            if hasattr(module, "__path__"):
+                for _finder, submodule_name, _is_pkg in pkgutil.iter_modules(module.__path__):
+                    _import_modules_recursively(f"{module_name}.{submodule_name}")
+
+    for app_config in apps.get_app_configs():
+        # Import htmx module and all its submodules recursively
+        _import_modules_recursively(f"{app_config.name}.htmx")
