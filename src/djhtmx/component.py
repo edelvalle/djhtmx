@@ -20,6 +20,7 @@ from typing import (
     get_type_hints,
 )
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.shortcuts import resolve_url
 from django.template import Context, loader
@@ -306,9 +307,8 @@ class HtmxComponent(BaseModel):
             basename(cls._template_name.default)
             not in (f"{klass.__name__}.html" for klass in cls.__mro__)
         ):
-            logger.warning(
-                "HTMX Component <%s> template name does not match the component name",
-                FQN[cls],
+            raise ImproperlyConfigured(
+                f"HTMX Component <{FQN[cls]}> template name does not match the component name"
             )
 
         # We use 'get_type_hints' to resolve the forward refs if needed, but
