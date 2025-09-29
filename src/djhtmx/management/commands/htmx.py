@@ -46,6 +46,31 @@ def check_missing(fname):
         sys.exit(1)
 
 
+@htmx.command("check-unused")  # type: ignore
+@click.argument("fname", type=click.File())
+def check_unused(fname):
+    r"""Check if there are any unused HTMX components.
+
+    Expected usage:
+
+    find -type f -name '*.html' | while read f; do grep -P '{% htmx .(\\w+)' -o $f \
+    | awk '{print $3}' | cut -b2-; done | sort -u \
+    | python manage.py htmx check-unused -
+
+    """
+    names = {n.strip() for n in fname.readlines()}
+    known = set(REGISTRY)
+    unused = list(known - names)
+    if unused:
+        unused.sort()
+        for n in unused:
+            click.echo(
+                f"Unused component detected {bold(yellow(n))}",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
+
 @htmx.command("check-shadowing")  # type: ignore
 def check_shadowing():
     "Checks if there are components that might shadow one another."
