@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2025-09-29
+
+### Added
+- **Enhanced HTMX Module Discovery**: HTMX components can now be organized in directory structures within Django apps. The autodiscovery system now recursively imports all Python modules under `htmx/` directories, in addition to the traditional single `htmx.py` files. This allows for better code organization in larger projects.
+- **New Management Commands**:
+  - `python manage.py htmx check-unused`: Check for unused HTMX components in your project
+  - `python manage.py htmx check-unused-non-public`: Check for unused non-public HTMX components
+
+### Changed
+- **BREAKING**: Template name validation now raises `ImproperlyConfigured` exceptions instead of logging warnings when HTMX component template names don't match the component class name. This provides better error visibility and prevents potential runtime issues.
+
+### Technical Details
+- Modified `apps.py` to use the new autodiscovery function instead of Django's standard `autodiscover_modules("htmx")`
+- Added `autodiscover_htmx_modules()` function in `utils.py` that recursively discovers and imports all Python modules in `htmx/` directories across Django apps
+- Maintains full backward compatibility with existing single `htmx.py` files
+
+### Migration Guide
+- **Template Name Validation**: If you have components with mismatched template names, you'll now get `ImproperlyConfigured` exceptions instead of warnings. Update your component template names to match the class names.
+- **Module Organization**: You can now organize your HTMX components in directory structures under `htmx/` in your Django apps. No changes required for existing single `htmx.py` files.
+
 ## [1.1.2] - 2025-08-27
 
 ### Fixed

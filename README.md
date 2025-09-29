@@ -137,6 +137,33 @@ This library is opinionated about how to use HTMX with Django, but it is not opi
 
 This app will look for `htmx.py` files in your app and registers all components found there, but if you load any module where you have components manually when Django boots up, that also works.
 
+### Component Organization
+
+As of version 1.2.0, djhtmx supports both single file and directory-based component organization:
+
+**Single file (traditional):**
+```
+myapp/
+├── htmx.py  # All components in one file
+└── ...
+```
+
+**Directory structure (new in v1.2.0):**
+```
+myapp/
+├── htmx/
+│   ├── __init__.py
+│   ├── components.py      # Basic components
+│   ├── forms.py           # Form components
+│   └── widgets/
+│       ├── __init__.py
+│       ├── calendar.py    # Calendar widgets
+│       └── charts.py      # Chart widgets
+└── ...
+```
+
+The autodiscovery system will recursively find and import all Python modules under `htmx/` directories, allowing you to organize your components in a structured way that scales with your project size.
+
 ```python
 from djhtmx.component import HtmxComponent
 
