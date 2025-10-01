@@ -13,6 +13,7 @@ from typing import (
     Annotated,
     Any,
     Generic,
+    Literal,
     TypedDict,
     TypeVar,
     Union,
@@ -381,6 +382,11 @@ infallible_bool_adapter = TypeAdapter(
 )
 
 
+def is_literal_annotation(ann):
+    """Returns True if the annotation is a Literal type with simple values."""
+    return get_origin(ann) is Literal and all(type(arg) in _SIMPLE_TYPES for arg in get_args(ann))
+
+
 def is_basic_type(ann):
     """Returns True if the annotation is a simple type.
 
@@ -395,6 +401,8 @@ def is_basic_type(ann):
 
     - Instances of dict, tuple, list or set
 
+    - Literal types with simple values
+
     """
     return (
         ann in _SIMPLE_TYPES
@@ -402,6 +410,7 @@ def is_basic_type(ann):
         or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
         or is_collection_annotation(ann)
+        or is_literal_annotation(ann)
     )
 
 
