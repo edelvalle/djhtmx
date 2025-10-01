@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2025-10-01
+
+### Added
+- **Literal Type Support in Query Objects**: Query objects can now use `Literal` type annotations for parameters. The introspection system now recognizes `Literal` types with simple values (str, int, float, bool, etc.) as basic types, enabling more precise type constraints in HTMX component queries.
+
 ## [1.2.0] - 2025-09-29
 
 ### Added
