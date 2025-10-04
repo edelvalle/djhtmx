@@ -8,6 +8,7 @@ from django.http.request import HttpRequest
 from django.http.response import HttpResponse
 from django.urls import path, re_path
 from django.utils.html import format_html
+from django.views.decorators.csrf import csrf_exempt
 
 from .commands import PushURL, ReplaceURL, SendHtml
 from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, Triggers
@@ -95,7 +96,7 @@ def app_name_of_component(cls: type):
 urlpatterns = [
     path(
         f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
-        partial(endpoint, component_name=component_name),
+        csrf_exempt(partial(endpoint, component_name=component_name)),
         name=f"djhtmx.{component_name}",
     )
     for component_name, component in REGISTRY.items()

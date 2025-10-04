@@ -1,15 +1,4 @@
 (function () {
-    document.body.addEventListener("htmx:configRequest", (event) => {
-        const csrf_header = document
-            .querySelector("meta[name=django-csrf-header-name]")
-            .getAttribute("content");
-        const csrf_token = document
-            .querySelector("meta[name=django-csrf-token]")
-            .getAttribute("content");
-
-        event.detail.headers[csrf_header] = csrf_token;
-    });
-
     // WebSocket Management
     let sentComponents = new Set();
 
