@@ -7,7 +7,7 @@ from djhtmx.repo import Repository
 
 
 class TestComponent(HtmxComponent):
-    _template_name: str = "TestTemplate.html"
+    _template_name: str = "TestComponent.html"
 
     name: str = "test"
     value: int = 42

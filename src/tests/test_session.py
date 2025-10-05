@@ -9,7 +9,7 @@ from djhtmx.repo import Session
 class MockComponent(HtmxComponent):
     """Mock component for testing."""
 
-    _template_name = "test.html"
+    _template_name = "MockComponent.html"
 
     def render(self):
         return []
