@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2] - 2025-10-06
+
+### Fixed
+- Fixed tests related to component template names
+- Removed CSRF verification on endpoint
+
+### Changed
+- Removed redundant code-quality workflow
+
 ## [1.2.1] - 2025-10-01
 
 ### Added
