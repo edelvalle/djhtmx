@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3] - 2025-10-09
+
+### Fixed
+- Fixed OOB tag to use component ID directly instead of context 'id' key for more consistent behavior
+
+### Changed
+- Refactored context merging logic in Repository.render() for better code clarity
+- Removed CSRF meta tags
+
 ## [1.2.2] - 2025-10-06
 
 ### Fixed
