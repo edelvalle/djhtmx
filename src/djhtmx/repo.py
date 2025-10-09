@@ -438,7 +438,7 @@ class Repository:
         ):
             self.session.store(component)
 
-            base_context = {
+            final_context = {
                 "htmx_repo": self,
                 "hx_oob": oob == "true",
                 "this": component,
@@ -446,20 +446,9 @@ class Repository:
 
             if lazy:
                 template = template or component._template_name_lazy
-                base_context |= {"hx_lazy": True} | component._get_lazy_context()
+                final_context |= {"hx_lazy": True} | component._get_lazy_context() | (context or {})
             else:
-                base_context |= component._get_context()
-
-            # If context is provided, it should override the component context
-            if context is not None:
-                # Keep base_context (htmx_repo, hx_oob, this) but let provided context override everything else
-                final_context = {
-                    "htmx_repo": self,
-                    "hx_oob": oob == "true",
-                    "this": component,
-                } | context
-            else:
-                final_context = base_context
+                final_context |= component._get_context() if context is None else context
 
             html = mark_safe(component._get_template(template)(final_context).strip())
 

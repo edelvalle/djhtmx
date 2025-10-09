@@ -138,7 +138,12 @@ def hx_tag(context: Context):
 def oob(context: Context, suffix: str):
     oob = context.get("hx_oob")
     context["hx_oob"] = False
-    id = "-".join(filter(None, (context.get("id"), suffix)))
+    if (component := context.get("this")):
+        component_id = component.id
+    else:
+        component_id = None
+
+    id = "-".join(filter(None, (component_id, suffix)))
     return format_html_attrs({"id": id, "hx-swap-oob": "true" if oob else None})
 
 
