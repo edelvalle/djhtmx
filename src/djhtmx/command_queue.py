@@ -124,12 +124,12 @@ class CommandQueue:
         match command:
             case Execute():
                 return 0, "", 0
+            case Destroy(component_id):
+                return 1, component_id, 0
             case Signal(_, timestamp):
-                return 1, "", timestamp
-            case Emit(_, timestamp):
                 return 2, "", timestamp
-            case Destroy():
-                return 3, "", 0
+            case Emit(_, timestamp):
+                return 3, "", timestamp
             case SkipRender():
                 return 4, "", 0
             case BuildAndRender(_, _, _, _, timestamp):
