@@ -88,7 +88,8 @@ class TestEndpoint(TestCase):
         response = endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('hx-swap-oob="outerHtml:#component-123"', response.content.decode())
+        self.assertIn('hx-swap-oob="delete"', response.content.decode())
+        self.assertIn('id="component-123"', response.content.decode())
 
     @patch("djhtmx.urls.Repository")
     @patch("djhtmx.urls.parse_request_data")
