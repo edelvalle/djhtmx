@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.5] - 2025-12-05
+
+### Fixed
+- Fixed Destroy of component to use proper hx-swap-oob="delete" syntax
+
+## [1.2.4] - 2025-10-29
+
+### Fixed
+- Prioritize Destroy commands to prevent stale component access - fixes race condition where signals would awaken components whose model instances were already deleted
+
+### Changed
+- Code quality improvements (Ruff suggestions for ternary operators)
+
 ## [1.2.3] - 2025-10-09
 
 ### Fixed
