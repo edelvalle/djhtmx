@@ -45,7 +45,7 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                 case Destroy(component_id):
                     content.append(
                         format_html(
-                            '<div hx-swap-oob="outerHtml:#{component_id}"></div>',
+                            '<div id="{component_id}" hx-swap-oob="delete"></div>',
                             component_id=component_id,
                         )
                     )
