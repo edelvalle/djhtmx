@@ -45,3 +45,5 @@ KEY_SIZE_SAMPLE_PROB = getattr(
     "DJHTMX_KEY_SIZE_SAMPLE_PROB",
     0.1,
 )
+
+STRICT_PUBLIC_BASE = getattr(settings, "DJHTMX_STRICT_PUBLIC_BASE", False)

@@ -280,6 +280,10 @@ class HtmxComponent(BaseModel):
             if "[" in component_name and "]" in component_name:
                 public = False
             elif _ABSTRACT_BASE_REGEX.match(component_name):
+                if settings.STRICT_PUBLIC_BASE:
+                    raise TypeError(
+                        f"HTMX Component: {FQN[cls]} Automatically detected as non public",
+                    )
                 logger.info(
                     "HTMX Component: <%s> Automatically detected as non public",
                     FQN[cls],
