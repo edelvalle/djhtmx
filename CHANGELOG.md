@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The `oob` template tag now automatically converts its suffix parameter to a string, allowing non-string values (integers, floats, etc.) to be passed directly
+
 ## [1.2.5] - 2025-12-05
 
 ### Fixed

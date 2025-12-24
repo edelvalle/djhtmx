@@ -136,6 +136,7 @@ def hx_tag(context: Context):
 
 @register.simple_tag(takes_context=True)
 def oob(context: Context, suffix: str):
+    suffix = str(suffix)
     oob = context.get("hx_oob")
     context["hx_oob"] = False
     component_id = component.id if (component := context.get("this")) else None
