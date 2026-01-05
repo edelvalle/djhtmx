@@ -73,7 +73,7 @@ def add_delay_jitter(event, arg=None):
 @register.simple_tag(takes_context=True)
 def htmx(
     context,
-    _name: str,
+    _name: str | type[HtmxComponent],
     _state: dict[str, Any] | None = None,
     *,
     lazy: Literal["once"] | bool = False,
@@ -81,12 +81,16 @@ def htmx(
 ):
     """Inserts an HTMX Component.
 
-    Pass the component name and the initial state:
+    Pass the component name (as a string) or component type, and the initial state:
 
         ```html
         {% htmx 'AmazinData' data=some_data %}
+        {% htmx MyComponent data=some_data %}
         ```
     """
+    # Extract component name if a type is passed
+    component_name = _name.__name__ if isinstance(_name, type) else _name
+
     state = (_state or {}) | state
     repo: Repository = context["htmx_repo"]
     state |= {"lazy": lazy is True}
@@ -94,7 +98,7 @@ def htmx(
     # Extract parent component ID from context if available
     parent_id = getattr(context.get("this"), "id", None)
 
-    component = repo.build(_name, state, parent_id=parent_id)
+    component = repo.build(component_name, state, parent_id=parent_id)
     return repo.render_html(
         component,
         lazy=lazy if isinstance(lazy, bool) else False,

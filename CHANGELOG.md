@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The `htmx` template tag now accepts component types directly as the first parameter, automatically extracting the component name. You can now use `{% htmx MyComponent data=value %}` instead of `{% htmx 'MyComponent' data=value %}`
+
 ## [1.2.6] - 2025-12-24
 
 ### Changed
