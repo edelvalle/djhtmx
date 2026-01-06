@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added idiomorph extension (idiomorph-ext.min.js) for HTMX 2.0.4
+
 ## [1.2.7] - 2026-01-05
 
 ### Changed
