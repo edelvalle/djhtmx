@@ -90,6 +90,16 @@ class Focus:
 
 
 @dataclass(slots=True)
+class ScrollIntoView:
+    "Scrolls the browser element that matches `selector` into view"
+
+    selector: str
+    behavior: Literal["auto", "smooth", "instant"] = "smooth"
+    block: Literal["start", "center", "end", "nearest"] = "center"
+    command: Literal["scroll_into_view"] = "scroll_into_view"
+
+
+@dataclass(slots=True)
 class Execute:
     component_id: str
     event_handler: str
@@ -191,6 +201,7 @@ Command = (
     Destroy
     | Redirect
     | Focus
+    | ScrollIntoView
     | DispatchDOMEvent
     | SkipRender
     | BuildAndRender

@@ -16,6 +16,7 @@ from .component import (
     Open,
     Redirect,
     Render,
+    ScrollIntoView,
     Signal,
     SkipRender,
 )
@@ -86,6 +87,7 @@ class CommandQueue:
                     | Emit()
                     | SkipRender()
                     | Focus()
+                    | ScrollIntoView()
                     | Redirect()
                     | DispatchDOMEvent()
                     | Open()
@@ -139,7 +141,7 @@ class CommandQueue:
                     return 6, component.id, timestamp
                 else:
                     return 7, component.id, timestamp
-            case Focus() | Redirect() | DispatchDOMEvent() | Open() | ReplaceURL() | PushURL():
+            case Focus() | ScrollIntoView() | Redirect() | DispatchDOMEvent() | Open() | ReplaceURL() | PushURL():
                 return 8, "", 0
             case _ as unreachable:
                 assert_never(unreachable)

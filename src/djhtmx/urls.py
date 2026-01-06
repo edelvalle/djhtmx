@@ -11,7 +11,7 @@ from django.utils.html import format_html
 from django.views.decorators.csrf import csrf_exempt
 
 from .commands import PushURL, ReplaceURL, SendHtml
-from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, Triggers
+from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, ScrollIntoView, Triggers
 from .consumer import Consumer
 from .introspection import parse_request_data
 from .repo import Repository
@@ -53,6 +53,11 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                     headers["HX-Redirect"] = url
                 case Focus(selector):
                     triggers.after_settle("hxFocus", selector)
+                case ScrollIntoView(selector, behavior, block):
+                    triggers.after_settle(
+                        "hxScrollIntoView",
+                        {"selector": selector, "behavior": behavior, "block": block},
+                    )
                 case Open(url, name, target, rel):
                     triggers.after_settle(
                         "hxOpenURL",

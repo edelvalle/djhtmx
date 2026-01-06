@@ -6,7 +6,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from . import json
 from .commands import PushURL, ReplaceURL, SendHtml
-from .component import Command, Destroy, DispatchDOMEvent, Focus, Open, Redirect
+from .component import Command, Destroy, DispatchDOMEvent, Focus, Open, Redirect, ScrollIntoView
 from .introspection import parse_request_data
 from .repo import Repository
 from .utils import get_params
@@ -58,6 +58,7 @@ class Consumer(AsyncJsonWebsocketConsumer):
                         Destroy()
                         | Redirect()
                         | Focus()
+                        | ScrollIntoView()
                         | DispatchDOMEvent()
                         | PushURL()
                         | Open()

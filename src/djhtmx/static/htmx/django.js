@@ -109,6 +109,14 @@
 					document.querySelector(selector)?.focus();
 					break;
 				}
+				case "scroll_into_view": {
+					const { selector, behavior = "smooth", block = "center" } = commandData;
+					document.querySelector(selector)?.scrollIntoView({
+						behavior,
+						block,
+					});
+					break;
+				}
 				case "redirect": {
 					const { url } = commandData;
 					location.assign(url);
@@ -179,6 +187,18 @@
 	document.addEventListener("hxFocus", (event) => {
 		for (const selector of event.detail.value) {
 			document.querySelector(selector).focus();
+		}
+	});
+
+	document.addEventListener("hxScrollIntoView", (event) => {
+		for (const item of event.detail.value) {
+			const selector = typeof item === "string" ? item : item.selector;
+			const behavior = typeof item === "object" ? item.behavior || "smooth" : "smooth";
+			const block = typeof item === "object" ? item.block || "center" : "center";
+			document.querySelector(selector)?.scrollIntoView({
+				behavior,
+				block,
+			});
 		}
 	});
 

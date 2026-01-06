@@ -35,6 +35,7 @@ from .component import (
     Open,
     Redirect,
     Render,
+    ScrollIntoView,
     Signal,
     SkipRender,
     _get_query_patchers,
@@ -56,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 ProcessedCommand = (
-    Destroy | Redirect | Open | Focus | DispatchDOMEvent | SendHtml | PushURL | ReplaceURL
+    Destroy | Redirect | Open | Focus | ScrollIntoView | DispatchDOMEvent | SendHtml | PushURL | ReplaceURL
 )
 
 
@@ -296,6 +297,7 @@ class Repository:
                 | PushURL()
                 | Redirect()
                 | Focus()
+                | ScrollIntoView()
                 | DispatchDOMEvent() as command
             ):
                 commands.processing_component_id = ""
