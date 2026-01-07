@@ -141,7 +141,15 @@ class CommandQueue:
                     return 6, component.id, timestamp
                 else:
                     return 7, component.id, timestamp
-            case Focus() | ScrollIntoView() | Redirect() | DispatchDOMEvent() | Open() | ReplaceURL() | PushURL():
+            case (
+                Focus()
+                | ScrollIntoView()
+                | Redirect()
+                | DispatchDOMEvent()
+                | Open()
+                | ReplaceURL()
+                | PushURL()
+            ):
                 return 8, "", 0
             case _ as unreachable:
                 assert_never(unreachable)

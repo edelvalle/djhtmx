@@ -136,34 +136,62 @@ class BuildAndRender:
 
     @classmethod
     def append(
-        cls, target_: str, component_: type[HtmxComponent], parent_id: str | None = None, **state
+        cls,
+        target_: str,
+        component_: type[HtmxComponent],
+        parent_id: str | None = None,
+        **state,
     ):
         return cls(
-            component=component_, state=state, oob=f"beforeend: {target_}", parent_id=parent_id
+            component=component_,
+            state=state,
+            oob=f"beforeend: {target_}",
+            parent_id=parent_id,
         )
 
     @classmethod
     def prepend(
-        cls, target_: str, component_: type[HtmxComponent], parent_id: str | None = None, **state
+        cls,
+        target_: str,
+        component_: type[HtmxComponent],
+        parent_id: str | None = None,
+        **state,
     ):
         return cls(
-            component=component_, state=state, oob=f"afterbegin: {target_}", parent_id=parent_id
+            component=component_,
+            state=state,
+            oob=f"afterbegin: {target_}",
+            parent_id=parent_id,
         )
 
     @classmethod
     def after(
-        cls, target_: str, component_: type[HtmxComponent], parent_id: str | None = None, **state
+        cls,
+        target_: str,
+        component_: type[HtmxComponent],
+        parent_id: str | None = None,
+        **state,
     ):
         return cls(
-            component=component_, state=state, oob=f"afterend: {target_}", parent_id=parent_id
+            component=component_,
+            state=state,
+            oob=f"afterend: {target_}",
+            parent_id=parent_id,
         )
 
     @classmethod
     def before(
-        cls, target_: str, component_: type[HtmxComponent], parent_id: str | None = None, **state
+        cls,
+        target_: str,
+        component_: type[HtmxComponent],
+        parent_id: str | None = None,
+        **state,
     ):
         return cls(
-            component=component_, state=state, oob=f"beforebegin: {target_}", parent_id=parent_id
+            component=component_,
+            state=state,
+            oob=f"beforebegin: {target_}",
+            parent_id=parent_id,
         )
 
     @classmethod
@@ -260,7 +288,10 @@ def get_template(template: str) -> RenderFunction:  # pragma: no cover
         return cast(RenderFunction, _compose(loader.get_template(template).render, mark_safe))
     else:
         if (render := RENDER_FUNC.get(template)) is None:
-            render = cast(RenderFunction, _compose(loader.get_template(template).render, mark_safe))
+            render = cast(
+                RenderFunction,
+                _compose(loader.get_template(template).render, mark_safe),
+            )
             RENDER_FUNC[template] = render
         return render
 

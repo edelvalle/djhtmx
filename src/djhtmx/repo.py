@@ -57,7 +57,15 @@ logger = logging.getLogger(__name__)
 
 
 ProcessedCommand = (
-    Destroy | Redirect | Open | Focus | ScrollIntoView | DispatchDOMEvent | SendHtml | PushURL | ReplaceURL
+    Destroy
+    | Redirect
+    | Open
+    | Focus
+    | ScrollIntoView
+    | DispatchDOMEvent
+    | SendHtml
+    | PushURL
+    | ReplaceURL
 )
 
 

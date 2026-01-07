@@ -13,7 +13,15 @@ from pygments.lexers import HtmlLexer
 
 from . import json
 from .commands import PushURL, ReplaceURL, SendHtml
-from .component import Destroy, DispatchDOMEvent, Focus, HtmxComponent, Open, Redirect, ScrollIntoView
+from .component import (
+    Destroy,
+    DispatchDOMEvent,
+    Focus,
+    HtmxComponent,
+    Open,
+    Redirect,
+    ScrollIntoView,
+)
 from .introspection import parse_request_data
 from .repo import Repository, Session, signer
 from .utils import get_params

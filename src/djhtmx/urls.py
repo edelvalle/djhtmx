@@ -11,7 +11,16 @@ from django.utils.html import format_html
 from django.views.decorators.csrf import csrf_exempt
 
 from .commands import PushURL, ReplaceURL, SendHtml
-from .component import REGISTRY, Destroy, DispatchDOMEvent, Focus, Open, Redirect, ScrollIntoView, Triggers
+from .component import (
+    REGISTRY,
+    Destroy,
+    DispatchDOMEvent,
+    Focus,
+    Open,
+    Redirect,
+    ScrollIntoView,
+    Triggers,
+)
 from .consumer import Consumer
 from .introspection import parse_request_data
 from .repo import Repository
