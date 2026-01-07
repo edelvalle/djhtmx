@@ -1,5 +1,4 @@
 import importlib
-import logging
 import pkgutil
 import typing as t
 from urllib.parse import urlparse
@@ -134,7 +133,6 @@ def autodiscover_htmx_modules():
         try:
             module = importlib.import_module(module_name)
         except ImportError:
-            logger.warning("Could not import %s", module_name)
             continue
         if hasattr(module, "__path__"):
             # If it's a package, recursively walk it importing all modules and packages.
@@ -143,6 +141,3 @@ def autodiscover_htmx_modules():
                     # `walk_packages` only imports packages, not modules; we need to import them
                     # all.
                     importlib.import_module(info.name)
-
-
-logger = logging.getLogger(__name__)
