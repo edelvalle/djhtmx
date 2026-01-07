@@ -1,5 +1,5 @@
-import contextlib
 import importlib
+import logging
 import pkgutil
 import typing as t
 from urllib.parse import urlparse
@@ -129,17 +129,21 @@ def autodiscover_htmx_modules():
     - htmx.py files (like standard autodiscover_modules("htmx"))
     - All Python files under htmx/ directories in apps (recursively)
     """
-
-    def _import_modules_recursively(module_name):
-        """Recursively import a module and all its submodules."""
-        with contextlib.suppress(ImportError):
-            module = importlib.import_module(module_name)
-
-            # If this is a package, recursively import all modules in it
-            if hasattr(module, "__path__"):
-                for _finder, submodule_name, _is_pkg in pkgutil.iter_modules(module.__path__):
-                    _import_modules_recursively(f"{module_name}.{submodule_name}")
-
     for app_config in apps.get_app_configs():
-        # Import htmx module and all its submodules recursively
-        _import_modules_recursively(f"{app_config.name}.htmx")
+        if app_module := app_config.module:
+            htmx_module_name = f"{app_module.__name__}.htmx"
+            try:
+                module = importlib.import_module(htmx_module_name)
+            except ImportError:
+                logger.warning("Could not import %s", htmx_module_name)
+                continue
+            if hasattr(module, "__path__"):
+                # If it's a package, recursively walk it importing all modules and packages.
+                for info in pkgutil.walk_packages(module.__path__, prefix=htmx_module_name + "."):
+                    if not info.ispkg:
+                        # `walk_packages` only imports packages, not modules; we need to import them
+                        # all.
+                        importlib.import_module(info.name)
+
+
+logger = logging.getLogger(__name__)

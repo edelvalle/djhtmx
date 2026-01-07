@@ -7,7 +7,7 @@ SHELL := /bin/bash
 PROJECT_NAME := djhtmx
 
 UV ?= uv
-UV_RUN ?= uv run
+UV_RUN ?= $(UV) run
 UV_PYTHON_PREFERENCE ?= only-managed
 RUN ?= $(UV_RUN)
 
