@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.9] - 2026-01-07
+
+### Added
+- **ScrollIntoView Command**: New command that scrolls elements into view with configurable behavior (`auto`, `smooth`, `instant`) and block alignment (`start`, `center`, `end`, `nearest`). Includes WebSocket and HTTP trigger support with strict Python typing via Literal types.
+
+### Changed
+- **Import Error Handling**: Import errors during HTMX module autodiscovery are no longer suppressed. This change improves error visibility and helps catch import issues in user code earlier. Previously, import errors were silently caught, which could hide configuration or dependency problems.
+- Refactored `django.js` to use modern JavaScript patterns (for...of loops, const declarations) for improved code quality and maintainability
+
 ## [1.2.8] - 2026-01-06
 
 ### Added
