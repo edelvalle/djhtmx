@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-01-07
+
+### Changed
+- **HTMX Module Discovery**: Improved module discovery mechanism to use `find_spec` instead of try/except for checking module existence. This allows ImportErrors from within HTMX modules to propagate properly, preventing silent failures and making debugging easier. Previously, import errors from within the module itself were silently caught, masking real bugs.
+- Removed warning messages about missing HTMX modules for cleaner logging
+
 ## [1.2.9] - 2026-01-07
 
 ### Added
