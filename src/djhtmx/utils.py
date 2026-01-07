@@ -1,4 +1,5 @@
 import importlib
+import importlib.util
 import pkgutil
 import typing as t
 from urllib.parse import urlparse
@@ -130,10 +131,10 @@ def autodiscover_htmx_modules():
     """
     for app_config in apps.get_app_configs():
         module_name = f"{app_config.module.__name__}.htmx"
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError:
+        spec = importlib.util.find_spec(module_name)
+        if spec is None:
             continue
+        module = importlib.import_module(module_name)
         if hasattr(module, "__path__"):
             # If it's a package, recursively walk it importing all modules and packages.
             for info in pkgutil.walk_packages(module.__path__, prefix=module_name + "."):
