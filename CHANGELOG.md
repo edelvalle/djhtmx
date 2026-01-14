@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-01-14
+
+### Fixed
+- **Generic Type Handling**: Fixed `annotate_model()` to preserve non-Model generic types (like `defaultdict`, `list`, `dict`) when used with `Annotated` wrappers. Previously, these types would be incorrectly transformed to `None`, causing validation errors.
+
 ## [1.3.1] - 2026-01-14
 
 ### Fixed
