@@ -78,12 +78,14 @@ class _LazyModelProxy(Generic[M]):  # noqa
     __pk: Any | None
     __select_related: Sequence[str] | None
     __prefetch_related: Sequence[str | Prefetch] | None
+    __allow_none: bool
 
     def __init__(
         self,
         model: type[M],
         value: Any,
         model_annotation: ModelConfig | None = None,
+        allow_none: bool = False,
     ):
         self.__model = model
         if value is None or isinstance(value, model):
@@ -98,12 +100,44 @@ class _LazyModelProxy(Generic[M]):  # noqa
         else:
             self.__select_related = None
             self.__prefetch_related = None
+        self.__allow_none = allow_none
+
+    def __bool__(self) -> bool:
+        """Check if the instance exists. Called when proxy is used in boolean context."""
+        if self.__instance is None:
+            self.__ensure_instance()
+            if self.__instance is None:
+                # Object doesn't exist
+                if not self.__allow_none:
+                    # Required field - raise exception
+                    from django.core.exceptions import ObjectDoesNotExist
+
+                    raise ObjectDoesNotExist(
+                        f"{self.__model.__name__} with pk={self.__pk} does not exist "
+                        "(object may have been deleted)"
+                    )
+                # Optional field - return False (proxy is falsy)
+                return False
+        return True
 
     def __getattr__(self, name: str) -> Any:
         if name == "pk":
             return self.__pk
         if self.__instance is None:
             self.__ensure_instance()
+            if self.__instance is None:
+                # Object doesn't exist (was deleted or never existed)
+                if self.__allow_none:
+                    # Optional field (Model | None) - return None gracefully
+                    return None
+                else:
+                    # Required field (Model) - raise explicit exception
+                    from django.core.exceptions import ObjectDoesNotExist
+
+                    raise ObjectDoesNotExist(
+                        f"{self.__model.__name__} with pk={self.__pk} does not exist "
+                        "(object may have been deleted)"
+                    )
         return getattr(self.__instance, name)
 
     def __ensure_instance(self):
@@ -143,9 +177,13 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
             return None
         elif isinstance(value, _LazyModelProxy):
             instance = value._LazyModelProxy__instance or value._LazyModelProxy__pk
-            return _LazyModelProxy(self.model, instance, model_annotation=self.model_config)
+            return _LazyModelProxy(
+                self.model, instance, model_annotation=self.model_config, allow_none=self.allow_none
+            )
         else:
-            return _LazyModelProxy(self.model, value, model_annotation=self.model_config)
+            return _LazyModelProxy(
+                self.model, value, model_annotation=self.model_config, allow_none=self.allow_none
+            )
 
     def _get_instance(self, value):
         if value is None or isinstance(value, self.model):
@@ -254,7 +292,16 @@ def annotate_model(annotation, *, model_config: ModelConfig | None = None):
                 # Process the base type (first arg) and keep other metadata
                 base_type = args[0]
                 metadata = args[1:]
-                processed_base = annotate_model(base_type, model_config=model_config)
+
+                # Extract ModelConfig from metadata if present
+                extracted_model_config = next(
+                    (m for m in metadata if isinstance(m, ModelConfig)),
+                    None,
+                )
+                # Use extracted config, falling back to passed parameter
+                config_to_use = extracted_model_config or model_config
+
+                processed_base = annotate_model(base_type, model_config=config_to_use)
 
                 # If processed_base is also Annotated, merge the metadata
                 if get_origin(processed_base) is Annotated:

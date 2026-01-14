@@ -408,3 +408,156 @@ class TestAnnotateModelWithComplexTypes(TestCase):
         test_dict["key1"].add("value1")
         result = TestModel(data=test_dict)
         self.assertEqual(result.data["key1"], {"value1"})
+
+
+class TestLazyModelDeletedObjects(TestCase):
+    """Test that lazy model fields handle deleted objects correctly using real components."""
+
+    def test_lazy_required_model_deleted_object_raises_exception(self):
+        """Test that required lazy model raises ObjectDoesNotExist when object is deleted."""
+        from django.core.exceptions import ObjectDoesNotExist
+        from djhtmx.component import HtmxComponent
+
+        # Create an item
+        item = Item.objects.create(text="Temporary item")
+        item_id = item.id
+
+        # Create a component with lazy required field - this is how users actually write it
+        class TestComponent(HtmxComponent, public=False):
+            item: Annotated[Item, ModelConfig(lazy=True)]
+
+        # Create instance with item ID - components process annotations automatically
+        component = TestComponent(id="test", hx_name="TestComponent", user=None, item=item_id)
+        self.assertIsNotNone(component.item)
+
+        # Delete the item
+        item.delete()
+
+        # Accessing .pk should still work (doesn't trigger database query)
+        self.assertEqual(component.item.pk, item_id)
+
+        # Just accessing/checking component.item should raise ObjectDoesNotExist
+        with self.assertRaises(ObjectDoesNotExist) as cm:
+            if component.item:  # Triggers __bool__ which checks existence
+                pass
+
+        self.assertIn("Item", str(cm.exception))
+        self.assertIn("does not exist", str(cm.exception))
+
+    def test_lazy_optional_model_deleted_object_returns_none(self):
+        """Test that optional lazy model returns None when object is deleted."""
+        from djhtmx.component import HtmxComponent
+
+        # Create an item
+        item = Item.objects.create(text="Temporary item")
+        item_id = item.id
+
+        # Create a component with lazy optional field
+        class TestComponent(HtmxComponent, public=False):
+            item: Annotated[Item | None, ModelConfig(lazy=True)]
+
+        # Create instance with item ID
+        component = TestComponent(id="test", hx_name="TestComponent", user=None, item=item_id)
+        self.assertIsNotNone(component.item)
+
+        # Delete the item
+        item.delete()
+
+        # Accessing .pk should still work
+        self.assertEqual(component.item.pk, item_id)
+
+        # Checking component.item should be falsy (triggers __bool__)
+        self.assertFalse(component.item)  # Object deleted, proxy is falsy
+
+        # Accessing fields should return None (graceful handling)
+        self.assertIsNone(component.item.text)
+        self.assertIsNone(component.item.completed)
+
+    def test_lazy_model_deleted_object_pk_access_works(self):
+        """Test that accessing .pk on deleted lazy models doesn't trigger exception."""
+        from django.core.exceptions import ObjectDoesNotExist
+        from djhtmx.component import HtmxComponent
+
+        # Create an item
+        item = Item.objects.create(text="Temporary item")
+        item_id = item.id
+
+        # Test with both required and optional fields
+        class TestComponent(HtmxComponent, public=False):
+            required_item: Annotated[Item, ModelConfig(lazy=True)]
+            optional_item: Annotated[Item | None, ModelConfig(lazy=True)]
+
+        # Create instance
+        component = TestComponent(
+            id="test", hx_name="TestComponent", user=None, required_item=item_id, optional_item=item_id
+        )
+
+        # Delete the item
+        item.delete()
+
+        # Accessing .pk should work without triggering database query or exception
+        self.assertEqual(component.required_item.pk, item_id)
+        self.assertEqual(component.optional_item.pk, item_id)
+
+        # But checking truthiness should behave differently:
+        # Required: should raise
+        with self.assertRaises(ObjectDoesNotExist):
+            if component.required_item:
+                pass
+
+        # Optional: should be falsy
+        self.assertFalse(component.optional_item)
+
+    def test_lazy_required_model_nonexistent_id_raises_exception(self):
+        """Test that required lazy model raises ObjectDoesNotExist for non-existent ID."""
+        from django.core.exceptions import ObjectDoesNotExist
+        from djhtmx.component import HtmxComponent
+
+        # Generate a UUID that definitely doesn't exist
+        nonexistent_id = uuid4()
+
+        class TestComponent(HtmxComponent, public=False):
+            item: Annotated[Item, ModelConfig(lazy=True)]
+
+        # Create instance with non-existent ID
+        component = TestComponent(id="test", hx_name="TestComponent", user=None, item=nonexistent_id)
+
+        # Proxy should be created
+        self.assertIsNotNone(component.item)
+
+        # Accessing .pk should work
+        self.assertEqual(component.item.pk, nonexistent_id)
+
+        # Checking component.item should raise ObjectDoesNotExist
+        with self.assertRaises(ObjectDoesNotExist) as cm:
+            if component.item:  # Triggers __bool__
+                pass
+
+        self.assertIn("Item", str(cm.exception))
+        self.assertIn("does not exist", str(cm.exception))
+
+    def test_lazy_optional_model_nonexistent_id_returns_none(self):
+        """Test that optional lazy model is falsy for non-existent ID."""
+        from djhtmx.component import HtmxComponent
+
+        # Generate a UUID that definitely doesn't exist
+        nonexistent_id = uuid4()
+
+        class TestComponent(HtmxComponent, public=False):
+            item: Annotated[Item | None, ModelConfig(lazy=True)]
+
+        # Create instance with non-existent ID
+        component = TestComponent(id="test", hx_name="TestComponent", user=None, item=nonexistent_id)
+
+        # Proxy should be created
+        self.assertIsNotNone(component.item)
+
+        # Accessing .pk should work
+        self.assertEqual(component.item.pk, nonexistent_id)
+
+        # Checking component.item should be falsy (object doesn't exist)
+        self.assertFalse(component.item)
+
+        # Accessing fields should return None
+        self.assertIsNone(component.item.text)
+        self.assertIsNone(component.item.completed)
