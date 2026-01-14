@@ -107,7 +107,10 @@ class QueryPatcher:
                 # Prefix with the component name if not shared
                 if not query.shared:
                     param_name = f"{param_name}-{compact_hash(component.__name__)}"
-                adapter = get_annotation_adapter(field.annotation)
+
+                # Use the full annotation from __annotations__ to preserve serializers
+                full_annotation = component.__annotations__.get(field_name, field.annotation)
+                adapter = get_annotation_adapter(full_annotation)
                 yield cls(
                     field_name=field_name,
                     param_name=param_name,

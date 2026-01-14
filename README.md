@@ -235,6 +235,35 @@ class BaseComponent(HtmxComponent, public=False):
     ...
 ```
 
+### Model Loading Optimization
+
+Components can optimize database queries when loading Django models:
+
+```python
+from typing import Annotated
+from djhtmx.introspection import ModelConfig
+
+class TodoComponent(HtmxComponent):
+    # Basic: loads immediately when component is created
+    item: Item
+
+    # Optional: returns None if object doesn't exist (e.g., was deleted)
+    archived_item: Item | None = None
+
+    # Lazy: defers loading until accessed
+    user: Annotated[User, ModelConfig(lazy=True)]
+
+    # Optimized: use select_related for foreign keys, prefetch_related for reverse FKs/M2M
+    todo_list: Annotated[
+        TodoList,
+        ModelConfig(
+            lazy=True,
+            select_related=["owner", "category"],
+            prefetch_related=["items", "items__tags"]
+        )
+    ]
+```
+
 ## Component nesting
 
 Components can contain components inside to decompose the behavior in more granular and specialized parts, for this you don't have to do anything but to a component inside the template of other component....

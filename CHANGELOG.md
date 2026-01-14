@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Optional Model Loading**: Fixed `Model | None` annotations to return `None` when an object with the provided ID doesn't exist (e.g., was deleted), instead of raising `DoesNotExist` exception. Uses `.filter().first()` approach for graceful handling of missing objects.
+
+### Added
+- Comprehensive test coverage for optional model handling in both lazy and non-lazy loading scenarios
+- Documentation for model loading optimization (lazy loading, `select_related`, `prefetch_related`) in README
+
+### Changed
+- Query parameter handling now preserves full annotation metadata for proper serialization of `Model | None` fields
+- Enhanced `is_basic_type()` to recognize `Model | None` unions as valid simple types for query parameters
+
 ## [1.3.0] - 2026-01-07
 
 ### Changed

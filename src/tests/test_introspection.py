@@ -1,9 +1,10 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.http import QueryDict
 from django.test import TestCase
 from django.utils.datastructures import MultiValueDict
 from fision.todo.models import Item  # type: ignore[import-untyped]
+from pydantic import BaseModel, ValidationError
 
 from djhtmx.introspection import (
     ModelConfig,
@@ -221,3 +222,133 @@ class TestComplexDataTypes(TestCase):
         self.assertEqual(result["off_val"], "off")
         self.assertEqual(result["empty_val"], "")
         self.assertEqual(result["zero_val"], "0")
+
+
+class TestOptionalModelHandling(TestCase):
+    """Test that Model | None annotations handle non-existent objects correctly."""
+
+    def test_optional_model_with_nonexistent_id(self):
+        """Test that Model | None returns None when object doesn't exist."""
+
+        # Define a test model with optional Item field
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            item: annotate_model(Item | None)  # type: ignore
+
+        # Generate a UUID that definitely doesn't exist
+        nonexistent_id = uuid4()
+
+        # This should return None instead of raising DoesNotExist
+        result = TestModel(item=nonexistent_id)
+        self.assertIsNone(result.item)
+
+    def test_required_model_with_nonexistent_id(self):
+        """Test that required Model raises ValidationError when object doesn't exist."""
+
+        # Define a test model with required Item field
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            item: annotate_model(Item)  # type: ignore
+
+        # Generate a UUID that definitely doesn't exist
+        nonexistent_id = uuid4()
+
+        # This should raise a ValidationError (not DoesNotExist)
+        with self.assertRaises(ValidationError):
+            TestModel(item=nonexistent_id)
+
+    def test_optional_model_with_explicit_none(self):
+        """Test that Model | None accepts explicit None values."""
+
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            item: annotate_model(Item | None)  # type: ignore
+
+        # Explicit None should work
+        result = TestModel(item=None)
+        self.assertIsNone(result.item)
+
+    def test_optional_model_with_existing_id(self):
+        """Test that Model | None loads existing objects correctly."""
+
+        # Create a real item
+        item = Item.objects.create(text="Test item")
+
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            item: annotate_model(Item | None)  # type: ignore
+
+        # Should load the actual item
+        result = TestModel(item=item.id)
+        self.assertIsNotNone(result.item)
+        self.assertEqual(result.item.id, item.id)
+        self.assertEqual(result.item.text, "Test item")
+
+
+class TestOptionalModelHandlingLazy(TestCase):
+    """Test that Model | None annotations with lazy loading handle non-existent objects correctly."""
+
+    def test_lazy_optional_model_with_nonexistent_id(self):
+        """Test that lazy Model | None returns None when object doesn't exist."""
+
+        # Define a test model with lazy optional Item field
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            item: annotate_model(Item | None, model_config=ModelConfig(lazy=True))  # type: ignore
+
+        # Generate a UUID that definitely doesn't exist
+        nonexistent_id = uuid4()
+
+        # This should create a lazy proxy
+        result = TestModel(item=nonexistent_id)
+
+        # The proxy should be created (not None initially)
+        self.assertIsNotNone(result.item)
+
+        # But accessing attributes should handle the non-existent object
+        # (In this case, __ensure_instance will set it to None)
+        # The pk should still be accessible
+        self.assertEqual(result.item.pk, nonexistent_id)
+
+    def test_lazy_optional_model_with_existing_id(self):
+        """Test that lazy Model | None loads existing objects correctly."""
+
+        # Create a real item
+        item = Item.objects.create(text="Test lazy item")
+
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            item: annotate_model(Item | None, model_config=ModelConfig(lazy=True))  # type: ignore
+
+        # Should create a lazy proxy
+        result = TestModel(item=item.id)
+        self.assertIsNotNone(result.item)
+
+        # Accessing attributes should load the item
+        self.assertEqual(result.item.text, "Test lazy item")
+        self.assertEqual(result.item.id, item.id)
+
+    def test_lazy_optional_model_with_explicit_none(self):
+        """Test that lazy Model | None accepts explicit None values."""
+
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            item: annotate_model(Item | None, model_config=ModelConfig(lazy=True))  # type: ignore
+
+        # Explicit None should work
+        result = TestModel(item=None)
+        self.assertIsNone(result.item)
