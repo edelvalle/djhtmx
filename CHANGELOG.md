@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-01-14
+
+### Fixed
+- **Lazy Model Deleted Object Handling**: Fixed lazy models to gracefully handle deleted database objects:
+  - Required lazy models (`Annotated[Model, ModelConfig(lazy=True)]`): Raise clear `ObjectDoesNotExist` exception when checking truthiness if object was deleted
+  - Optional lazy models (`Annotated[Model | None, ModelConfig(lazy=True)]`): Become falsy and return `None` for field accesses when object was deleted
+  - Accessing `.pk` on lazy proxies always works without triggering database queries, even for deleted objects
+- **ModelConfig Extraction**: Fixed `annotate_model()` to properly extract and apply `ModelConfig` from `Annotated` type metadata. Previously, `ModelConfig` in annotations like `Annotated[Item, ModelConfig(lazy=True)]` was ignored.
+
+### Added
+- Comprehensive test coverage for lazy model deleted object handling using real `HtmxComponent` with user-facing API
+- `__bool__()` method on `_LazyModelProxy` to detect deleted objects immediately when checking truthiness
+
 ## [1.3.2] - 2026-01-14
 
 ### Fixed

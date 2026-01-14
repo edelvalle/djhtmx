@@ -264,6 +264,23 @@ class TodoComponent(HtmxComponent):
     ]
 ```
 
+**Handling Deleted Objects:**
+
+Lazy models handle deleted database objects gracefully:
+
+```python
+class MyComponent(HtmxComponent):
+    # Required: raises ObjectDoesNotExist when checking if object was deleted
+    item: Annotated[Item, ModelConfig(lazy=True)]
+
+    # Optional: becomes falsy and returns None when object was deleted
+    archived_item: Annotated[Item | None, ModelConfig(lazy=True)]
+```
+
+- **Required lazy models**: Checking truthiness (`if component.item:`) raises `ObjectDoesNotExist` with a clear message
+- **Optional lazy models**: Checking truthiness returns `False`, field accesses return `None`
+- **Both**: Accessing `.pk` always works without triggering database queries
+
 ## Component nesting
 
 Components can contain components inside to decompose the behavior in more granular and specialized parts, for this you don't have to do anything but to a component inside the template of other component....
