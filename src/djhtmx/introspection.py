@@ -293,6 +293,8 @@ def annotate_model(annotation, *, model_config: ModelConfig | None = None):
                         return type_[
                             *(annotate_model(p, model_config=model_annotation) for p in params)
                         ]  # type: ignore
+        # Other generic types (list, dict, defaultdict, etc.) - return as-is
+        return annotation
     else:
         return annotation
 

@@ -1,10 +1,12 @@
+from collections import defaultdict
+from typing import Annotated
 from uuid import UUID, uuid4
 
 from django.http import QueryDict
 from django.test import TestCase
 from django.utils.datastructures import MultiValueDict
 from fision.todo.models import Item  # type: ignore[import-untyped]
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from djhtmx.introspection import (
     ModelConfig,
@@ -352,3 +354,57 @@ class TestOptionalModelHandlingLazy(TestCase):
         # Explicit None should work
         result = TestModel(item=None)
         self.assertIsNone(result.item)
+
+
+class TestAnnotateModelWithComplexTypes(TestCase):
+    """Test that annotate_model doesn't break non-Model types."""
+
+    def test_annotate_model_with_defaultdict(self):
+        """Test that defaultdict fields work correctly after our changes."""
+
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            # Simple defaultdict without annotation
+            data1: defaultdict[str, set[str]] = Field(default_factory=lambda: defaultdict(set))
+
+            # With Annotated wrapper (like Query would do)
+            data2: Annotated[
+                defaultdict[str, set[str]], "some_metadata"
+            ] = Field(default_factory=lambda: defaultdict(set))
+
+        # Test creation with default factory
+        result = TestModel()
+        self.assertIsInstance(result.data1, defaultdict)
+        self.assertIsInstance(result.data2, defaultdict)
+
+        # Test creation with explicit value
+        test_dict = defaultdict(set)
+        test_dict["key1"].add("value1")
+        result2 = TestModel(data1=test_dict, data2=test_dict)
+        self.assertEqual(result2.data1["key1"], {"value1"})
+        self.assertEqual(result2.data2["key1"], {"value1"})
+
+    def test_annotate_model_explicitly_on_defaultdict(self):
+        """Test annotate_model() on defaultdict type directly."""
+
+        # Test that annotate_model doesn't modify non-Model types
+        original = Annotated[defaultdict[str, set[str]], "metadata"]
+        result = annotate_model(original)
+
+        # Should return the same thing
+        self.assertEqual(result, original)
+
+        # Test creating a model with the annotated type
+        class TestModel(BaseModel):
+            class Config:
+                arbitrary_types_allowed = True
+
+            data: annotate_model(Annotated[defaultdict[str, set[str]], "metadata"])  # type: ignore
+
+        # Should work fine
+        test_dict = defaultdict(set)
+        test_dict["key1"].add("value1")
+        result = TestModel(data=test_dict)
+        self.assertEqual(result.data["key1"], {"value1"})
