@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-01-14
+
 ### Fixed
 - **Optional Model Loading**: Fixed `Model | None` annotations to return `None` when an object with the provided ID doesn't exist (e.g., was deleted), instead of raising `DoesNotExist` exception. Uses `.filter().first()` approach for graceful handling of missing objects.
 
