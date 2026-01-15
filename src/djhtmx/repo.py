@@ -240,7 +240,11 @@ class Repository:
                                 Emit(HtmxUnhandledError(error, handler_annotations=annotations))
                             ]
                         yield from self._process_emited_commands(
-                            component, emited_commands, commands, during_execute=True
+                            component,
+                            emited_commands,
+                            commands,
+                            during_execute=True,
+                            method_name=event_handler,
                         )
 
             case SkipRender(component):
@@ -286,7 +290,11 @@ class Repository:
                         else:
                             raise
                     yield from self._process_emited_commands(
-                        component, emited_commands, commands, during_execute=False
+                        component,
+                        emited_commands,
+                        commands,
+                        during_execute=False,
+                        method_name="_handle_event",
                     )
 
             case Signal(signals):
@@ -320,10 +328,13 @@ class Repository:
         emmited_commands: Iterable[Command] | None,
         commands: CommandQueue,
         during_execute: bool,
+        method_name: str | None = None,
     ) -> Iterable[ProcessedCommand]:
         component_was_rendered = False
         commands_to_add: list[Command] = []
         for command in emmited_commands or []:
+            if method_name:
+                logger.debug("< YIELD: %s.%s -> %s", component.hx_name, method_name, command)
             component_was_rendered = component_was_rendered or (
                 isinstance(command, SkipRender | Render) and command.component.id == component.id
             )
