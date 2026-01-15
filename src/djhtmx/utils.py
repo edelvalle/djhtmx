@@ -130,6 +130,8 @@ def autodiscover_htmx_modules():
     - All Python files under htmx/ directories in apps (recursively)
     """
     for app_config in apps.get_app_configs():
+        if app_config.module is None:
+            continue
         module_name = f"{app_config.module.__name__}.htmx"
         spec = importlib.util.find_spec(module_name)
         if spec is None:
