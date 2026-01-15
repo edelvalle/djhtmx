@@ -208,8 +208,8 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
                     # For required Model fields, raise validation error
                     raise PydanticCustomError(
                         "model_not_found",
-                        f"{self.model.__name__} with pk={{pk}} does not exist",
-                        {"pk": value},
+                        "{model_name} with pk={pk} does not exist",
+                        {"pk": value, "model_name": self.model.__name__},
                     )
             return instance
 
