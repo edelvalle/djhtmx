@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Yield Logging**: Added debug logging for commands yielded from component methods during event handling. Logs format: `< YIELD: ComponentName.method_name -> Command(...)`. Helps developers track command flow and debug issues when components emit multiple commands.
+
+### Fixed
+- **Type Safety**: Added None check for `app_config.module` in `autodiscover_htmx_modules()` to prevent AttributeError
+
 ## [1.3.0] - 2026-01-07
 
 ### Changed
