@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Yield Logging**: Added debug logging for commands yielded from component methods during event handling. Logs format: `< YIELD: ComponentName.method_name -> Command(...)`. Helps developers track command flow and debug issues when components emit multiple commands.
+
+### Fixed
+- **Type Safety**: Fixed pyright type errors in introspection and utils modules:
+  - Changed `PydanticCustomError` to use literal string template instead of f-string for LiteralString type compatibility
+  - Added None check for `app_config.module` in `autodiscover_htmx_modules()` to prevent AttributeError
+
 ## [1.3.3] - 2026-01-14
 
 ### Fixed
