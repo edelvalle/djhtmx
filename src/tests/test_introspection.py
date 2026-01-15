@@ -370,9 +370,9 @@ class TestAnnotateModelWithComplexTypes(TestCase):
             data1: defaultdict[str, set[str]] = Field(default_factory=lambda: defaultdict(set))
 
             # With Annotated wrapper (like Query would do)
-            data2: Annotated[
-                defaultdict[str, set[str]], "some_metadata"
-            ] = Field(default_factory=lambda: defaultdict(set))
+            data2: Annotated[defaultdict[str, set[str]], "some_metadata"] = Field(
+                default_factory=lambda: defaultdict(set)
+            )
 
         # Test creation with default factory
         result = TestModel()
@@ -416,6 +416,7 @@ class TestLazyModelDeletedObjects(TestCase):
     def test_lazy_required_model_deleted_object_raises_exception(self):
         """Test that required lazy model raises ObjectDoesNotExist when object is deleted."""
         from django.core.exceptions import ObjectDoesNotExist
+
         from djhtmx.component import HtmxComponent
 
         # Create an item
@@ -476,6 +477,7 @@ class TestLazyModelDeletedObjects(TestCase):
     def test_lazy_model_deleted_object_pk_access_works(self):
         """Test that accessing .pk on deleted lazy models doesn't trigger exception."""
         from django.core.exceptions import ObjectDoesNotExist
+
         from djhtmx.component import HtmxComponent
 
         # Create an item
@@ -489,7 +491,11 @@ class TestLazyModelDeletedObjects(TestCase):
 
         # Create instance
         component = TestComponent(
-            id="test", hx_name="TestComponent", user=None, required_item=item_id, optional_item=item_id
+            id="test",
+            hx_name="TestComponent",
+            user=None,
+            required_item=item_id,
+            optional_item=item_id,
         )
 
         # Delete the item
@@ -511,6 +517,7 @@ class TestLazyModelDeletedObjects(TestCase):
     def test_lazy_required_model_nonexistent_id_raises_exception(self):
         """Test that required lazy model raises ObjectDoesNotExist for non-existent ID."""
         from django.core.exceptions import ObjectDoesNotExist
+
         from djhtmx.component import HtmxComponent
 
         # Generate a UUID that definitely doesn't exist
@@ -520,7 +527,9 @@ class TestLazyModelDeletedObjects(TestCase):
             item: Annotated[Item, ModelConfig(lazy=True)]
 
         # Create instance with non-existent ID
-        component = TestComponent(id="test", hx_name="TestComponent", user=None, item=nonexistent_id)
+        component = TestComponent(
+            id="test", hx_name="TestComponent", user=None, item=nonexistent_id
+        )
 
         # Proxy should be created
         self.assertIsNotNone(component.item)
@@ -547,7 +556,9 @@ class TestLazyModelDeletedObjects(TestCase):
             item: Annotated[Item | None, ModelConfig(lazy=True)]
 
         # Create instance with non-existent ID
-        component = TestComponent(id="test", hx_name="TestComponent", user=None, item=nonexistent_id)
+        component = TestComponent(
+            id="test", hx_name="TestComponent", user=None, item=nonexistent_id
+        )
 
         # Proxy should be created
         self.assertIsNotNone(component.item)
