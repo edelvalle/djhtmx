@@ -29,7 +29,6 @@ from django.db import models
 from django.db.models import Prefetch
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer, TypeAdapter
-from pydantic_core import PydanticCustomError
 
 M = TypeVar("M", bound=models.Model)
 
@@ -88,6 +87,7 @@ class _LazyModelProxy(Generic[M]):  # noqa
         allow_none: bool = False,
     ):
         self.__model = model
+        self.__allow_none = allow_none
         if value is None or isinstance(value, model):
             self.__instance = value
             self.__pk = getattr(value, "pk", None)
@@ -100,60 +100,31 @@ class _LazyModelProxy(Generic[M]):  # noqa
         else:
             self.__select_related = None
             self.__prefetch_related = None
-        self.__allow_none = allow_none
-
-    def __bool__(self) -> bool:
-        """Check if the instance exists. Called when proxy is used in boolean context."""
-        if self.__instance is None:
-            self.__ensure_instance()
-            if self.__instance is None:
-                # Object doesn't exist
-                if not self.__allow_none:
-                    # Required field - raise exception
-                    from django.core.exceptions import ObjectDoesNotExist
-
-                    raise ObjectDoesNotExist(
-                        f"{self.__model.__name__} with pk={self.__pk} does not exist "
-                        "(object may have been deleted)"
-                    )
-                # Optional field - return False (proxy is falsy)
-                return False
-        return True
 
     def __getattr__(self, name: str) -> Any:
         if name == "pk":
             return self.__pk
         if self.__instance is None:
             self.__ensure_instance()
-            if self.__instance is None:
-                # Object doesn't exist (was deleted or never existed)
-                if self.__allow_none:
-                    # Optional field (Model | None) - return None gracefully
-                    return None
-                else:
-                    # Required field (Model) - raise explicit exception
-                    from django.core.exceptions import ObjectDoesNotExist
-
-                    raise ObjectDoesNotExist(
-                        f"{self.__model.__name__} with pk={self.__pk} does not exist "
-                        "(object may have been deleted)"
-                    )
         return getattr(self.__instance, name)
 
     def __ensure_instance(self):
-        if self.__instance:
-            return self.__instance
-        elif self.__pk is None:
-            # If pk is None, don't try to load anything
-            return None
-        else:
+        if not self.__instance:
             manager = self.__model.objects
             if select_related := self.__select_related:
                 manager = manager.select_related(*select_related)
             if prefetch_related := self.__prefetch_related:
                 manager = manager.prefetch_related(*prefetch_related)
+            # Use filter().first() instead of get() to avoid exceptions
             self.__instance = manager.filter(pk=self.__pk).first()
-            return self.__instance
+            if self.__instance is None:
+                if self.__allow_none:
+                    # For Model | None, object doesn't exist - proxy becomes None-like
+                    pass
+                else:
+                    # For required Model fields, raise error
+                    raise ValueError(f"{self.__model.__name__} with pk={self.__pk} does not exist")
+        return self.__instance
 
     def __repr__(self) -> str:
         return f"<_LazyModelProxy model={self.__model}, pk={self.__pk}, instance={self.__instance}>"
@@ -172,18 +143,11 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
             return self._get_instance(value)
 
     def _get_lazy_proxy(self, value):
-        if value is None:
-            # Don't create a proxy for explicit None
-            return None
-        elif isinstance(value, _LazyModelProxy):
+        if isinstance(value, _LazyModelProxy):
             instance = value._LazyModelProxy__instance or value._LazyModelProxy__pk
-            return _LazyModelProxy(
-                self.model, instance, model_annotation=self.model_config, allow_none=self.allow_none
-            )
+            return _LazyModelProxy(self.model, instance, allow_none=self.allow_none)
         else:
-            return _LazyModelProxy(
-                self.model, value, model_annotation=self.model_config, allow_none=self.allow_none
-            )
+            return _LazyModelProxy(self.model, value, allow_none=self.allow_none)
 
     def _get_instance(self, value):
         if value is None or isinstance(value, self.model):
@@ -206,11 +170,7 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
                     return None
                 else:
                     # For required Model fields, raise validation error
-                    raise PydanticCustomError(
-                        "model_not_found",
-                        "{model_name} with pk={pk} does not exist",
-                        {"pk": value, "model_name": self.model.__name__},
-                    )
+                    raise ValueError(f"{self.model.__name__} with pk={value} does not exist")
             return instance
 
     @classmethod
@@ -224,11 +184,7 @@ class _ModelPlainSerializer(Generic[M]):  # noqa
     model: type[M]
 
     def __call__(self, value):
-        # Handle None for Model | None fields
-        if value is None:
-            return None
-        else:
-            return value.pk
+        return value.pk
 
     @classmethod
     @cache
@@ -237,16 +193,20 @@ class _ModelPlainSerializer(Generic[M]):  # noqa
 
 
 def _Model(
-    model: type[models.Model], model_config: ModelConfig | None = None, allow_none: bool = False
+    model: type[models.Model],
+    model_config: ModelConfig | None = None,
+    allow_none: bool = False,
 ):
     assert issubclass_safe(model, models.Model)
     model_config = model_config or _DEFAULT_MODEL_CONFIG
+
+    # Determine the base type
     base_type = model if not model_config.lazy else _LazyModelProxy[model]
-    # If allow_none is True, the base type can be None (for Model | None unions)
-    if allow_none:
-        base_type = base_type | None  # type: ignore
+    # If allow_none, make it optional
+    annotated_type = base_type | None if allow_none else base_type
+
     return Annotated[
-        base_type,
+        annotated_type,
         BeforeValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
         PlainSerializer(
             func=_ModelPlainSerializer.from_modelclass(model),
@@ -285,63 +245,45 @@ def annotate_model(annotation, *, model_config: ModelConfig | None = None):
             },
         )
     elif type_ := get_origin(annotation):
-        # Handle Annotated types like Annotated[Item | None, Query("editing")]
-        if type_ is Annotated:
-            args = get_args(annotation)
-            if args:
-                # Process the base type (first arg) and keep other metadata
-                base_type = args[0]
-                metadata = args[1:]
-
-                # Extract ModelConfig from metadata if present
-                extracted_model_config = next(
-                    (m for m in metadata if isinstance(m, ModelConfig)),
+        if type_ is types.UnionType or type_ is Union:
+            type_ = Union
+        match get_args(annotation):
+            case ():
+                return type_
+            case (param,):
+                return type_[annotate_model(param)]  # type: ignore
+            case params:
+                # Check for ModelConfig in params (for Annotated types)
+                param_model_config = next(
+                    (p for p in params if isinstance(p, ModelConfig)),
                     None,
                 )
-                # Use extracted config, falling back to passed parameter
-                config_to_use = extracted_model_config or model_config
+                # Use param ModelConfig if found, otherwise use the passed model_config
+                effective_model_config = param_model_config or model_config
 
-                processed_base = annotate_model(base_type, model_config=config_to_use)
+                # Check if this is a Model | None union
+                has_none = types.NoneType in params
+                model_types = [p for p in params if issubclass_safe(p, models.Model)]
 
-                # If processed_base is also Annotated, merge the metadata
-                if get_origin(processed_base) is Annotated:
-                    processed_args = get_args(processed_base)
-                    inner_base = processed_args[0]
-                    inner_metadata = processed_args[1:]
-                    # Merge: inner metadata first, then original metadata
-                    return Annotated[inner_base, *inner_metadata, *metadata]  # type: ignore
+                # If we have Model | None, annotate the model with allow_none=True
+                if has_none and len(model_types) == 1:
+                    annotated_params = []
+                    for p in params:
+                        if issubclass_safe(p, models.Model):
+                            annotated_params.append(
+                                _Model(p, effective_model_config, allow_none=True)
+                            )
+                        elif p is not types.NoneType:
+                            annotated_params.append(
+                                annotate_model(p, model_config=effective_model_config)
+                            )
+                        else:
+                            annotated_params.append(p)
+                    return type_[*annotated_params]  # type: ignore
                 else:
-                    # Reconstruct the Annotated with processed base type
-                    return Annotated[processed_base, *metadata]  # type: ignore
-            return annotation
-        elif type_ is types.UnionType or type_ is Union:
-            type_ = Union
-            match get_args(annotation):
-                case ():
-                    return type_
-                case (param,):
-                    return type_[annotate_model(param)]  # type: ignore
-                case params:
-                    model_annotation = next(
-                        (p for p in params if isinstance(p, ModelConfig)),
-                        None,
-                    )
-                    # Check if this is a Model | None union
-                    has_none = types.NoneType in params
-                    model_params = [p for p in params if issubclass_safe(p, models.Model)]
-
-                    if has_none and len(model_params) == 1:
-                        # This is a Model | None union - use allow_none=True
-                        # Use the model_config parameter passed to annotate_model, not model_annotation from Union params
-                        model = model_params[0]
-                        return _Model(model, model_config or model_annotation, allow_none=True)
-                    else:
-                        # Regular union - process each param independently
-                        return type_[
-                            *(annotate_model(p, model_config=model_annotation) for p in params)
-                        ]  # type: ignore
-        # Other generic types (list, dict, defaultdict, etc.) - return as-is
-        return annotation
+                    return type_[
+                        *(annotate_model(p, model_config=effective_model_config) for p in params)
+                    ]  # type: ignore
     else:
         return annotation
 
@@ -519,27 +461,10 @@ def is_basic_type(ann):
     - Literal types with simple values
 
     """
-    # Check if it's a Union (e.g., Item | None)
-    origin_type = get_origin(ann)
-    if origin_type in (types.UnionType, Union):
-        args = get_args(ann)
-        # If it's Model | None, consider it a basic type
-        model_types = [arg for arg in args if issubclass_safe(arg, models.Model)]
-        if model_types and types.NoneType in args:
-            return True
-
-    # Check for Annotated[Model, ...] or Annotated[Model | None, ...] pattern
-    origin = getattr(ann, "__origin__", None)
-    if origin is not None and get_origin(origin) in (types.UnionType, Union):
-        args = get_args(origin)
-        model_types = [arg for arg in args if issubclass_safe(arg, models.Model)]
-        if model_types and types.NoneType in args:
-            return True
-
     return (
         ann in _SIMPLE_TYPES
         #  __origin__ -> model in 'Annotated[model, BeforeValidator(...), PlainSerializer(...)]'
-        or issubclass_safe(origin, models.Model)
+        or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
         or is_collection_annotation(ann)
         or is_literal_annotation(ann)

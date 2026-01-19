@@ -1,12 +1,9 @@
-from collections import defaultdict
-from typing import Annotated
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from django.http import QueryDict
 from django.test import TestCase
 from django.utils.datastructures import MultiValueDict
 from fision.todo.models import Item  # type: ignore[import-untyped]
-from pydantic import BaseModel, Field, ValidationError
 
 from djhtmx.introspection import (
     ModelConfig,
@@ -226,349 +223,380 @@ class TestComplexDataTypes(TestCase):
         self.assertEqual(result["zero_val"], "0")
 
 
-class TestOptionalModelHandling(TestCase):
-    """Test that Model | None annotations handle non-existent objects correctly."""
+class TestOptionalModelInComponent(TestCase):
+    """Test that HtmxComponent with Model | None handles non-existent objects correctly."""
 
-    def test_optional_model_with_nonexistent_id(self):
-        """Test that Model | None returns None when object doesn't exist."""
+    def test_component_with_optional_model_nonexistent_id(self):
+        """Test that component with Model | None sets field to None when ID doesn't exist."""
+        from uuid import uuid4
 
-        # Define a test model with optional Item field
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
+        from djhtmx.component import HtmxComponent
 
-            item: annotate_model(Item | None)  # type: ignore
+        # Create a test component with optional Item field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            item: Item | None
 
-        # Generate a UUID that definitely doesn't exist
+        # Generate a UUID that doesn't exist in the database
         nonexistent_id = uuid4()
 
-        # This should return None instead of raising DoesNotExist
-        result = TestModel(item=nonexistent_id)
-        self.assertIsNone(result.item)
+        # Build the component with the non-existent ID
+        component = TestComponent(
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            item=nonexistent_id,
+        )
 
-    def test_required_model_with_nonexistent_id(self):
-        """Test that required Model raises ValidationError when object doesn't exist."""
+        # The item field should be None instead of raising an exception
+        self.assertIsNone(component.item)
 
-        # Define a test model with required Item field
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
+    def test_component_with_optional_model_deleted_id(self):
+        """Test that component with Model | None sets field to None when object is deleted."""
+        from djhtmx.component import HtmxComponent
 
-            item: annotate_model(Item)  # type: ignore
+        # Create an item and then delete it
+        item = Item.objects.create(text="To be deleted")
+        item_id = item.id
+        item.delete()
 
-        # Generate a UUID that definitely doesn't exist
-        nonexistent_id = uuid4()
+        # Create a test component with optional Item field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            item: Item | None
 
-        # This should raise a ValidationError (not DoesNotExist)
-        with self.assertRaises(ValidationError):
-            TestModel(item=nonexistent_id)
+        # Build the component with the deleted item's ID
+        component = TestComponent(
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            item=item_id,
+        )
 
-    def test_optional_model_with_explicit_none(self):
-        """Test that Model | None accepts explicit None values."""
+        # The item field should be None since the object was deleted
+        self.assertIsNone(component.item)
 
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
-
-            item: annotate_model(Item | None)  # type: ignore
-
-        # Explicit None should work
-        result = TestModel(item=None)
-        self.assertIsNone(result.item)
-
-    def test_optional_model_with_existing_id(self):
-        """Test that Model | None loads existing objects correctly."""
+    def test_component_with_optional_model_existing_id(self):
+        """Test that component with Model | None loads existing objects correctly."""
+        from djhtmx.component import HtmxComponent
 
         # Create a real item
         item = Item.objects.create(text="Test item")
 
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
+        # Create a test component with optional Item field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            item: Item | None
 
-            item: annotate_model(Item | None)  # type: ignore
+        # Build the component with the existing item's ID
+        component = TestComponent(
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            item=item.id,
+        )
 
-        # Should load the actual item
-        result = TestModel(item=item.id)
-        self.assertIsNotNone(result.item)
-        self.assertEqual(result.item.id, item.id)
-        self.assertEqual(result.item.text, "Test item")
+        # The item field should have the loaded item
+        self.assertIsNotNone(component.item)
+        self.assertEqual(component.item.id, item.id)
+        self.assertEqual(component.item.text, "Test item")
 
+    def test_component_with_required_model_nonexistent_id(self):
+        """Test that component with required Model raises ValidationError for non-existent ID."""
+        from uuid import uuid4
 
-class TestOptionalModelHandlingLazy(TestCase):
-    """Test that Model | None annotations with lazy loading handle non-existent objects correctly."""
+        from pydantic import ValidationError
 
-    def test_lazy_optional_model_with_nonexistent_id(self):
-        """Test that lazy Model | None returns None when object doesn't exist."""
+        from djhtmx.component import HtmxComponent
 
-        # Define a test model with lazy optional Item field
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
+        # Create a test component with required Item field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            item: Item  # Required, not optional
 
-            item: annotate_model(Item | None, model_config=ModelConfig(lazy=True))  # type: ignore
-
-        # Generate a UUID that definitely doesn't exist
+        # Generate a UUID that doesn't exist in the database
         nonexistent_id = uuid4()
 
-        # This should create a lazy proxy
-        result = TestModel(item=nonexistent_id)
+        # Should raise ValidationError, not DoesNotExist
+        with self.assertRaises(ValidationError) as context:
+            TestComponent(
+                id="test-component",
+                hx_name="TestComponent",
+                user=None,
+                item=nonexistent_id,
+            )
 
-        # The proxy should be created (not None initially)
-        self.assertIsNotNone(result.item)
+        # Verify the error message contains useful information
+        error_str = str(context.exception)
+        self.assertIn("Item", error_str)
+        self.assertIn("does not exist", error_str)
 
-        # But accessing attributes should handle the non-existent object
-        # (In this case, __ensure_instance will set it to None)
-        # The pk should still be accessible
-        self.assertEqual(result.item.pk, nonexistent_id)
 
-    def test_lazy_optional_model_with_existing_id(self):
-        """Test that lazy Model | None loads existing objects correctly."""
+class TestOptionalLazyModelInComponent(TestCase):
+    """Test that HtmxComponent with lazy Model | None handles non-existent objects correctly."""
+
+    def test_component_with_optional_lazy_model_nonexistent_id(self):
+        """Test that component with lazy Model | None sets field to None when ID doesn't exist."""
+        from typing import Annotated
+        from uuid import uuid4
+
+        from djhtmx.component import HtmxComponent
+        from djhtmx.introspection import ModelConfig
+
+        # Create a test component with optional lazy Item field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            item: Annotated[Item | None, ModelConfig(lazy=True)]
+
+        # Generate a UUID that doesn't exist in the database
+        nonexistent_id = uuid4()
+
+        # Build the component with the non-existent ID
+        component = TestComponent(
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            item=nonexistent_id,
+        )
+
+        # The item field should be a lazy proxy, not None initially
+        self.assertIsNotNone(component.item)
+
+        # Accessing the pk should work without triggering database query
+        self.assertEqual(component.item.pk, nonexistent_id)
+
+        # When checking truthiness, it should return False (falsy)
+        # since the object doesn't exist
+        # Note: This behavior depends on __bool__ implementation in _LazyModelProxy
+
+    def test_component_with_optional_lazy_model_deleted_id(self):
+        """Test that component with lazy Model | None handles deleted objects."""
+        from typing import Annotated
+
+        from djhtmx.component import HtmxComponent
+        from djhtmx.introspection import ModelConfig
+
+        # Create an item and then delete it
+        item = Item.objects.create(text="To be deleted")
+        item_id = item.id
+        item.delete()
+
+        # Create a test component with optional lazy Item field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            item: Annotated[Item | None, ModelConfig(lazy=True)]
+
+        # Build the component with the deleted item's ID
+        component = TestComponent(
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            item=item_id,
+        )
+
+        # The item field should be a lazy proxy
+        self.assertIsNotNone(component.item)
+
+        # Accessing the pk should work
+        self.assertEqual(component.item.pk, item_id)
+
+    def test_component_with_optional_lazy_model_existing_id(self):
+        """Test that component with lazy Model | None loads existing objects correctly."""
+        from typing import Annotated
+
+        from djhtmx.component import HtmxComponent
+        from djhtmx.introspection import ModelConfig
 
         # Create a real item
         item = Item.objects.create(text="Test lazy item")
 
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
-
-            item: annotate_model(Item | None, model_config=ModelConfig(lazy=True))  # type: ignore
-
-        # Should create a lazy proxy
-        result = TestModel(item=item.id)
-        self.assertIsNotNone(result.item)
-
-        # Accessing attributes should load the item
-        self.assertEqual(result.item.text, "Test lazy item")
-        self.assertEqual(result.item.id, item.id)
-
-    def test_lazy_optional_model_with_explicit_none(self):
-        """Test that lazy Model | None accepts explicit None values."""
-
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
-
-            item: annotate_model(Item | None, model_config=ModelConfig(lazy=True))  # type: ignore
-
-        # Explicit None should work
-        result = TestModel(item=None)
-        self.assertIsNone(result.item)
-
-
-class TestAnnotateModelWithComplexTypes(TestCase):
-    """Test that annotate_model doesn't break non-Model types."""
-
-    def test_annotate_model_with_defaultdict(self):
-        """Test that defaultdict fields work correctly after our changes."""
-
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
-
-            # Simple defaultdict without annotation
-            data1: defaultdict[str, set[str]] = Field(default_factory=lambda: defaultdict(set))
-
-            # With Annotated wrapper (like Query would do)
-            data2: Annotated[defaultdict[str, set[str]], "some_metadata"] = Field(
-                default_factory=lambda: defaultdict(set)
-            )
-
-        # Test creation with default factory
-        result = TestModel()
-        self.assertIsInstance(result.data1, defaultdict)
-        self.assertIsInstance(result.data2, defaultdict)
-
-        # Test creation with explicit value
-        test_dict = defaultdict(set)
-        test_dict["key1"].add("value1")
-        result2 = TestModel(data1=test_dict, data2=test_dict)
-        self.assertEqual(result2.data1["key1"], {"value1"})
-        self.assertEqual(result2.data2["key1"], {"value1"})
-
-    def test_annotate_model_explicitly_on_defaultdict(self):
-        """Test annotate_model() on defaultdict type directly."""
-
-        # Test that annotate_model doesn't modify non-Model types
-        original = Annotated[defaultdict[str, set[str]], "metadata"]
-        result = annotate_model(original)
-
-        # Should return the same thing
-        self.assertEqual(result, original)
-
-        # Test creating a model with the annotated type
-        class TestModel(BaseModel):
-            class Config:
-                arbitrary_types_allowed = True
-
-            data: annotate_model(Annotated[defaultdict[str, set[str]], "metadata"])  # type: ignore
-
-        # Should work fine
-        test_dict = defaultdict(set)
-        test_dict["key1"].add("value1")
-        result = TestModel(data=test_dict)
-        self.assertEqual(result.data["key1"], {"value1"})
-
-
-class TestLazyModelDeletedObjects(TestCase):
-    """Test that lazy model fields handle deleted objects correctly using real components."""
-
-    def test_lazy_required_model_deleted_object_raises_exception(self):
-        """Test that required lazy model raises ObjectDoesNotExist when object is deleted."""
-        from django.core.exceptions import ObjectDoesNotExist
-
-        from djhtmx.component import HtmxComponent
-
-        # Create an item
-        item = Item.objects.create(text="Temporary item")
-        item_id = item.id
-
-        # Create a component with lazy required field - this is how users actually write it
-        class TestComponent(HtmxComponent, public=False):
-            item: Annotated[Item, ModelConfig(lazy=True)]
-
-        # Create instance with item ID - components process annotations automatically
-        component = TestComponent(id="test", hx_name="TestComponent", user=None, item=item_id)
-        self.assertIsNotNone(component.item)
-
-        # Delete the item
-        item.delete()
-
-        # Accessing .pk should still work (doesn't trigger database query)
-        self.assertEqual(component.item.pk, item_id)
-
-        # Just accessing/checking component.item should raise ObjectDoesNotExist
-        with self.assertRaises(ObjectDoesNotExist) as cm:
-            if component.item:  # Triggers __bool__ which checks existence
-                pass
-
-        self.assertIn("Item", str(cm.exception))
-        self.assertIn("does not exist", str(cm.exception))
-
-    def test_lazy_optional_model_deleted_object_returns_none(self):
-        """Test that optional lazy model returns None when object is deleted."""
-        from djhtmx.component import HtmxComponent
-
-        # Create an item
-        item = Item.objects.create(text="Temporary item")
-        item_id = item.id
-
-        # Create a component with lazy optional field
-        class TestComponent(HtmxComponent, public=False):
+        # Create a test component with optional lazy Item field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
             item: Annotated[Item | None, ModelConfig(lazy=True)]
 
-        # Create instance with item ID
-        component = TestComponent(id="test", hx_name="TestComponent", user=None, item=item_id)
-        self.assertIsNotNone(component.item)
-
-        # Delete the item
-        item.delete()
-
-        # Accessing .pk should still work
-        self.assertEqual(component.item.pk, item_id)
-
-        # Checking component.item should be falsy (triggers __bool__)
-        self.assertFalse(component.item)  # Object deleted, proxy is falsy
-
-        # Accessing fields should return None (graceful handling)
-        self.assertIsNone(component.item.text)
-        self.assertIsNone(component.item.completed)
-
-    def test_lazy_model_deleted_object_pk_access_works(self):
-        """Test that accessing .pk on deleted lazy models doesn't trigger exception."""
-        from django.core.exceptions import ObjectDoesNotExist
-
-        from djhtmx.component import HtmxComponent
-
-        # Create an item
-        item = Item.objects.create(text="Temporary item")
-        item_id = item.id
-
-        # Test with both required and optional fields
-        class TestComponent(HtmxComponent, public=False):
-            required_item: Annotated[Item, ModelConfig(lazy=True)]
-            optional_item: Annotated[Item | None, ModelConfig(lazy=True)]
-
-        # Create instance
+        # Build the component with the existing item's ID
         component = TestComponent(
-            id="test",
+            id="test-component",
             hx_name="TestComponent",
             user=None,
-            required_item=item_id,
-            optional_item=item_id,
+            item=item.id,
         )
 
-        # Delete the item
-        item.delete()
+        # The item field should be a lazy proxy
+        self.assertIsNotNone(component.item)
 
-        # Accessing .pk should work without triggering database query or exception
-        self.assertEqual(component.required_item.pk, item_id)
-        self.assertEqual(component.optional_item.pk, item_id)
+        # Accessing attributes should load the item
+        self.assertEqual(component.item.text, "Test lazy item")
+        self.assertEqual(component.item.id, item.id)
 
-        # But checking truthiness should behave differently:
-        # Required: should raise
-        with self.assertRaises(ObjectDoesNotExist):
-            if component.required_item:
-                pass
+    def test_component_with_required_lazy_model_nonexistent_id(self):
+        """Test that component with required lazy Model raises error when accessing non-existent object."""
+        from typing import Annotated
+        from uuid import uuid4
 
-        # Optional: should be falsy
-        self.assertFalse(component.optional_item)
+        from djhtmx.component import HtmxComponent
+        from djhtmx.introspection import ModelConfig
 
-    def test_lazy_required_model_nonexistent_id_raises_exception(self):
-        """Test that required lazy model raises ObjectDoesNotExist for non-existent ID."""
-        from django.core.exceptions import ObjectDoesNotExist
+        # Create a test component with required lazy Item field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            item: Annotated[Item, ModelConfig(lazy=True)]  # Required, not optional
+
+        # Generate a UUID that doesn't exist in the database
+        nonexistent_id = uuid4()
+
+        # Component creation should succeed (lazy loading)
+        component = TestComponent(
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            item=nonexistent_id,
+        )
+
+        # The proxy should be created
+        self.assertIsNotNone(component.item)
+
+        # But accessing attributes should raise ValueError
+        with self.assertRaises(ValueError) as context:
+            _ = component.item.text  # Try to access an attribute
+
+        # Verify the error message contains useful information
+        error_str = str(context.exception)
+        self.assertIn("Item", error_str)
+        self.assertIn("does not exist", error_str)
+
+
+class TestQuerySetInComponent(TestCase):
+    """Test that HtmxComponent with QuerySet handles non-existent IDs correctly."""
+
+    def test_component_with_queryset_nonexistent_ids(self):
+        """Test that component with QuerySet returns empty queryset for non-existent IDs."""
+        from uuid import uuid4
+
+        from fision.todo.models import ItemQS
 
         from djhtmx.component import HtmxComponent
 
-        # Generate a UUID that definitely doesn't exist
-        nonexistent_id = uuid4()
+        # Create a test component with QuerySet field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            items: ItemQS
 
-        class TestComponent(HtmxComponent, public=False):
-            item: Annotated[Item, ModelConfig(lazy=True)]
+        # Generate UUIDs that don't exist in the database
+        nonexistent_ids = [uuid4(), uuid4(), uuid4()]
 
-        # Create instance with non-existent ID
+        # Build the component with non-existent IDs
         component = TestComponent(
-            id="test", hx_name="TestComponent", user=None, item=nonexistent_id
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            items=nonexistent_ids,
         )
 
-        # Proxy should be created
-        self.assertIsNotNone(component.item)
+        # The items field should be an empty queryset
+        self.assertIsInstance(component.items, ItemQS)
+        self.assertEqual(component.items.count(), 0)
+        self.assertEqual(list(component.items), [])
 
-        # Accessing .pk should work
-        self.assertEqual(component.item.pk, nonexistent_id)
+    def test_component_with_queryset_mixed_ids(self):
+        """Test that component with QuerySet filters out non-existent IDs."""
+        from uuid import uuid4
 
-        # Checking component.item should raise ObjectDoesNotExist
-        with self.assertRaises(ObjectDoesNotExist) as cm:
-            if component.item:  # Triggers __bool__
-                pass
+        from fision.todo.models import ItemQS
 
-        self.assertIn("Item", str(cm.exception))
-        self.assertIn("does not exist", str(cm.exception))
-
-    def test_lazy_optional_model_nonexistent_id_returns_none(self):
-        """Test that optional lazy model is falsy for non-existent ID."""
         from djhtmx.component import HtmxComponent
 
-        # Generate a UUID that definitely doesn't exist
-        nonexistent_id = uuid4()
+        # Create some real items
+        item1 = Item.objects.create(text="Item 1")
+        item2 = Item.objects.create(text="Item 2")
 
-        class TestComponent(HtmxComponent, public=False):
-            item: Annotated[Item | None, ModelConfig(lazy=True)]
+        # Create a test component with QuerySet field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            items: ItemQS
 
-        # Create instance with non-existent ID
+        # Mix valid and invalid IDs
+        mixed_ids = [item1.id, uuid4(), item2.id, uuid4()]
+
+        # Build the component with mixed IDs
         component = TestComponent(
-            id="test", hx_name="TestComponent", user=None, item=nonexistent_id
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            items=mixed_ids,
         )
 
-        # Proxy should be created
-        self.assertIsNotNone(component.item)
+        # The items field should only contain the valid items
+        self.assertIsInstance(component.items, ItemQS)
+        self.assertEqual(component.items.count(), 2)
+        item_ids = {item.id for item in component.items}
+        self.assertEqual(item_ids, {item1.id, item2.id})
 
-        # Accessing .pk should work
-        self.assertEqual(component.item.pk, nonexistent_id)
+    def test_component_with_queryset_deleted_ids(self):
+        """Test that component with QuerySet excludes deleted items."""
+        from fision.todo.models import ItemQS
 
-        # Checking component.item should be falsy (object doesn't exist)
-        self.assertFalse(component.item)
+        from djhtmx.component import HtmxComponent
 
-        # Accessing fields should return None
-        self.assertIsNone(component.item.text)
-        self.assertIsNone(component.item.completed)
+        # Create items and then delete some
+        item1 = Item.objects.create(text="Item 1")
+        item2 = Item.objects.create(text="To be deleted")
+        item3 = Item.objects.create(text="Item 3")
+
+        item2_id = item2.id
+        item2.delete()
+
+        # Create a test component with QuerySet field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            items: ItemQS
+
+        # Try to use all IDs including the deleted one
+        all_ids = [item1.id, item2_id, item3.id]
+
+        # Build the component with IDs including deleted
+        component = TestComponent(
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            items=all_ids,
+        )
+
+        # The items field should only contain items 1 and 3
+        self.assertIsInstance(component.items, ItemQS)
+        self.assertEqual(component.items.count(), 2)
+        item_ids = {item.id for item in component.items}
+        self.assertEqual(item_ids, {item1.id, item3.id})
+
+    def test_component_with_queryset_existing_ids(self):
+        """Test that component with QuerySet loads all existing items correctly."""
+        from fision.todo.models import ItemQS
+
+        from djhtmx.component import HtmxComponent
+
+        # Create real items
+        item1 = Item.objects.create(text="Item 1")
+        item2 = Item.objects.create(text="Item 2")
+        item3 = Item.objects.create(text="Item 3")
+
+        # Create a test component with QuerySet field
+        class TestComponent(HtmxComponent):
+            _template_name = "TestComponent.html"
+            items: ItemQS
+
+        # Build the component with all valid IDs
+        valid_ids = [item1.id, item2.id, item3.id]
+
+        component = TestComponent(
+            id="test-component",
+            hx_name="TestComponent",
+            user=None,
+            items=valid_ids,
+        )
+
+        # The items field should contain all items
+        self.assertIsInstance(component.items, ItemQS)
+        self.assertEqual(component.items.count(), 3)
+        item_ids = {item.id for item in component.items}
+        self.assertEqual(item_ids, {item1.id, item2.id, item3.id})

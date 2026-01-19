@@ -7,44 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-01-19
+
+**Note**: This release supersedes versions 1.3.1, 1.3.2, and 1.3.3, which contained incomplete implementations of the `Model | None` handling feature. Users on 1.3.1-1.3.3 should upgrade to 1.3.4 immediately.
+
 ### Added
 - **Yield Logging**: Added debug logging for commands yielded from component methods during event handling. Logs format: `< YIELD: ComponentName.method_name -> Command(...)`. Helps developers track command flow and debug issues when components emit multiple commands.
+- Comprehensive test coverage for `Model | None` and lazy model handling with 12 new tests
 
 ### Fixed
-- **Type Safety**: Fixed pyright type errors in introspection and utils modules:
-  - Changed `PydanticCustomError` to use literal string template instead of f-string for LiteralString type compatibility
-  - Added None check for `app_config.module` in `autodiscover_htmx_modules()` to prevent AttributeError
+- **Model | None Handling**: Fixed components with `Model | None` fields to gracefully return `None` when objects don't exist or have been deleted, instead of raising `DoesNotExist` exceptions
+  - Changed database lookups from `manager.get()` to `manager.filter().first()` for graceful handling
+  - For optional fields (`Model | None`), returns `None` when object doesn't exist
+  - For required fields (`Model`), raises clear `ValueError` with descriptive message
+  - Works correctly with both eager and lazy loading (`ModelConfig(lazy=True)`)
+  - Lazy models create proxies that handle non-existent objects when attributes are accessed
+- **Type Safety**: Added None check for `app_config.module` in `autodiscover_htmx_modules()` to prevent AttributeError
 
-## [1.3.3] - 2026-01-14
-
-### Fixed
-- **Lazy Model Deleted Object Handling**: Fixed lazy models to gracefully handle deleted database objects:
-  - Required lazy models (`Annotated[Model, ModelConfig(lazy=True)]`): Raise clear `ObjectDoesNotExist` exception when checking truthiness if object was deleted
-  - Optional lazy models (`Annotated[Model | None, ModelConfig(lazy=True)]`): Become falsy and return `None` for field accesses when object was deleted
-  - Accessing `.pk` on lazy proxies always works without triggering database queries, even for deleted objects
-- **ModelConfig Extraction**: Fixed `annotate_model()` to properly extract and apply `ModelConfig` from `Annotated` type metadata. Previously, `ModelConfig` in annotations like `Annotated[Item, ModelConfig(lazy=True)]` was ignored.
-
-### Added
-- Comprehensive test coverage for lazy model deleted object handling using real `HtmxComponent` with user-facing API
-- `__bool__()` method on `_LazyModelProxy` to detect deleted objects immediately when checking truthiness
-
-## [1.3.2] - 2026-01-14
-
-### Fixed
-- **Generic Type Handling**: Fixed `annotate_model()` to preserve non-Model generic types (like `defaultdict`, `list`, `dict`) when used with `Annotated` wrappers. Previously, these types would be incorrectly transformed to `None`, causing validation errors.
-
-## [1.3.1] - 2026-01-14
-
-### Fixed
-- **Optional Model Loading**: Fixed `Model | None` annotations to return `None` when an object with the provided ID doesn't exist (e.g., was deleted), instead of raising `DoesNotExist` exception. Uses `.filter().first()` approach for graceful handling of missing objects.
-
-### Added
-- Comprehensive test coverage for optional model handling in both lazy and non-lazy loading scenarios
-- Documentation for model loading optimization (lazy loading, `select_related`, `prefetch_related`) in README
-
-### Changed
-- Query parameter handling now preserves full annotation metadata for proper serialization of `Model | None` fields
-- Enhanced `is_basic_type()` to recognize `Model | None` unions as valid simple types for query parameters
+### Technical Details
+- Added `allow_none` parameter to `_ModelBeforeValidator` and `_LazyModelProxy` classes
+- Enhanced `annotate_model()` to detect `Model | None` unions and pass `allow_none=True`
+- Updated lazy proxy `__ensure_instance()` to use `filter().first()` and handle missing objects gracefully
+- QuerySet fields continue to work correctly by silently filtering out non-existent IDs
 
 ## [1.3.0] - 2026-01-07
 
