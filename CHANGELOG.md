@@ -7,11 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-01-19
+
+**Note**: This release supersedes versions 1.3.1, 1.3.2, and 1.3.3, which contained incomplete implementations of the `Model | None` handling feature. Users on 1.3.1-1.3.3 should upgrade to 1.3.4 immediately.
+
 ### Added
 - **Yield Logging**: Added debug logging for commands yielded from component methods during event handling. Logs format: `< YIELD: ComponentName.method_name -> Command(...)`. Helps developers track command flow and debug issues when components emit multiple commands.
+- Comprehensive test coverage for `Model | None` and lazy model handling with 12 new tests
 
 ### Fixed
+- **Model | None Handling**: Fixed components with `Model | None` fields to gracefully return `None` when objects don't exist or have been deleted, instead of raising `DoesNotExist` exceptions
+  - Changed database lookups from `manager.get()` to `manager.filter().first()` for graceful handling
+  - For optional fields (`Model | None`), returns `None` when object doesn't exist
+  - For required fields (`Model`), raises clear `ValueError` with descriptive message
+  - Works correctly with both eager and lazy loading (`ModelConfig(lazy=True)`)
+  - Lazy models create proxies that handle non-existent objects when attributes are accessed
 - **Type Safety**: Added None check for `app_config.module` in `autodiscover_htmx_modules()` to prevent AttributeError
+
+### Technical Details
+- Added `allow_none` parameter to `_ModelBeforeValidator` and `_LazyModelProxy` classes
+- Enhanced `annotate_model()` to detect `Model | None` unions and pass `allow_none=True`
+- Updated lazy proxy `__ensure_instance()` to use `filter().first()` and handle missing objects gracefully
+- QuerySet fields continue to work correctly by silently filtering out non-existent IDs
 
 ## [1.3.0] - 2026-01-07
 
