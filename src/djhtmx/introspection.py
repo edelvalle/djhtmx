@@ -77,14 +77,17 @@ class _LazyModelProxy(Generic[M]):  # noqa
     __pk: Any | None
     __select_related: Sequence[str] | None
     __prefetch_related: Sequence[str | Prefetch] | None
+    __allow_none: bool
 
     def __init__(
         self,
         model: type[M],
         value: Any,
         model_annotation: ModelConfig | None = None,
+        allow_none: bool = False,
     ):
         self.__model = model
+        self.__allow_none = allow_none
         if value is None or isinstance(value, model):
             self.__instance = value
             self.__pk = getattr(value, "pk", None)
@@ -112,7 +115,15 @@ class _LazyModelProxy(Generic[M]):  # noqa
                 manager = manager.select_related(*select_related)
             if prefetch_related := self.__prefetch_related:
                 manager = manager.prefetch_related(*prefetch_related)
-            self.__instance = manager.get(pk=self.__pk)
+            # Use filter().first() instead of get() to avoid exceptions
+            self.__instance = manager.filter(pk=self.__pk).first()
+            if self.__instance is None:
+                if self.__allow_none:
+                    # For Model | None, object doesn't exist - proxy becomes None-like
+                    pass
+                else:
+                    # For required Model fields, raise error
+                    raise ValueError(f"{self.__model.__name__} with pk={self.__pk} does not exist")
         return self.__instance
 
     def __repr__(self) -> str:
@@ -123,6 +134,7 @@ class _LazyModelProxy(Generic[M]):  # noqa
 class _ModelBeforeValidator(Generic[M]):  # noqa
     model: type[M]
     model_config: ModelConfig
+    allow_none: bool = False
 
     def __call__(self, value):
         if self.model_config.lazy:
@@ -133,9 +145,9 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
     def _get_lazy_proxy(self, value):
         if isinstance(value, _LazyModelProxy):
             instance = value._LazyModelProxy__instance or value._LazyModelProxy__pk
-            return _LazyModelProxy(self.model, instance)
+            return _LazyModelProxy(self.model, instance, allow_none=self.allow_none)
         else:
-            return _LazyModelProxy(self.model, value)
+            return _LazyModelProxy(self.model, value, allow_none=self.allow_none)
 
     def _get_instance(self, value):
         if value is None or isinstance(value, self.model):
@@ -150,12 +162,21 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
                 manager = manager.select_related(*select_related)
             if prefetch_related := self.model_config.prefetch_related:
                 manager = manager.prefetch_related(*prefetch_related)
-            return manager.get(pk=value)
+            # Use filter().first() instead of get() to avoid exceptions
+            instance = manager.filter(pk=value).first()
+            if instance is None:
+                if self.allow_none:
+                    # For Model | None fields, return None when object doesn't exist
+                    return None
+                else:
+                    # For required Model fields, raise validation error
+                    raise ValueError(f"{self.model.__name__} with pk={value} does not exist")
+            return instance
 
     @classmethod
     @cache
-    def from_modelclass(cls, model: type[M], model_config: ModelConfig):
-        return cls(model, model_config=model_config)
+    def from_modelclass(cls, model: type[M], model_config: ModelConfig, allow_none: bool = False):
+        return cls(model, model_config=model_config, allow_none=allow_none)
 
 
 @dataclass(slots=True)
@@ -171,12 +192,22 @@ class _ModelPlainSerializer(Generic[M]):  # noqa
         return cls(model)
 
 
-def _Model(model: type[models.Model], model_config: ModelConfig | None = None):
+def _Model(
+    model: type[models.Model],
+    model_config: ModelConfig | None = None,
+    allow_none: bool = False,
+):
     assert issubclass_safe(model, models.Model)
     model_config = model_config or _DEFAULT_MODEL_CONFIG
+
+    # Determine the base type
+    base_type = model if not model_config.lazy else _LazyModelProxy[model]
+    # If allow_none, make it optional
+    annotated_type = base_type | None if allow_none else base_type
+
     return Annotated[
-        model if not model_config.lazy else _LazyModelProxy[model],
-        BeforeValidator(_ModelBeforeValidator.from_modelclass(model, model_config)),
+        annotated_type,
+        BeforeValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
         PlainSerializer(
             func=_ModelPlainSerializer.from_modelclass(model),
             return_type=guess_pk_type(model),
@@ -222,11 +253,37 @@ def annotate_model(annotation, *, model_config: ModelConfig | None = None):
             case (param,):
                 return type_[annotate_model(param)]  # type: ignore
             case params:
-                model_annotation = next(
+                # Check for ModelConfig in params (for Annotated types)
+                param_model_config = next(
                     (p for p in params if isinstance(p, ModelConfig)),
                     None,
                 )
-                return type_[*(annotate_model(p, model_config=model_annotation) for p in params)]  # type: ignore
+                # Use param ModelConfig if found, otherwise use the passed model_config
+                effective_model_config = param_model_config or model_config
+
+                # Check if this is a Model | None union
+                has_none = types.NoneType in params
+                model_types = [p for p in params if issubclass_safe(p, models.Model)]
+
+                # If we have Model | None, annotate the model with allow_none=True
+                if has_none and len(model_types) == 1:
+                    annotated_params = []
+                    for p in params:
+                        if issubclass_safe(p, models.Model):
+                            annotated_params.append(
+                                _Model(p, effective_model_config, allow_none=True)
+                            )
+                        elif p is not types.NoneType:
+                            annotated_params.append(
+                                annotate_model(p, model_config=effective_model_config)
+                            )
+                        else:
+                            annotated_params.append(p)
+                    return type_[*annotated_params]  # type: ignore
+                else:
+                    return type_[
+                        *(annotate_model(p, model_config=effective_model_config) for p in params)
+                    ]  # type: ignore
     else:
         return annotation
 
