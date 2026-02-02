@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-02-02
+
 ### Fixed
 - **htmx_class Template Tag**: Fixed handling of `None` values in conditional class names. Previously, `None` values were converted to the string "None" in the output. Now they are properly filtered out before joining class names.
+
 ## [1.3.4] - 2026-01-19
 
 **Note**: This release supersedes versions 1.3.1, 1.3.2, and 1.3.3, which contained incomplete implementations of the `Model | None` handling feature. Users on 1.3.1-1.3.3 should upgrade to 1.3.4 immediately.
