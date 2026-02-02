@@ -292,4 +292,4 @@ class ClassNode(Node):
             for condition, class_name in self.condition_and_classes
             if condition.eval(context)  # type: ignore
         ]
-        return format_html_attrs({"class": " ".join(class_names) or None})
+        return format_html_attrs({"class": " ".join(filter(None, class_names)) or None})
