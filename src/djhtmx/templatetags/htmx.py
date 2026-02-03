@@ -290,6 +290,16 @@ class ClassNode(Node):
         class_names = [
             class_name.resolve(cast(Mapping[str, Any], context))
             for condition, class_name in self.condition_and_classes
-            if condition.eval(context)  # type: ignore
+            if self._eval_bool(condition.eval(context))  # type: ignore
         ]
         return format_html_attrs({"class": " ".join(filter(None, class_names)) or None})
+
+    @staticmethod
+    def _eval_bool(value) -> bool | str:
+        # Convert string boolean representations to actual booleans (yesno filter behavior)
+        if isinstance(value, str):
+            if value == "True":
+                return True
+            elif value in ("False", "None"):
+                return False
+        return value
