@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.6] - 2026-02-03
+
 ### Fixed
 - **Class Template Tag**: Boolean expression evaluation now uses the yesno filter behavior, where string values "True" and "False" (case-insensitive) are properly converted to boolean values before evaluation
 
