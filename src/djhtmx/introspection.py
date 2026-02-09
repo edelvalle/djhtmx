@@ -28,7 +28,7 @@ from django.apps import apps
 from django.db import models
 from django.db.models import Prefetch
 from django.utils.datastructures import MultiValueDict
-from pydantic import BeforeValidator, PlainSerializer, TypeAdapter
+from pydantic import BeforeValidator, PlainSerializer, PlainValidator, TypeAdapter
 
 M = TypeVar("M", bound=models.Model)
 
@@ -207,7 +207,7 @@ def _Model(
 
     return Annotated[
         annotated_type,
-        BeforeValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
+        PlainValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
         PlainSerializer(
             func=_ModelPlainSerializer.from_modelclass(model),
             return_type=guess_pk_type(model),
@@ -219,7 +219,7 @@ def _QuerySet(qs: type[models.QuerySet]):
     [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
     return Annotated[
         qs,
-        BeforeValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
+        PlainValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
         PlainSerializer(
             func=lambda v: (
                 [instance.pk for instance in v]
