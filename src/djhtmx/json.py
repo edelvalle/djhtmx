@@ -23,7 +23,8 @@ def encode(instance: models.Model) -> str:
 
 def decode(instance: str) -> models.Model:
     obj: DeserializedObject = next(iter(deserialize("json", instance)))
-    obj.object.save = obj.save  # type: ignore
+    obj.object.save = obj.save
+
     return obj.object
 
 
