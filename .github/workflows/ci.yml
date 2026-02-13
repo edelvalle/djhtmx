@@ -97,9 +97,3 @@ jobs:
       run: make coverage-xml
       env:
         DJHTMX_REDIS_URL: redis://localhost:6379/0
-
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v5
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-      if: always()  # Upload coverage even if tests fail

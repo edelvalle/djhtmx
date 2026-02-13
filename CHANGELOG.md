@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Removed the Codecov badge and CI upload step, along with related workflow documentation.
+
 ## [1.3.7] - 2026-02-13
 
 ### Added
