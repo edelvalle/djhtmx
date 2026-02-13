@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-02-13
+
 ### Added
 - **Testing Helper**: Added `Htmx.url` property to compose the current path and query string without a trailing `?`.
+
+### Changed
+- **Python Version**: Raised the minimum supported Python version to 3.13 and aligned tooling/CI with Python 3.13.
+- **Dev Server**: Switched the development server dependency and `make run` command to Granian.
 
 ### Fixed
 - **Pydantic Validator Warning**: Changed from `BeforeValidator` to `PlainValidator` for Django model field annotations to eliminate Pydantic 2.8 warning about validators returning non-self values. This is purely a technical fix with no functional changes.
 - **Testing Runtime Warning**: Replaced lxml truth-testing in `djhtmx.testing.Htmx` with explicit `is not None` checks to avoid future `FutureWarning` behavior.
+- **Query Annotations on Python 3.13**: Improved handling of `Annotated`/`Optional` model query annotations and serialization of optional model values to avoid validation and serialization errors.
 
 ## [1.3.6] - 2026-02-03
 

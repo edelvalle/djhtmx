@@ -17,7 +17,7 @@ keywords = [
 
 readme = "README.md"
 license = "MIT"
-requires-python = ">= 3.11"
+requires-python = ">= 3.13"
 
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -32,8 +32,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
@@ -82,7 +80,7 @@ devtools = [
     "whitenoise~=6.7.0",
     "ipdb~=0.13.13",
     "django-extensions~=3.2.3",
-    "uvicorn[standard]>=0.30.6",
+    "granian[reload]>=2.5.4",
     "pygments>=2.18.0",
 ]
 dev = [
@@ -121,7 +119,7 @@ packages = ["src/djhtmx"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 fix = true
 
 

@@ -215,7 +215,7 @@ class Repository:
             else:
                 raise
 
-    def _run_command(self, commands: CommandQueue) -> Generator[ProcessedCommand, None, None]:
+    def _run_command(self, commands: CommandQueue) -> Generator[ProcessedCommand]:
         command = commands.pop()
         logger.debug("COMMAND: %s", command)
         commands_to_append: list[Command] = []

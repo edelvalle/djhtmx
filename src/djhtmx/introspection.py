@@ -182,14 +182,19 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
 @dataclass(slots=True)
 class _ModelPlainSerializer(Generic[M]):  # noqa
     model: type[M]
+    allow_none: bool = False
 
     def __call__(self, value):
+        if value is None:
+            if self.allow_none:
+                return None
+            raise ValueError("Model value is None")
         return value.pk
 
     @classmethod
     @cache
-    def from_modelclass(cls, model: type[M]):
-        return cls(model)
+    def from_modelclass(cls, model: type[M], allow_none: bool = False):
+        return cls(model, allow_none=allow_none)
 
 
 def _Model(
@@ -209,8 +214,8 @@ def _Model(
         annotated_type,
         PlainValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
         PlainSerializer(
-            func=_ModelPlainSerializer.from_modelclass(model),
-            return_type=guess_pk_type(model),
+            func=_ModelPlainSerializer.from_modelclass(model, allow_none=allow_none),
+            return_type=guess_pk_type(model) | None if allow_none else guess_pk_type(model),
         ),
     ]
 
@@ -267,19 +272,16 @@ def annotate_model(annotation, *, model_config: ModelConfig | None = None):
 
                 # If we have Model | None, annotate the model with allow_none=True
                 if has_none and len(model_types) == 1:
-                    annotated_params = []
-                    for p in params:
-                        if issubclass_safe(p, models.Model):
-                            annotated_params.append(
-                                _Model(p, effective_model_config, allow_none=True)
-                            )
-                        elif p is not types.NoneType:
-                            annotated_params.append(
-                                annotate_model(p, model_config=effective_model_config)
-                            )
-                        else:
-                            annotated_params.append(p)
-                    return type_[*annotated_params]  # type: ignore
+                    model_type = model_types[0]
+                    annotated_model = _Model(model_type, effective_model_config, allow_none=True)
+                    extra_params = [
+                        annotate_model(p, model_config=effective_model_config)
+                        for p in params
+                        if p is not types.NoneType and not issubclass_safe(p, models.Model)
+                    ]
+                    if extra_params:
+                        return type_[annotated_model, *extra_params]  # type: ignore
+                    return annotated_model
                 else:
                     return type_[
                         *(annotate_model(p, model_config=effective_model_config) for p in params)
@@ -444,6 +446,15 @@ def is_literal_annotation(ann):
     return get_origin(ann) is Literal and all(type(arg) in _SIMPLE_TYPES for arg in get_args(ann))
 
 
+def _unwrap_annotated(ann):
+    while get_origin(ann) is Annotated:
+        args = get_args(ann)
+        if not args:
+            break
+        ann = args[0]
+    return ann
+
+
 def is_basic_type(ann):
     """Returns True if the annotation is a simple type.
 
@@ -461,10 +472,13 @@ def is_basic_type(ann):
     - Literal types with simple values
 
     """
+    ann = _unwrap_annotated(ann)
     return (
         ann in _SIMPLE_TYPES
         #  __origin__ -> model in 'Annotated[model, BeforeValidator(...), PlainSerializer(...)]'
+        or issubclass_safe(ann, models.Model)
         or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
+        or issubclass_safe(getattr(ann, "__origin__", None), _LazyModelProxy)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
         or is_collection_annotation(ann)
         or is_literal_annotation(ann)
@@ -473,22 +487,27 @@ def is_basic_type(ann):
 
 def is_union_of_basic(ann):
     """Returns True Union of simple types (as is_simple_annotation)"""
+    ann = _unwrap_annotated(ann)
     type_ = get_origin(ann)
     if type_ is types.UnionType or type_ is Union:
-        return all(is_basic_type(arg) for arg in get_args(ann))
+        return all(is_simple_annotation(arg) for arg in get_args(ann))
     return False
 
 
 def is_simple_annotation(ann):
     "Return True if the annotation is either simple or a Union of simple"
+    ann = _unwrap_annotated(ann)
     return is_basic_type(ann) or is_union_of_basic(ann)
 
 
 def is_collection_annotation(ann):
+    ann = _unwrap_annotated(ann)
     if isinstance(ann, types.GenericAlias):
         return issubclass_safe(ann.__origin__, _COLLECTION_TYPES)
-    else:
-        return issubclass_safe(ann, _COLLECTION_TYPES)
+    origin = get_origin(ann)
+    if origin is not None:
+        return issubclass_safe(origin, _COLLECTION_TYPES)
+    return issubclass_safe(ann, _COLLECTION_TYPES)
 
 
 Unset = object()

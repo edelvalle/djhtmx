@@ -37,7 +37,7 @@ The workflows leverage the following Makefile targets:
 ## Setup Requirements
 
 1. **Codecov Integration** (optional): Add `CODECOV_TOKEN` to repository secrets for coverage reporting
-2. **Python 3.12**: Workflows use Python 3.12 as specified in the Makefile
+2. **Python 3.13**: Workflows use Python 3.13 as specified in the Makefile
 3. **uv Package Manager**: Uses uv 0.7.3 for fast dependency management
 
 ## Coverage Reports

@@ -1,7 +1,7 @@
 CARGO_HOME ?= $(HOME)/.cargo
 PATH := $(HOME)/.local/bin:$(CARGO_HOME)/bin:$(PATH)
 
-PYTHON_VERSION ?= 3.12
+PYTHON_VERSION ?= 3.13
 
 SHELL := /bin/bash
 PROJECT_NAME := djhtmx
@@ -18,7 +18,7 @@ bootstrap:
 	if [ "$$DETECTED_UV_VERSION" != "$(REQUIRED_UV_VERSION)" ]; then \
 		uv self update $(REQUIRED_UV_VERSION) || curl -LsSf https://astral.sh/uv/$(REQUIRED_UV_VERSION)/install.sh | sh; \
 	fi
-	@echo $(PYTHON_VERSION) > .python-version
+	@$(UV) python pin $(PYTHON_VERSION)
 .PHONY: bootstrap
 
 install: bootstrap
@@ -64,9 +64,11 @@ pyright:
 .PHONY: pyright
 
 
+SERVER_CMD ?= granian --reload --reload-paths . --port 8000 --access-log --interface asginl fision.asgi:application
+
 run: install
 	@$(RUN) python src/tests/manage.py migrate
-	@cd src/tests; $(RUN) uvicorn --reload --reload-include="*.html" --reload-dir=../ fision.asgi:application
+	@cd src/tests; $(RUN) $(SERVER_CMD)
 .PHONY: run
 
 test:
