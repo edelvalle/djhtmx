@@ -953,17 +953,33 @@ class TestNormalRendering(TestCase):
 
 `htmx.navigate_to(url, *args, **kwargs)`: This is used to navigate to some url. It is a wrapper of `Client.get` that will retrieve the page and parse the HTML into `htmx.dom: lxml.html.HtmlElement` and create a component repository in `htmx.repo`.
 
+`htmx.url -> str`: Returns the current URL composed of the path and query string (without a trailing `?`).
+
+#### State
+
+`htmx.client: Client`: The underlying Django test client.
+
+`htmx.dom: lxml.html.HtmlElement`: Parsed DOM of the current page.
+
+`htmx.repo: djhtmx.repo.Repository`: Component repository for the current page.
+
+`htmx.path: str`: Current path (no query string).
+
+`htmx.query_string: str`: Current query string without the leading `?`.
+
 #### Look-ups
 
 `htmx.select(css_selector: str) -> list[lxml.html.HtmlElement]`: Pass some CSS selector here to retrieve nodes from the DOM, so you can modify them or perform assertions over them.
 
-`htmx.find_by_text(text: str) -> lxml.html.HtmlElement`: Returns the first element that contains certain text.
+`htmx.find_by_text(text: str) -> list[lxml.html.HtmlElement]`: Returns the elements whose text matches exactly.
 
 `htmx.get_component_by_type(component_type: type[THtmxComponent]) -> THtmxComponent`: Retrieves the only instance rendered of that component type in the current page. If there is more than one instance this fails.
 
 `htmx.get_components_by_type(component_type: type[THtmxComponent]) -> list[THtmxComponent]`: Retrieves all instances of this component type in the current page.
 
 `htmx.get_component_by_id(component_id: str) -> THtmxComponent`: Retrieves a component by its id from the current page.
+
+`htmx.print(element: lxml.html.HtmlElement)`: Pretty-prints the element HTML with syntax highlighting for debugging.
 
 #### Interactions
 
