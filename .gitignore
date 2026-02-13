@@ -13,3 +13,4 @@ requirements*.lock
 .coverage
 .coverage.*
 htmlcov/
+.dir-locals.el
