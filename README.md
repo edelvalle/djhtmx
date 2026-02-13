@@ -911,6 +911,7 @@ This will trigger that event in the front-end when the request arrives allowing 
 
 This library provides the class `djhtmx.testing.Htmx` which implements a very basic a dumb runtime for testing components. How to use:
 
+> Note: When working with lxml elements in tests, avoid truth-testing (e.g., `if elem:` or `if parent := elem.getparent()`). Use explicit `elem is not None` checks to prevent future warnings.
 
 ```python
 from django.test import Client, TestCase

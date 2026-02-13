@@ -165,7 +165,8 @@ class Htmx:
                     oob: str = incoming.attrib["hx-swap-oob"]
                     if oob == "true":
                         target = self.dom.get_element_by_id(incoming.attrib["id"])
-                        if parent := target.getparent():
+                        parent = target.getparent()
+                        if parent is not None:
                             parent.replace(target, incoming)
                     elif oob.startswith("beforeend: "):
                         target_selector = oob.removeprefix("beforeend: ")
@@ -188,7 +189,8 @@ class Htmx:
 
                 case Destroy(component_id):
                     target = self.dom.get_element_by_id(component_id)
-                    if parent := target.getparent():
+                    parent = target.getparent()
+                    if parent is not None:
                         parent.remove(target)
 
                 case Redirect(url) | Open(url):
