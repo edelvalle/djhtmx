@@ -34,6 +34,10 @@ class Htmx:
     def __init__(self, client: Client):
         self.client = client
 
+    @property
+    def url(self) -> str:
+        return f"{self.path}?{self.query_string}".rstrip("?")
+
     def navigate_to(self, url: str, *args, **kwargs):
         kwargs.setdefault("follow", True)
         response = self.client.get(url, *args, **kwargs)

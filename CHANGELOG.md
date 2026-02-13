@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Testing Helper**: Added `Htmx.url` property to compose the current path and query string without a trailing `?`.
+
 ### Fixed
 - **Pydantic Validator Warning**: Changed from `BeforeValidator` to `PlainValidator` for Django model field annotations to eliminate Pydantic 2.8 warning about validators returning non-self values. This is purely a technical fix with no functional changes.
 
