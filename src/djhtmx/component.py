@@ -96,6 +96,7 @@ class ScrollIntoView:
     selector: str
     behavior: Literal["auto", "smooth", "instant"] = "smooth"
     block: Literal["start", "center", "end", "nearest"] = "center"
+    if_not_visible: bool = False
     command: Literal["scroll_into_view"] = "scroll_into_view"
 
 

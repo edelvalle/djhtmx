@@ -110,11 +110,19 @@
 					break;
 				}
 				case "scroll_into_view": {
-					const { selector, behavior = "smooth", block = "center" } = commandData;
-					document.querySelector(selector)?.scrollIntoView({
-						behavior,
-						block,
-					});
+					const { selector, behavior = "smooth", block = "center", if_not_visible = false } = commandData;
+					const element = document.querySelector(selector);
+					if (element) {
+						const should_scroll = !if_not_visible || (({ top, left, bottom, right }) =>
+							top < 0 ||
+							left < 0 ||
+							bottom > (window.innerHeight || document.documentElement.clientHeight) ||
+							right > (window.innerWidth || document.documentElement.clientWidth)
+						)(element.getBoundingClientRect());
+						if (should_scroll) {
+							element.scrollIntoView({ behavior, block });
+						}
+					}
 					break;
 				}
 				case "redirect": {
@@ -195,10 +203,19 @@
 			const selector = typeof item === "string" ? item : item.selector;
 			const behavior = typeof item === "object" ? item.behavior || "smooth" : "smooth";
 			const block = typeof item === "object" ? item.block || "center" : "center";
-			document.querySelector(selector)?.scrollIntoView({
-				behavior,
-				block,
-			});
+			const if_not_visible = typeof item === "object" ? item.if_not_visible || false : false;
+			const element = document.querySelector(selector);
+			if (element) {
+				const should_scroll = !if_not_visible || (({ top, left, bottom, right }) =>
+					top < 0 ||
+					left < 0 ||
+					bottom > (window.innerHeight || document.documentElement.clientHeight) ||
+					right > (window.innerWidth || document.documentElement.clientWidth)
+				)(element.getBoundingClientRect());
+				if (should_scroll) {
+					element.scrollIntoView({ behavior, block });
+				}
+			}
 		}
 	});
 

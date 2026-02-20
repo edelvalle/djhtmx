@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **ScrollIntoView `if_not_visible` option**: Added `if_not_visible: bool = False` parameter to `ScrollIntoView` command. When set to `True`, the scroll only occurs if the element is not fully visible in the viewport. This prevents unnecessary scrolling when the element is already in view.
+
 ### Removed
 - Removed the Codecov badge and CI upload step, along with related workflow documentation.
 

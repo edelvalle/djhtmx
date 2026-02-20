@@ -830,6 +830,51 @@ class TodoListComponent(HtmxComponent):
         yield SkipRender(self)
 ```
 
+## Scrolling an item into view
+
+Use `ScrollIntoView` to scroll an element into the viewport with configurable behavior:
+
+```python
+from djhtmx.component import HtmxComponent, ScrollIntoView
+
+class NotificationComponent(HtmxComponent):
+    _template_name = "NotificationComponent.html"
+
+    def show_error(self, message: str):
+        self.error_message = message
+        # Scroll to the error message
+        yield ScrollIntoView("#error-message")
+```
+
+### Parameters
+
+- `selector` (str): CSS selector of the element to scroll into view
+- `behavior` (str): Scroll behavior - `"smooth"` (default), `"auto"`, or `"instant"`
+- `block` (str): Vertical alignment - `"center"` (default), `"start"`, `"end"`, or `"nearest"`
+- `if_not_visible` (bool): When `True`, only scrolls if the element is not fully visible in the viewport (default: `False`)
+
+### Conditional scrolling example
+
+Use `if_not_visible=True` to avoid unnecessary scrolling when the element is already in view:
+
+```python
+from djhtmx.component import HtmxComponent, ScrollIntoView
+
+class SearchResults(HtmxComponent):
+    _template_name = "SearchResults.html"
+    query: str = ""
+
+    def search(self, query: str):
+        self.query = query
+        # Only scroll to results if they're not already visible
+        yield ScrollIntoView(
+            "#results",
+            behavior="smooth",
+            block="start",
+            if_not_visible=True
+        )
+```
+
 ## Sending Events to the DOM
 
 Suppose you have a rich JavaScript library (graphs, maps, or anything...) in the front-end and you want to communicate something to it because it is subscribed to some dome event. For that you can use `yield DispatchDOMEvent(target, event, detail, ....)`

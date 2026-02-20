@@ -62,10 +62,15 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                     headers["HX-Redirect"] = url
                 case Focus(selector):
                     triggers.after_settle("hxFocus", selector)
-                case ScrollIntoView(selector, behavior, block):
+                case ScrollIntoView(selector, behavior, block, if_not_visible):
                     triggers.after_settle(
                         "hxScrollIntoView",
-                        {"selector": selector, "behavior": behavior, "block": block},
+                        {
+                            "selector": selector,
+                            "behavior": behavior,
+                            "block": block,
+                            "if_not_visible": if_not_visible,
+                        },
                     )
                 case Open(url, name, target, rel):
                     triggers.after_settle(
