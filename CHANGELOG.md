@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.10] - 2026-03-06
+
 ### Fixed
 - **Lazy Model Proxy PK type coercion**: Fixed `_LazyModelProxy.pk` returning a raw string instead of the correct PK type (e.g., UUID) after JSON deserialization. This caused Pydantic serialization warnings (`Expected uuid`) when re-serializing components with `ModelConfig(lazy=True)` fields. The proxy now coerces the PK value through Django's field `to_python()` on construction.
 
