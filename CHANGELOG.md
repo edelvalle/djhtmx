@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Generic Event Handlers**: Fixed event subscription for components that inherit `_handle_event` from a generic base class without overriding it. Previously, generic type parameters (e.g., `MyEvent[NodeT]`) in inherited handlers were not resolved to concrete types, causing subclasses to silently miss events. The introspection now resolves TypeVar bindings from the class hierarchy and correctly extracts event types from generic aliases.
+
 ## [1.3.8] - 2026-02-20
 
 ### Added

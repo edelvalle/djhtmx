@@ -383,7 +383,7 @@ class HtmxComponent(BaseModel):
         cls.__check_consistent_event_handler(strict=settings.STRICT_EVENT_HANDLER_CONSISTENCY_CHECK)
         if public:
             if handle_event := getattr(cls, "_handle_event", None):
-                for event_type in get_event_handler_event_types(handle_event):
+                for event_type in get_event_handler_event_types(handle_event, owner=cls):
                     LISTENERS[event_type].add(component_name)
 
             cls._properties = {

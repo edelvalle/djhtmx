@@ -408,18 +408,66 @@ def _parse_obj(data: Iterable[tuple[list[str], Any]], output=None) -> dict[str, 
     return output
 
 
-def get_event_handler_event_types(f: Callable[..., Any]) -> set[type]:
-    "Extract the types of the annotations of parameter 'event'."
-    event = get_type_hints(f)["event"]
-    origin = get_origin(event)
+def _resolve_typevars(cls: type) -> dict[TypeVar, type]:
+    """Build a mapping of TypeVar -> concrete type by walking __orig_bases__."""
+    typevar_map: dict[TypeVar, type] = {}
+    for base in getattr(cls, "__orig_bases__", ()):
+        origin = get_origin(base)
+        if origin is None:
+            continue
+        args = get_args(base)
+        # Get TypeVar params from the origin class
+        params = getattr(origin, "__type_params__", None) or getattr(origin, "__parameters__", ())
+        for param, arg in zip(params, args, strict=False):
+            if isinstance(param, TypeVar) and isinstance(arg, type):
+                typevar_map[param] = arg
+    return typevar_map
+
+
+def _substitute_typevars(annotation, typevar_map: dict[TypeVar, type]):
+    """Substitute TypeVars in an annotation using the given mapping."""
+    if isinstance(annotation, TypeVar):
+        return typevar_map.get(annotation, annotation)
+    origin = get_origin(annotation)
+    if origin is None:
+        return annotation
+    args = get_args(annotation)
+    if not args:
+        return annotation
+    new_args = tuple(_substitute_typevars(a, typevar_map) for a in args)
+    if new_args == args:
+        return annotation
+    return origin[new_args] if len(new_args) > 1 else origin[new_args[0]]
+
+
+def _extract_event_types(annotation) -> set[type]:
+    """Extract concrete event types from an annotation."""
+    origin = get_origin(annotation)
     if origin is types.UnionType or origin is Union:
-        return {
-            arg for arg in get_args(event) if isinstance(arg, type) and arg is not types.NoneType
-        }
-    elif isinstance(event, type):
-        return {event}
+        result = set()
+        for arg in get_args(annotation):
+            result |= _extract_event_types(arg)
+        return result
+    elif isinstance(annotation, type) and annotation is not types.NoneType:
+        return {annotation}
+    elif origin is not None and isinstance(origin, type):
+        # Generic alias like MyEvent[ConcreteModel] - use the origin class
+        return {origin}
     else:
         return set()
+
+
+def get_event_handler_event_types(f: Callable[..., Any], owner: type | None = None) -> set[type]:
+    "Extract the types of the annotations of parameter 'event'."
+    event = get_type_hints(f)["event"]
+
+    # If we have an owner class, resolve any TypeVars from the class hierarchy
+    if owner is not None:
+        typevar_map = _resolve_typevars(owner)
+        if typevar_map:
+            event = _substitute_typevars(event, typevar_map)
+
+    return _extract_event_types(event)
 
 
 def get_annotation_adapter(annotation):
