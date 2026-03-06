@@ -93,7 +93,11 @@ class _LazyModelProxy(Generic[M]):  # noqa
             self.__pk = getattr(value, "pk", None)
         else:
             self.__instance = None
-            self.__pk = value
+            pk_field = model._meta.pk
+            if pk_field is not None:
+                self.__pk = pk_field.to_python(value)
+            else:
+                self.__pk = value
         if model_annotation:
             self.__select_related = model_annotation.select_related
             self.__prefetch_related = model_annotation.prefetch_related
