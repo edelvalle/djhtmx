@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.11] - 2026-03-11
+
+### Fixed
+- **Redirect header precedence**: When a `Redirect` and a `ReplaceURL` or `PushURL` command are both produced in the same HTTP request cycle, `HX-Replace-Url` and `HX-Push-Url` headers are now stripped from the response. Previously HTMX would process the URL manipulation header and silently ignore `HX-Redirect`, preventing the redirect from happening.
+
 ## [1.3.10] - 2026-03-06
 
 ### Fixed
