@@ -279,6 +279,54 @@ class TestEndpoint(TestCase):
         self.assertIn("<div>Second</div>", content)
         self.assertEqual(response["HX-Redirect"], "/redirect")
 
+    @patch("djhtmx.urls.Repository")
+    @patch("djhtmx.urls.parse_request_data")
+    @patch("djhtmx.urls.tracing_span")
+    def test_endpoint_redirect_overrides_replace_url(self, mock_span, mock_parse, mock_repo_class):
+        """Test that HX-Redirect takes precedence over HX-Replace-Url."""
+        request = self.factory.post("/test")
+        request.META["HTTP_HX_SESSION"] = "test-session"
+
+        mock_parse.return_value = {}
+        mock_repo = Mock()
+        commands = [
+            ReplaceURL("/some-other-url/"),
+            Redirect("/new-page/"),
+        ]
+        mock_repo.dispatch_event.return_value = commands
+        mock_repo_class.from_request.return_value = mock_repo
+        mock_span.return_value.__enter__ = Mock()
+        mock_span.return_value.__exit__ = Mock()
+
+        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+
+        self.assertEqual(response["HX-Redirect"], "/new-page/")
+        self.assertFalse(response.has_header("HX-Replace-Url"))
+
+    @patch("djhtmx.urls.Repository")
+    @patch("djhtmx.urls.parse_request_data")
+    @patch("djhtmx.urls.tracing_span")
+    def test_endpoint_redirect_overrides_push_url(self, mock_span, mock_parse, mock_repo_class):
+        """Test that HX-Redirect takes precedence over HX-Push-Url."""
+        request = self.factory.post("/test")
+        request.META["HTTP_HX_SESSION"] = "test-session"
+
+        mock_parse.return_value = {}
+        mock_repo = Mock()
+        commands = [
+            PushURL("/pushed-url/"),
+            Redirect("/new-page/"),
+        ]
+        mock_repo.dispatch_event.return_value = commands
+        mock_repo_class.from_request.return_value = mock_repo
+        mock_span.return_value.__enter__ = Mock()
+        mock_span.return_value.__exit__ = Mock()
+
+        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+
+        self.assertEqual(response["HX-Redirect"], "/new-page/")
+        self.assertFalse(response.has_header("HX-Push-Url"))
+
 
 class TestAppNameOfComponent(TestCase):
     def test_app_name_of_component_exact_match(self):

@@ -98,6 +98,12 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
                 case _ as unreachable:
                     assert_never(unreachable)
 
+        # HX-Redirect triggers a full navigation, so URL manipulation headers
+        # are meaningless and can cause HTMX to skip the redirect.
+        if "HX-Redirect" in headers:
+            headers.pop("HX-Replace-Url", None)
+            headers.pop("HX-Push-Url", None)
+
         return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
 
 
