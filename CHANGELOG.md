@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.12] - 2026-04-24
+
+### Added
+- **Sentry tag forwarding**: Non-sensitive HTMX request headers (e.g. `HX-Current-URL`) are now attached as tags to the active Sentry scope and to djhtmx tracing spans for HTTP endpoints. `HX-Prompt` is intentionally excluded because it may contain private user input.
+
 ## [1.3.11] - 2026-03-11
 
 ### Fixed
