@@ -45,6 +45,7 @@ class TestEndpoint(TestCase):
         mock_repo.dispatch_event.assert_called_once_with(
             "test-id", "test_handler", {"parsed": "data"}
         )
+        mock_span.assert_called_once_with("TestComponent.test_handler")
 
     @patch("djhtmx.urls.Repository")
     @patch("djhtmx.urls.parse_request_data")
@@ -67,6 +68,53 @@ class TestEndpoint(TestCase):
 
         expected_data = {"parsed": "data", "prompt": "user prompt text"}
         mock_repo.dispatch_event.assert_called_once_with("test-id", "test_handler", expected_data)
+        mock_span.assert_called_once_with("TestComponent.test_handler")
+
+    @patch("djhtmx.urls.sentry_tags")
+    @patch("djhtmx.urls.Repository")
+    @patch("djhtmx.urls.parse_request_data")
+    @patch("djhtmx.urls.tracing_span")
+    def test_endpoint_includes_safe_htmx_headers_in_sentry_tags(
+        self, mock_span, mock_parse, mock_repo_class, mock_sentry_tags
+    ):
+        """Test endpoint forwards safe HTMX headers to tracing and Sentry tags."""
+        request = self.factory.post("/test")
+        request.META.update({
+            "HTTP_HX_SESSION": "test-session",
+            "HTTP_HX_REQUEST": "true",
+            "HTTP_HX_BOOSTED": "true",
+            "HTTP_HX_CURRENT_URL": "https://example.com/todos?filter=open",
+            "HTTP_HX_HISTORY_RESTORE_REQUEST": "true",
+            "HTTP_HX_TARGET": "todo-list",
+            "HTTP_HX_TRIGGER": "save-button",
+            "HTTP_HX_TRIGGER_NAME": "save",
+            "HTTP_HX_PROMPT": "private prompt",
+        })
+
+        expected_tags = {
+            "hx-request": "true",
+            "hx-boosted": "true",
+            "hx-current-url": "https://example.com/todos?filter=open",
+            "hx-history-restore-request": "true",
+            "hx-target": "todo-list",
+            "hx-trigger": "save-button",
+            "hx-trigger-name": "save",
+        }
+
+        mock_parse.return_value = {}
+        mock_repo = Mock()
+        mock_repo.dispatch_event.return_value = []
+        mock_repo_class.from_request.return_value = mock_repo
+        mock_span.return_value.__enter__ = Mock()
+        mock_span.return_value.__exit__ = Mock()
+        mock_sentry_tags.return_value.__enter__ = Mock()
+        mock_sentry_tags.return_value.__exit__ = Mock()
+
+        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+
+        self.assertEqual(response.status_code, 200)
+        mock_sentry_tags.assert_called_once_with(**expected_tags)
+        mock_span.assert_called_once_with("TestComponent.test_handler", **expected_tags)
 
     @patch("djhtmx.urls.Repository")
     @patch("djhtmx.urls.parse_request_data")

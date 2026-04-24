@@ -24,7 +24,7 @@ from .component import (
 from .consumer import Consumer
 from .introspection import parse_request_data
 from .repo import Repository
-from .tracing import tracing_span
+from .tracing import htmx_headers_as_tags, sentry_tags, tracing_span
 
 signer = Signer()
 
@@ -33,7 +33,9 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
     if "HTTP_HX_SESSION" not in request.META:
         return HttpResponse("Missing header HX-Session", status=HTTPStatus.BAD_REQUEST)
 
-    with tracing_span(f"{component_name}.{event_handler}"):
+    tags = htmx_headers_as_tags(request.META)
+
+    with sentry_tags(**tags), tracing_span(f"{component_name}.{event_handler}", **tags):
         repo = Repository.from_request(request)
         content: list[str] = []
         headers: dict[str, str] = {}
