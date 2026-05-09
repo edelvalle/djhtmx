@@ -1,5 +1,4 @@
-CARGO_HOME ?= $(HOME)/.cargo
-PATH := $(HOME)/.local/bin:$(CARGO_HOME)/bin:$(PATH)
+PATH := $(HOME)/.local/bin:$(PATH)
 
 PYTHON_VERSION ?= 3.13
 
