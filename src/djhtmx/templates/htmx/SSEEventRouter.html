@@ -1,0 +1,8 @@
+{% load htmx %}
+
+<div {% hx-tag %}
+     hidden
+     hx-ext="sse"
+     sse-connect="{% url 'djhtmx.sse' %}?session={{ htmx_repo.session_signed_id|urlencode }}&page={{ htmx_repo.page_signed_id|urlencode }}">
+  <div sse-swap="djhtmx" hx-swap="none"></div>
+</div>

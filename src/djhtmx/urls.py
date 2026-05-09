@@ -1,11 +1,14 @@
+import asyncio
 from functools import partial
 from http import HTTPStatus
-from typing import assert_never
+from typing import assert_never, cast
 
 from django.apps import apps
-from django.core.signing import Signer
-from django.http.request import HttpRequest
-from django.http.response import HttpResponse
+from django.core.handlers.asgi import ASGIRequest
+from django.core.signing import BadSignature, Signer
+from django.db import transaction
+from django.http.request import HttpRequest, QueryDict
+from django.http.response import HttpResponse, StreamingHttpResponse
 from django.urls import path, re_path
 from django.utils.html import format_html
 from django.views.decorators.csrf import csrf_exempt
@@ -109,6 +112,43 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
         return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
 
 
+@transaction.non_atomic_requests
+async def sse_endpoint(request: HttpRequest):
+    if not isinstance(request, ASGIRequest):
+        return HttpResponse("SSE requires ASGI", status=HTTPStatus.NOT_IMPLEMENTED)
+
+    query = cast(QueryDict, request.GET)
+    session = query.get("session")
+    page = query.get("page")
+    if not session:
+        return HttpResponse("Missing query parameter: session", status=HTTPStatus.BAD_REQUEST)
+    if not page:
+        return HttpResponse("Missing query parameter: page", status=HTTPStatus.BAD_REQUEST)
+
+    try:
+        signer.unsign(session)
+        signer.unsign(page)
+    except BadSignature:
+        return HttpResponse("Invalid SSE session or page", status=HTTPStatus.BAD_REQUEST)
+
+    await asyncio.sleep(0)
+
+    async def stream():
+        yield b": connected\n\n"
+        while True:
+            await asyncio.sleep(15)
+            yield b": heartbeat\n\n"
+
+    return StreamingHttpResponse(
+        stream(),
+        content_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 APP_CONFIGS = sorted(apps.app_configs.values(), key=lambda app_config: -len(app_config.name))
 
 
@@ -121,12 +161,15 @@ def app_name_of_component(cls: type):
 
 
 urlpatterns = [
-    path(
-        f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
-        csrf_exempt(partial(endpoint, component_name=component_name)),
-        name=f"djhtmx.{component_name}",
-    )
-    for component_name, component in REGISTRY.items()
+    path("_sse/connect", sse_endpoint, name="djhtmx.sse"),
+    *[
+        path(
+            f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
+            csrf_exempt(partial(endpoint, component_name=component_name)),
+            name=f"djhtmx.{component_name}",
+        )
+        for component_name, component in REGISTRY.items()
+    ],
 ]
 
 

@@ -544,3 +544,8 @@ def _compose[**P, A, B](f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B
 
 logger = logging.getLogger(__name__)
 _ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")
+
+
+class SSEEventRouter(HtmxComponent):
+    _template_name = "htmx/SSEEventRouter.html"
+    id: str = "djhtmx-sse-router"
