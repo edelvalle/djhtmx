@@ -14,8 +14,6 @@ from typing import (
     Annotated,
     Any,
     Literal,
-    ParamSpec,
-    TypeVar,
     cast,
     get_type_hints,
 )
@@ -269,18 +267,6 @@ def _get_querystring_subscriptions(component_name: str) -> frozenset[str]:
     })
 
 
-A = TypeVar("A")
-B = TypeVar("B")
-P = ParamSpec("P")
-
-
-def _compose(f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B]:
-    def result(*args: P.args, **kwargs: P.kwargs):
-        return g(f(*args, **kwargs))
-
-    return result
-
-
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
@@ -530,10 +516,7 @@ class Triggers:
         return {header: json.dumps(value) for header, value in headers if value}
 
 
-F = TypeVar("F")
-
-
-def annotated_handler(**annotations) -> Callable[[F], F]:
+def annotated_handler[F](**annotations) -> Callable[[F], F]:
     """Annotate the HTMX handler with customized values.
 
     Some of these annotations are HtmxUnhandledError use the annotations so that the application can
@@ -552,7 +535,12 @@ def annotated_handler(**annotations) -> Callable[[F], F]:
     return decorator
 
 
+def _compose[**P, A, B](f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B]:
+    def result(*args: P.args, **kwargs: P.kwargs):
+        return g(f(*args, **kwargs))
+
+    return result
+
+
 logger = logging.getLogger(__name__)
-
-
 _ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")
