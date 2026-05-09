@@ -250,6 +250,7 @@ PYDANTIC_MODEL_METHODS = {
 
 REGISTRY: dict[str, type[HtmxComponent]] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
+SSE_LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[HtmxComponent], str] = {}
 
 
@@ -329,6 +330,8 @@ class HtmxComponent(BaseModel):
                 not any(cls.__own_event_handlers(get_parent_ones=True))
                 and not hasattr(cls, "_handle_event")
                 and not hasattr(cls, "subscriptions")
+                and not hasattr(cls, "sse_subscriptions")
+                and not hasattr(cls, "_handle_sse_events")
             ):
                 logger.warning(
                     "HTMX Component <%s> has no event handlers, probably should not exist and be just a template",
@@ -371,6 +374,12 @@ class HtmxComponent(BaseModel):
             if handle_event := getattr(cls, "_handle_event", None):
                 for event_type in get_event_handler_event_types(handle_event, owner=cls):
                     LISTENERS[event_type].add(component_name)
+
+            if handle_sse_events := getattr(cls, "_handle_sse_events", None):
+                from .sse import get_sse_event_handler_event_types
+
+                for event_type in get_sse_event_handler_event_types(handle_sse_events, owner=cls):
+                    SSE_LISTENERS[event_type].add(component_name)
 
             cls._properties = {
                 attr

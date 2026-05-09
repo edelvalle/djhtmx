@@ -6,7 +6,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Union, get_args, get_origin, get_type_hints
 
 import redis
 import redis.asyncio as async_redis
@@ -17,6 +17,7 @@ from xotl.tools.objects import import_object
 
 from . import json, settings
 from .component import Destroy, Emit, HtmxComponent, Render, SkipRender
+from .introspection import _extract_event_types, _resolve_typevars, _substitute_typevars
 from .utils import compact_hash
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,29 @@ def index_key(event_type: type | str, topic: str) -> str:
     return f"djhtmx:sse:index:{compact_hash(event_type_id)}:{compact_hash(topic)}:consumers"
 
 
+def get_sse_event_handler_event_types(f, owner: type | None = None) -> set[type]:
+    event = get_type_hints(f)["event"]
+    if owner is not None:
+        typevar_map = _resolve_typevars(owner)
+        if typevar_map:
+            event = _substitute_typevars(event, typevar_map)
+
+    origin = get_origin(event)
+    if origin is not SSEEvent:
+        return set()
+
+    args = get_args(event)
+    if not args:
+        return set()
+
+    payload = args[0]
+    payload_origin = get_origin(payload)
+    if payload_origin is Union:
+        return _extract_event_types(payload)
+    else:
+        return _extract_event_types(payload)
+
+
 def is_sse_enabled(component: HtmxComponent) -> bool:
     has_subscriptions = hasattr(type(component), "sse_subscriptions")
     has_handler = hasattr(component, "_handle_sse_events")
@@ -79,8 +103,22 @@ def is_sse_enabled(component: HtmxComponent) -> bool:
 
 def get_sse_subscriptions(component: HtmxComponent) -> set[SSESubscription]:
     if is_sse_enabled(component):
-        subscriptions = component.sse_subscriptions  # type: ignore
-        return set(subscriptions)
+        accepted_event_types = get_sse_event_handler_event_types(
+            component._handle_sse_events,  # type: ignore[attr-defined]
+            owner=type(component),
+        )
+        subscriptions = component.sse_subscriptions  # type: ignore[attr-defined]
+        result = set()
+        for subscription in subscriptions:
+            if subscription.event_type in accepted_event_types:
+                result.add(subscription)
+            else:
+                logger.warning(
+                    "Component %s subscribes to %s but _handle_sse_events does not accept it",
+                    component.hx_name,
+                    event_type_name(subscription.event_type),
+                )
+        return result
     else:
         return set()
 
@@ -137,6 +175,11 @@ class EventEnvelope[P]:
 
 
 def emit_sse_event(event: Any, *, topics: Iterable[str]):
+    from .component import SSE_LISTENERS
+
+    if type(event) not in SSE_LISTENERS:
+        return
+
     event_type = event_type_name(type(event))
     consumer_topics: set[tuple[str, str]] = set()
     for topic in topics:
