@@ -250,7 +250,6 @@ PYDANTIC_MODEL_METHODS = {
 
 REGISTRY: dict[str, type[HtmxComponent]] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
-SSE_LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[HtmxComponent], str] = {}
 
 
@@ -375,11 +374,9 @@ class HtmxComponent(BaseModel):
                 for event_type in get_event_handler_event_types(handle_event, owner=cls):
                     LISTENERS[event_type].add(component_name)
 
-            if handle_sse_events := getattr(cls, "_handle_sse_events", None):
-                from .sse import get_sse_event_handler_event_types
+            from .sse import register_sse_listener
 
-                for event_type in get_sse_event_handler_event_types(handle_sse_events, owner=cls):
-                    SSE_LISTENERS[event_type].add(component_name)
+            register_sse_listener(cls)
 
             cls._properties = {
                 attr

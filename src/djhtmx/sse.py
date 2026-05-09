@@ -22,6 +22,8 @@ from .utils import compact_hash
 
 logger = logging.getLogger(__name__)
 
+SSE_LISTENERS: dict[type, set[type[HtmxComponent]]] = defaultdict(set)
+
 
 class SSESubscription(NamedTuple):
     event_type: type
@@ -88,6 +90,14 @@ def get_sse_event_handler_event_types(f, owner: type | None = None) -> set[type]
         return _extract_event_types(payload)
     else:
         return _extract_event_types(payload)
+
+
+def register_sse_listener(component_type: type[HtmxComponent]):
+    if handle_sse_events := getattr(component_type, "_handle_sse_events", None):
+        for event_type in get_sse_event_handler_event_types(
+            handle_sse_events, owner=component_type
+        ):
+            SSE_LISTENERS[event_type].add(component_type)
 
 
 def is_sse_enabled(component: HtmxComponent) -> bool:
@@ -175,8 +185,6 @@ class EventEnvelope[P]:
 
 
 def emit_sse_event(event: Any, *, topics: Iterable[str]):
-    from .component import SSE_LISTENERS
-
     if type(event) not in SSE_LISTENERS:
         return
 
