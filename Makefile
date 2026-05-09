@@ -1,21 +1,57 @@
 PATH := $(HOME)/.local/bin:$(PATH)
 
 PYTHON_VERSION ?= 3.13
-
 SHELL := /bin/bash
 PROJECT_NAME := djhtmx
+
+# Load .envrc when inside Emacs, Claude Code, or pi
+_LOAD_ENVRC :=
+ifdef INSIDE_EMACS
+    _LOAD_ENVRC := 1
+endif
+ifdef CLAUDECODE
+    _LOAD_ENVRC := 1
+endif
+ifeq ($(LLM_AGENT_PUPPETEER),pi)
+    _LOAD_ENVRC := 1
+endif
+ifdef _LOAD_ENVRC
+    ifneq (,$(wildcard .envrc))
+        export BASH_ENV := $(CURDIR)/.envrc
+        # Source .envrc and import all exported variables into Make Write to temp file to preserve
+        # spaces and special characters Filter out Make-reserved variables that shouldn't be
+        # overridden
+        _ := $(shell bash -c 'set -a; source $(CURDIR)/.envrc 2>/dev/null && env | grep -v "^SHELL=" | grep -v "^MAKEFLAGS=" | grep -v "^MFLAGS=" | grep -v "^MAKEFILE_LIST=" > $(CURDIR)/.envrc.make.tmp')
+        include .envrc.make.tmp
+    endif
+endif
 
 UV ?= uv
 UV_RUN ?= $(UV) run
 UV_PYTHON_PREFERENCE ?= only-managed
 RUN ?= $(UV_RUN)
 
-REQUIRED_UV_VERSION ?= 0.7.3
+REQUIRED_UV_VERSION ?= 0.10.10
 bootstrap:
 	@INSTALLED_UV_VERSION=$$(uv --version 2>/dev/null | awk '{print $$2}' || echo "0.0.0"); \
     DETECTED_UV_VERSION=$$(printf '%s\n' "$(REQUIRED_UV_VERSION)" "$$INSTALLED_UV_VERSION" | sort -V | head -n1); \
 	if [ "$$DETECTED_UV_VERSION" != "$(REQUIRED_UV_VERSION)" ]; then \
-		uv self update $(REQUIRED_UV_VERSION) || curl -LsSf https://astral.sh/uv/$(REQUIRED_UV_VERSION)/install.sh | sh; \
+		uv self update $(REQUIRED_UV_VERSION) 2>/dev/null || { \
+			success=false; \
+			for i in 1 2 3 4 5; do \
+				if curl -LsSf https://astral.sh/uv/$(REQUIRED_UV_VERSION)/install.sh | sh; then \
+					success=true; \
+					break; \
+				else \
+					echo "curl attempt $$i failed, retrying in 1 second..."; \
+					sleep 1; \
+				fi; \
+			done; \
+			if [ "$$success" != "true" ]; then \
+				echo "All curl attempts failed"; \
+				exit 1; \
+			fi; \
+		}; \
 	fi
 	@$(UV) python pin $(PYTHON_VERSION)
 .PHONY: bootstrap
@@ -63,7 +99,7 @@ pyright:
 .PHONY: pyright
 
 
-SERVER_CMD ?= granian --reload --reload-paths . --port 8000 --access-log --interface asginl fision.asgi:application
+SERVER_CMD ?= granian --reload --reload-paths . --port 8000 --access-log --workers 1 --workers-kill-timeout 1s --interface asginl fision.asgi:application
 
 run: install
 	@$(RUN) python src/tests/manage.py migrate
