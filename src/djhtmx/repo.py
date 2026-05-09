@@ -85,10 +85,6 @@ class Repository:
     def new_session_id():
         return f"djhtmx:{uuid7().hex}"
 
-    @staticmethod
-    def new_page_id():
-        return f"djhtmx-page:{uuid7().hex}"
-
     @classmethod
     def from_request(
         cls,
@@ -162,8 +158,6 @@ class Repository:
         self.user = user
         self.session = session
         self.session_signed_id = signer.sign(session.id)
-        self.page_id = self.new_page_id()
-        self.page_signed_id = signer.sign(self.page_id)
         self.params = params
 
     # Component life cycle & management

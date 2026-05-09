@@ -119,17 +119,13 @@ async def sse_endpoint(request: HttpRequest):
 
     query = cast(QueryDict, request.GET)
     session = query.get("session")
-    page = query.get("page")
     if not session:
         return HttpResponse("Missing query parameter: session", status=HTTPStatus.BAD_REQUEST)
-    if not page:
-        return HttpResponse("Missing query parameter: page", status=HTTPStatus.BAD_REQUEST)
 
     try:
         signer.unsign(session)
-        signer.unsign(page)
     except BadSignature:
-        return HttpResponse("Invalid SSE session or page", status=HTTPStatus.BAD_REQUEST)
+        return HttpResponse("Invalid SSE session", status=HTTPStatus.BAD_REQUEST)
 
     await asyncio.sleep(0)
 

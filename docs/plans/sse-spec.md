@@ -166,7 +166,7 @@ Applications should render it once in the base template, usually near the end of
 The component is hidden and uses the HTMX SSE extension. Conceptually its HTML is:
 
 ```html
-<div hidden hx-ext="sse" sse-connect="/_htmx/_sse/connect?session=...&page=...">
+<div hidden hx-ext="sse" sse-connect="/_htmx/_sse/connect?session=...">
   <div sse-swap="djhtmx" hx-swap="none"></div>
 </div>
 ```
@@ -182,7 +182,7 @@ The router is infrastructure. Application components do not call it directly.
 The Django app exposes one ASGI-only SSE endpoint:
 
 ```text
-/_htmx/_sse/connect?session=<signed-session>&page=<signed-page>
+/_htmx/_sse/connect?session=<signed-session>
 ```
 
 Applications start the handler by including the normal djhtmx URLs and rendering `SSEEventRouter` once per page.
@@ -210,16 +210,16 @@ Per Granian worker:
 - many browser pages may hold open SSE HTTP connections;
 - each open page connection is represented by an async response task;
 - a single in-process broker task owns one async Redis wake subscription connection;
-- page tasks are registered in memory by `page_id`;
+- connection tasks are registered in memory by `session_id`;
 - Redis stores durable routing state and pending event payloads.
 
 Across workers:
 
 - each worker has its own broker and Redis wake connection;
-- each worker only wakes page tasks connected to that worker;
-- wake notifications are sent through page-specific Redis pub/sub channels;
-- a worker subscribes to a page wake channel when it owns that page's SSE connection;
-- a worker unsubscribes from the page wake channel when that page's SSE connection closes.
+- each worker only wakes connection tasks connected to that worker;
+- wake notifications are sent through session-specific Redis pub/sub channels;
+- a worker subscribes to a session wake channel when it owns that session's SSE connection;
+- a worker unsubscribes from the session wake channel when that SSE connection closes.
 
 ### Redis routing indexes
 
@@ -228,12 +228,11 @@ The Redis layer must find matching consumers through indexes. It must not scan a
 When an SSE-enabled component is rendered, djhtmx registers one consumer record for that rendered component instance. The consumer record stores at least:
 
 - `session_id`;
-- `page_id`;
 - `component_id`;
 - `component_name`;
 - serialized subscription metadata.
 
-Each consumer is also added to its page membership set. This lets the page task discover which consumers belong to the page.
+Each consumer is also added to its session membership set. This lets the SSE task discover which consumers belong to the session.
 
 For each `SSESubscription(event_type, topic)`, djhtmx adds the consumer ID to an exact-match topic/type index:
 
@@ -245,7 +244,7 @@ The concrete key format may hash or escape `event_type` and `topic`, but the sem
 
 The consumer also keeps a reverse-index set containing the index keys it belongs to. On re-render, djhtmx uses the reverse index to remove stale subscription memberships before adding the current subscriptions.
 
-All consumer, page, and index metadata is TTL-bound. Stale consumers may be removed lazily when discovered during event emission or page processing.
+All consumer, session, and index metadata is TTL-bound. Stale consumers may be removed lazily when discovered during event emission or session processing.
 
 ### Matching consumers
 
@@ -260,9 +259,9 @@ For each emitted topic:
 
 No subclass matching is required for the first version. A component that wants several event types must declare several `SSESubscription` values.
 
-After matching consumer IDs, djhtmx loads each consumer record to find its `page_id`. Missing consumer records are stale and should be ignored and cleaned from indexes opportunistically.
+After matching consumer IDs, djhtmx loads each consumer record to find its `session_id`. Missing consumer records are stale and should be ignored and cleaned from indexes opportunistically.
 
-### Event queues and page wake channels
+### Event queues and session wake channels
 
 Actual event payloads are stored separately from wake notifications. Pub/sub is only a wake mechanism, not the source of truth.
 
@@ -273,19 +272,19 @@ For each matched consumer, djhtmx enqueues an event entry that includes at least
 - matching topic;
 - serialized event payload.
 
-The preferred queue shape is page-oriented, so the page SSE task can load all pending work for the page in one operation:
+The preferred queue shape is session-oriented, so the SSE task can load all pending work for the session in one operation:
 
 ```text
-djhtmx:sse:page:{page_id}:events
+djhtmx:sse:session:{session_id}:events
 ```
 
-After enqueuing events, djhtmx publishes to the affected page's wake channel:
+After enqueuing events, djhtmx publishes to the affected session's wake channel:
 
 ```text
-djhtmx:sse:wake:page:{page_id}
+djhtmx:sse:wake:session:{session_id}
 ```
 
-Only the worker that currently owns the page connection should be subscribed to that page channel.
+Only the worker that currently owns the SSE connection should be subscribed to that session channel.
 
 ### Producer flow
 
@@ -293,9 +292,9 @@ When code calls `emit_sse_event(event, topics=...)`:
 
 1. djhtmx serializes the event.
 2. djhtmx finds active consumers through exact topic/type Redis indexes.
-3. djhtmx loads each matched consumer record to find its `page_id`.
-4. djhtmx enqueues the event for each matching consumer in the owning page's event queue.
-5. djhtmx publishes a wake notification to each affected page wake channel.
+3. djhtmx loads each matched consumer record to find its `session_id`.
+4. djhtmx enqueues the event for each matching consumer in the owning session's event queue.
+5. djhtmx publishes a wake notification to each affected session wake channel.
 6. The caller returns immediately.
 
 The producer does not know which worker owns a browser connection and does not render components.
@@ -307,22 +306,22 @@ Each worker broker conceptually runs:
 ```python
 while True:
     wake_event = await get_next_redis_sse_event()
-    page_id = wake_event.page_id
-    if page_task := local_pages.get(page_id):
-        page_task.wake()
+    session_id = wake_event.session_id
+    if sse_task := local_sessions.get(session_id):
+        sse_task.wake()
 ```
 
-The Redis wake connection is separate from normal Redis commands. It exists to avoid one blocking Redis wait per browser connection. The broker dynamically subscribes and unsubscribes this one Redis pub/sub connection to page-specific wake channels as page SSE connections open and close.
+The Redis wake connection is separate from normal Redis commands. It exists to avoid one blocking Redis wait per browser connection. The broker dynamically subscribes and unsubscribes this one Redis pub/sub connection to session-specific wake channels as SSE connections open and close.
 
-### Page SSE task flow
+### SSE task flow
 
-Each connected page task conceptually runs:
+Each connected SSE task conceptually runs:
 
 ```python
 while connected:
     await wait_until_woken_or_heartbeat()
 
-    events_by_consumer = await load_pending_events_for_page(page_id)
+    events_by_consumer = await load_pending_events_for_session(session_id)
     commands = []
 
     for consumer_id, events in events_by_consumer.items():
@@ -350,7 +349,7 @@ while connected:
 
         commands.extend(component_commands)
 
-    commands = coalesce_for_page(commands)
+    commands = coalesce_for_connection(commands)
     html = render_commands_as_oob_html(commands)
     await send_sse_message(event="djhtmx", data=html)
     await acknowledge_events(events_by_consumer)
@@ -420,7 +419,7 @@ The extension provides:
 <div id="djhtmx-sse-router"
      hidden
      hx-ext="sse"
-     sse-connect="/_htmx/_sse/connect?session=...&page=...">
+     sse-connect="/_htmx/_sse/connect?session=...">
   <div sse-swap="djhtmx" hx-swap="none"></div>
 </div>
 ```
