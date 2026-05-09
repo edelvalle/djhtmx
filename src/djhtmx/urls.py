@@ -123,17 +123,44 @@ async def sse_endpoint(request: HttpRequest):
         return HttpResponse("Missing query parameter: session", status=HTTPStatus.BAD_REQUEST)
 
     try:
-        signer.unsign(session)
+        session_id = signer.unsign(session)
     except BadSignature:
         return HttpResponse("Invalid SSE session", status=HTTPStatus.BAD_REQUEST)
 
     await asyncio.sleep(0)
 
     async def stream():
-        yield b": connected\n\n"
-        while True:
-            await asyncio.sleep(15)
-            yield b": heartbeat\n\n"
+        from .sse import get_async_conn, render_sse_events, sse_message, wake_channel
+
+        redis = get_async_conn()
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(wake_channel(session_id))
+        try:
+            yield b": connected\n\n"
+            while True:
+                html = await render_sse_events(
+                    session_id,
+                    getattr(request, "user", None),
+                )
+                if html:
+                    yield sse_message("djhtmx", html)
+                else:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=15,
+                    )
+                    if message:
+                        html = await render_sse_events(
+                            session_id,
+                            getattr(request, "user", None),
+                        )
+                        if html:
+                            yield sse_message("djhtmx", html)
+                    else:
+                        yield b": heartbeat\n\n"
+        finally:
+            await pubsub.unsubscribe(wake_channel(session_id))
+            await pubsub.close()
 
     return StreamingHttpResponse(
         stream(),

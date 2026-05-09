@@ -458,6 +458,9 @@ class Repository:
             lazy=str(lazy),
         ):
             self.session.store(component)
+            from .sse import register_component
+
+            register_component(self.session.id, component)
 
             final_context = {
                 "htmx_repo": self,

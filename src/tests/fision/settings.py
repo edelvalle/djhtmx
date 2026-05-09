@@ -29,6 +29,8 @@ DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
 
+DJHTMX_REDIS_URL = os.environ.get("DJHTMX_REDIS_URL", "redis://localhost/0")
+
 
 # Application definition
 
