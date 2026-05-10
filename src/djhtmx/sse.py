@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import inspect
 import logging
+import weakref
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -218,7 +220,9 @@ def emit_sse_event(event: Any, *, topics: Iterable[str]):
         get_sync_conn().publish(wake_channel(session_id), "1")
 
 
-_async_conn: async_redis.Redis | None = None
+_async_conns: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, async_redis.Redis] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def get_sync_conn() -> redis.Redis:
@@ -226,10 +230,10 @@ def get_sync_conn() -> redis.Redis:
 
 
 def get_async_conn() -> async_redis.Redis:
-    global _async_conn
-    if _async_conn is None:
-        _async_conn = async_redis.from_url(settings.REDIS_URL)
-    return _async_conn
+    loop = asyncio.get_running_loop()
+    if loop not in _async_conns:
+        _async_conns[loop] = async_redis.from_url(settings.REDIS_URL)
+    return _async_conns[loop]
 
 
 def decode_event(envelope: EventEnvelope) -> SSEEvent[Any]:
