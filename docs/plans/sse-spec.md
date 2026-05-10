@@ -203,6 +203,24 @@ urlpatterns = [
 
 The endpoint must fail clearly under WSGI. There is no long-polling fallback.
 
+### Session liveness refresh
+
+Long-lived SSE connections must refresh Redis TTLs for the active djhtmx session. Otherwise, a page that remains open longer than `DJHTMX_SESSION_TTL` could lose its component state or SSE routing indexes while the browser connection is still alive.
+
+`DJHTMX_SESSION_REFRESH_RATE` controls the refresh cadence as a fraction of `DJHTMX_SESSION_TTL`:
+
+```python
+DJHTMX_SESSION_REFRESH_RATE = 0.5
+```
+
+Semantics:
+
+- `0`: disable liveness refresh.
+- `0 < rate <= 1`: refresh every `DJHTMX_SESSION_TTL * rate` seconds.
+- default: `0.5`, which refreshes every 30 minutes with the default one-hour TTL.
+
+The SSE loop refreshes the session state key, the session's SSE consumer/event keys, each consumer metadata key, each consumer reverse-index key, and each topic/type index key referenced by those consumers.
+
 ### Runtime topology
 
 The intended production topology is Granian/ASGI workers.

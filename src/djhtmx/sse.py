@@ -271,6 +271,24 @@ def decode_event(envelope: EventEnvelope) -> SSEEventEnvelope[Any]:
     )
 
 
+async def refresh_sse_session_liveness(conn: async_redis.Redis, session_id: str):
+    if not settings.SESSION_REFRESH_INTERVAL:
+        return
+
+    ttl = settings.SESSION_TTL
+    session_consumers = session_consumers_key(session_id)
+    await async_expire(conn, f"{session_id}:states", ttl)
+    await async_expire(conn, session_consumers, ttl)
+    await async_expire(conn, session_events_key(session_id), ttl)
+
+    for consumer in await async_smembers_text(conn, session_consumers):
+        consumer_indexes = consumer_indexes_key(consumer)
+        await async_expire(conn, consumer_key(consumer), ttl)
+        await async_expire(conn, consumer_indexes, ttl)
+        for index in await async_smembers_text(conn, consumer_indexes):
+            await async_expire(conn, index, ttl)
+
+
 async def load_consumer_metadata(id_: str) -> dict[str, Any] | None:
     conn = get_async_conn()
     raw_metadata = await async_get(conn, consumer_key(id_))
@@ -388,6 +406,14 @@ def sync_get(conn: redis.Redis, key: str) -> bytes | str | None:
 
 async def async_get(conn: async_redis.Redis, key: str) -> bytes | str | None:
     return await conn.get(key)  # type: ignore
+
+
+async def async_smembers_text(conn: async_redis.Redis, key: str) -> set[str]:
+    return {_decode(member) for member in await conn.smembers(key)}  # type: ignore
+
+
+async def async_expire(conn: async_redis.Redis, key: str, ttl: int):
+    await conn.expire(key, ttl)  # type: ignore
 
 
 async def async_lrange(

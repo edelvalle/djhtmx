@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from functools import partial
 from http import HTTPStatus
 from typing import assert_never, cast
@@ -133,17 +134,33 @@ async def sse_endpoint(request: HttpRequest):
     await asyncio.sleep(0)
 
     async def stream():
-        from .sse import get_async_conn, render_sse_event_fragments, sse_message, wake_channel
+        from . import settings
+        from .sse import (
+            get_async_conn,
+            refresh_sse_session_liveness,
+            render_sse_event_fragments,
+            sse_message,
+            wake_channel,
+        )
 
         redis = get_async_conn()
         pubsub = redis.pubsub()
         channel = wake_channel(session_id)
         logger.debug("SSE [%s] stream subscribe channel=%s", session_id, channel)
         await pubsub.subscribe(channel)
+        last_refresh = 0.0
         try:
             logger.debug("SSE [%s] stream connected session", session_id)
             yield b": connected\n\n"
             while True:
+                now = time.monotonic()
+                if (
+                    settings.SESSION_REFRESH_INTERVAL
+                    and now - last_refresh >= settings.SESSION_REFRESH_INTERVAL
+                ):
+                    await refresh_sse_session_liveness(redis, session_id)
+                    last_refresh = now
+
                 logger.debug("SSE [%s] draining session messages", session_id)
                 # This will drain the channel from messages at both connection time and later after
                 # a message is received (reentering the loop).

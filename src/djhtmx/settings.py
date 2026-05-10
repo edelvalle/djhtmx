@@ -21,6 +21,11 @@ SESSION_TTL = getattr(settings, "DJHTMX_SESSION_TTL", 3600)
 if isinstance(SESSION_TTL, timedelta):
     SESSION_TTL = int(SESSION_TTL.total_seconds())
 
+SESSION_REFRESH_RATE = getattr(settings, "DJHTMX_SESSION_REFRESH_RATE", 0.5)
+if not 0 <= SESSION_REFRESH_RATE <= 1:
+    raise ValueError("DJHTMX_SESSION_REFRESH_RATE must be between 0 and 1")
+SESSION_REFRESH_INTERVAL = int(SESSION_TTL * SESSION_REFRESH_RATE)
+
 
 ENABLE_SENTRY_TRACING = getattr(settings, "DJHTMX_ENABLE_SENTRY_TRACING", True)
 ENABLE_LOGFIRE_TRACING = getattr(settings, "DJHTMX_ENABLE_LOGFIRE_TRACING", False)
