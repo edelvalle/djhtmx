@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import random
-import typing as t
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Annotated, assert_never
+from uuid import UUID
 
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, HtmxComponent, Query, SkipRender
 from djhtmx.sse import SSEEventEnvelope, SSESubscription, emit_sse_event
@@ -33,7 +34,7 @@ class FilterChanged:
 
 
 class BaseToggleFilter(HtmxComponent, public=False):
-    showing: t.Annotated[Showing, Query("showing"), Field(default=Showing.ALL)]
+    showing: Annotated[Showing, Query("showing"), Field(default=Showing.ALL)]
 
 
 class BaseQueryFilter(HtmxComponent, public=False):
@@ -48,24 +49,21 @@ class SetEditing:
     item: Item | None
 
 
-@dataclass(slots=True)
-class TodoItemAdded:
-    item_id: str
+class TodoItemAdded(BaseModel):
+    item_id: UUID
 
 
-@dataclass(slots=True)
-class TodoItemUpdated:
-    item_id: str
+class TodoItemUpdated(BaseModel):
+    item_id: UUID
 
 
-@dataclass(slots=True)
-class TodoItemRemoved:
-    item_id: str
+class TodoItemRemoved(BaseModel):
+    item_id: UUID
 
 
 class TodoList(BaseToggleFilter, BaseQueryFilter):
     _template_name = "todo/TodoList.html"
-    editing: t.Annotated[Item | None, Query("editing")] = None
+    editing: Annotated[Item | None, Query("editing")] = None
 
     def _handle_event(self, event: SetEditing | FilterChanged):
         if isinstance(event, SetEditing):
@@ -149,7 +147,7 @@ class TodoItem(HtmxComponent):
     @property
     def sse_subscriptions(self):
         if self.item:
-            topic = todo_item_topic(str(self.item.pk))
+            topic = todo_item_topic(self.item.id)
             return {
                 SSESubscription(TodoItemUpdated, topic),
                 SSESubscription(TodoItemRemoved, topic),
@@ -159,10 +157,14 @@ class TodoItem(HtmxComponent):
 
     def _handle_sse_events(self, envelope: SSEEventEnvelope[TodoItemUpdated | TodoItemRemoved]):
         match envelope.event:
-            case TodoItemUpdated():
+            case TodoItemUpdated(item_id=item_id) if self.item and item_id == self.item.pk:
                 yield None
-            case TodoItemRemoved():
+            case TodoItemRemoved(item_id=item_id) if self.item and item_id == self.item.pk:
                 yield Destroy(self.id)
+            case TodoItemRemoved() | TodoItemUpdated():
+                yield SkipRender(self)
+            case unreachable:
+                assert_never(unreachable)
 
     def delete(self):
         if self.item:
@@ -195,7 +197,7 @@ class TodoItem(HtmxComponent):
 class TodoCounter(HtmxComponent):
     _template_name = "todo/TodoCounter.html"
 
-    query: t.Annotated[str, Query("q")] = ""
+    query: Annotated[str, Query("q")] = ""
 
     def render(self):
         from time import sleep
@@ -223,14 +225,14 @@ class TodoCounter(HtmxComponent):
 
 class TodoFilter(HtmxComponent):
     _template_name = "todo/TodoFilter.html"
-    query: t.Annotated[str, Query("q")] = ""
+    query: Annotated[str, Query("q")] = ""
 
     def set_query(self, query: str = ""):
         self.query = query.strip()
         yield Emit(FilterChanged(self.query))
 
 
-def todo_item_topic(item_id: str):
+def todo_item_topic(item_id: UUID):
     return f"{TODO_ITEMS_TOPIC}.{item_id}"
 
 
@@ -239,8 +241,8 @@ TODO_ITEMS_TOPIC = "todo.item"
 
 @receiver(post_save, sender=Item)
 def emit_todo_item_updated(sender, instance: Item, created: bool, **kwargs):
-    item_id = str(instance.pk)
-    event = TodoItemAdded(item_id) if created else TodoItemUpdated(item_id)
+    item_id = instance.pk
+    event = TodoItemAdded(item_id=item_id) if created else TodoItemUpdated(item_id=item_id)
     run_on_commit(
         emit_sse_event,
         event,
@@ -250,9 +252,9 @@ def emit_todo_item_updated(sender, instance: Item, created: bool, **kwargs):
 
 @receiver(post_delete, sender=Item)
 def emit_todo_item_removed(sender, instance: Item, **kwargs):
-    item_id = str(instance.pk)
+    item_id = instance.pk
     run_on_commit(
         emit_sse_event,
-        TodoItemRemoved(item_id),
+        TodoItemRemoved(item_id=item_id),
         topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
     )
