@@ -10,7 +10,7 @@ from django.dispatch import receiver
 from pydantic import Field
 
 from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, HtmxComponent, Query, SkipRender
-from djhtmx.sse import SSEEvent, SSESubscription, emit_sse_event
+from djhtmx.sse import SSEEventEnvelope, SSESubscription, emit_sse_event
 from djhtmx.utils import run_on_commit
 
 from .models import Item
@@ -46,6 +46,11 @@ class BaseQueryFilter(HtmxComponent, public=False):
 @dataclass(slots=True)
 class SetEditing:
     item: Item | None
+
+
+@dataclass(slots=True)
+class TodoItemAdded:
+    item_id: str
 
 
 @dataclass(slots=True)
@@ -104,6 +109,25 @@ class TodoList(BaseToggleFilter, BaseQueryFilter):
     def clear_completed(self):
         self.items.completed().delete()
 
+    @property
+    def sse_subscriptions(self):
+        return {SSESubscription(TodoItemAdded, TODO_ITEMS_TOPIC)}
+
+    def _handle_sse_events(self, envelope: SSEEventEnvelope[TodoItemAdded]):
+        match envelope.event:
+            case TodoItemAdded(item_id=item_id) if envelope.source_session_id != self.session_id:
+                if item := self.items.filter(pk=item_id).first():
+                    yield BuildAndRender.append(
+                        "#todo-list",
+                        TodoItem,
+                        id=f"item-id-{item.id.hex}",
+                        item=item,
+                    )
+                else:
+                    yield SkipRender(self)
+            case TodoItemAdded():
+                yield SkipRender(self)
+
 
 class ListHeader(HtmxComponent):
     _template_name = "todo/ListHeader.html"
@@ -133,8 +157,8 @@ class TodoItem(HtmxComponent):
         else:
             return set()
 
-    def _handle_sse_events(self, event: SSEEvent[TodoItemUpdated | TodoItemRemoved]):
-        match event.event:
+    def _handle_sse_events(self, envelope: SSEEventEnvelope[TodoItemUpdated | TodoItemRemoved]):
+        match envelope.event:
             case TodoItemUpdated():
                 yield None
             case TodoItemRemoved():
@@ -181,11 +205,15 @@ class TodoCounter(HtmxComponent):
     @property
     def sse_subscriptions(self):
         return {
+            SSESubscription(TodoItemAdded, TODO_ITEMS_TOPIC),
             SSESubscription(TodoItemUpdated, TODO_ITEMS_TOPIC),
             SSESubscription(TodoItemRemoved, TODO_ITEMS_TOPIC),
         }
 
-    def _handle_sse_events(self, event: SSEEvent[TodoItemUpdated | TodoItemRemoved]):
+    def _handle_sse_events(
+        self,
+        envelope: SSEEventEnvelope[TodoItemAdded | TodoItemUpdated | TodoItemRemoved],
+    ):
         yield None
 
     @property
@@ -210,11 +238,12 @@ TODO_ITEMS_TOPIC = "todo.item"
 
 
 @receiver(post_save, sender=Item)
-def emit_todo_item_updated(sender, instance: Item, **kwargs):
+def emit_todo_item_updated(sender, instance: Item, created: bool, **kwargs):
     item_id = str(instance.pk)
+    event = TodoItemAdded(item_id) if created else TodoItemUpdated(item_id)
     run_on_commit(
         emit_sse_event,
-        TodoItemUpdated(item_id),
+        event,
         topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
     )
 
