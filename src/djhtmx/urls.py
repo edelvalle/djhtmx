@@ -137,8 +137,10 @@ async def sse_endpoint(request: HttpRequest):
         from . import settings
         from .sse import (
             get_async_conn,
+            get_sse_heartbeat_paces,
             refresh_sse_session_liveness,
             render_sse_event_fragments,
+            render_sse_heartbeat_fragments,
             sse_message,
             wake_channel,
         )
@@ -148,18 +150,34 @@ async def sse_endpoint(request: HttpRequest):
         channel = wake_channel(session_id)
         logger.debug("SSE [%s] stream subscribe channel=%s", session_id, channel)
         await pubsub.subscribe(channel)
+
+        heartbeat_due_at: dict[int, float] = {}
+        refresh_interval = settings.SESSION_REFRESH_INTERVAL
         last_refresh = 0.0
         try:
             logger.debug("SSE [%s] stream connected session", session_id)
             yield b": connected\n\n"
             while True:
+                # Keep the Redis keys alive for as long there is a SSE connection
                 now = time.monotonic()
-                if (
-                    settings.SESSION_REFRESH_INTERVAL
-                    and now - last_refresh >= settings.SESSION_REFRESH_INTERVAL
-                ):
+                if refresh_interval and now - last_refresh >= refresh_interval:
                     await refresh_sse_session_liveness(redis, session_id)
                     last_refresh = now
+
+                logger.debug("SSE [%s] draining heartbeat subscriptions", session_id)
+                heartbeat_paces = await get_sse_heartbeat_paces(redis, session_id)
+                for pace in heartbeat_paces - heartbeat_due_at.keys():
+                    heartbeat_due_at[pace] = now + pace
+                for stale_pace in heartbeat_due_at.keys() - heartbeat_paces:
+                    heartbeat_due_at.pop(stale_pace)
+                due_paces = {pace for pace, due_at in heartbeat_due_at.items() if now >= due_at}
+                if due_paces:
+                    for pace in due_paces:
+                        heartbeat_due_at[pace] = now + pace
+                    for fragment in await render_sse_heartbeat_fragments(
+                        redis, session_id, user, due_paces
+                    ):
+                        yield sse_message("djhtmx", fragment)
 
                 logger.debug("SSE [%s] draining session messages", session_id)
                 # This will drain the channel from messages at both connection time and later after
@@ -176,7 +194,11 @@ async def sse_endpoint(request: HttpRequest):
                 logger.debug(
                     "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
                 )
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=15)
+                timeout = 15
+                if heartbeat_due_at:
+                    next_heartbeat_tick = min(heartbeat_due_at.values())
+                    timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=timeout)
                 if not message:
                     yield b": heartbeat\n\n"
         except asyncio.CancelledError:
