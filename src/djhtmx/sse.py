@@ -140,14 +140,14 @@ def register_component(session_id: str, component: HtmxComponent, ttl: int = set
     id_ = consumer_id(session_id, component.id)
     indexes_key = consumer_indexes_key(id_)
     sync_redis_connection = get_sync_conn()
-    old_indexes = {_decode(index) for index in sync_redis_connection.smembers(indexes_key)}
+    old_indexes = sync_smembers_text(sync_redis_connection, indexes_key)
     new_indexes = {
         index_key(subscription.event_type, subscription.topic) for subscription in subscriptions
     }
 
     stale_indexes = old_indexes - new_indexes
     for key in stale_indexes:
-        get_sync_conn().srem(key, id_)
+        sync_redis_connection.srem(key, id_)
 
     if subscriptions:
         metadata = {
@@ -162,20 +162,20 @@ def register_component(session_id: str, component: HtmxComponent, ttl: int = set
                 for subscription in subscriptions
             ],
         }
-        get_sync_conn().set(consumer_key(id_), json.dumps(metadata), ex=ttl)
-        get_sync_conn().sadd(session_consumers_key(session_id), id_)
-        get_sync_conn().expire(session_consumers_key(session_id), ttl)
-        get_sync_conn().delete(indexes_key)
+        sync_redis_connection.set(consumer_key(id_), json.dumps(metadata), ex=ttl)
+        sync_redis_connection.sadd(session_consumers_key(session_id), id_)
+        sync_redis_connection.expire(session_consumers_key(session_id), ttl)
+        sync_redis_connection.delete(indexes_key)
         if new_indexes:
-            get_sync_conn().sadd(indexes_key, *new_indexes)
-            get_sync_conn().expire(indexes_key, ttl)
+            sync_redis_connection.sadd(indexes_key, *new_indexes)
+            sync_redis_connection.expire(indexes_key, ttl)
         for key in new_indexes:
-            get_sync_conn().sadd(key, id_)
-            get_sync_conn().expire(key, ttl)
+            sync_redis_connection.sadd(key, id_)
+            sync_redis_connection.expire(key, ttl)
     else:
-        get_sync_conn().delete(consumer_key(id_))
-        get_sync_conn().srem(session_consumers_key(session_id), id_)
-        get_sync_conn().delete(indexes_key)
+        sync_redis_connection.delete(consumer_key(id_))
+        sync_redis_connection.srem(session_consumers_key(session_id), id_)
+        sync_redis_connection.delete(indexes_key)
 
 
 @dataclass(slots=True)
@@ -190,17 +190,19 @@ def emit_sse_event(event: Any, *, topics: Iterable[str]):
     if type(event) not in SSE_LISTENERS:
         return
 
+    sync_redis_connection = get_sync_conn()
+
     event_type = event_type_name(type(event))
     consumer_topics: set[tuple[str, str]] = set()
     for topic in topics:
         key = index_key(event_type, topic)
         consumer_topics.update(
-            (_decode(consumer), topic) for consumer in get_sync_conn().smembers(key)
+            (consumer, topic) for consumer in sync_smembers_text(sync_redis_connection, key)
         )
 
     sessions: set[str] = set()
     for id_, topic in consumer_topics:
-        raw_metadata = get_sync_conn().get(consumer_key(id_))
+        raw_metadata = sync_get(sync_redis_connection, consumer_key(id_))
         if raw_metadata:
             metadata = json.loads(raw_metadata)
             session_id = metadata["session_id"]
@@ -210,14 +212,15 @@ def emit_sse_event(event: Any, *, topics: Iterable[str]):
                 topic=topic,
                 payload=event,
             )
-            get_sync_conn().rpush(
-                session_events_key(session_id), json.dumps(dataclasses.asdict(envelope))
+            sync_redis_connection.rpush(
+                session_events_key(session_id),
+                json.dumps(dataclasses.asdict(envelope)),
             )
-            get_sync_conn().expire(session_events_key(session_id), settings.SESSION_TTL)
+            sync_redis_connection.expire(session_events_key(session_id), settings.SESSION_TTL)
             sessions.add(session_id)
 
     for session_id in sessions:
-        get_sync_conn().publish(wake_channel(session_id), "1")
+        sync_redis_connection.publish(wake_channel(session_id), "1")
 
 
 _async_conns: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, async_redis.Redis] = (
@@ -250,7 +253,7 @@ def decode_event(envelope: EventEnvelope) -> SSEEvent[Any]:
 
 async def load_consumer_metadata(id_: str) -> dict[str, Any] | None:
     conn = get_async_conn()
-    raw_metadata = await conn.get(consumer_key(id_))
+    raw_metadata = await async_get(conn, consumer_key(id_))
     if raw_metadata:
         return json.loads(raw_metadata)
 
@@ -268,7 +271,7 @@ async def render_sse_events(session_id: str, user) -> str:
 
 async def render_sse_event_fragments(session_id: str, user) -> list[str]:
     conn = get_async_conn()
-    raw_events = await conn.lrange(session_events_key(session_id), 0, -1)
+    raw_events = await async_lrange(conn, session_events_key(session_id), 0, -1)
     if raw_events:
         await conn.delete(session_events_key(session_id))
 
@@ -344,3 +347,28 @@ def _render_consumer_sse_events(
 
 def _decode(value: bytes | str) -> str:
     return value.decode() if isinstance(value, bytes) else value
+
+
+# async_redis and redis cheat in the type hints; these are just "collection" of the `type: ignore`
+# we need because the upstream library is not correctly typed.
+
+
+def sync_smembers_text(conn: redis.Redis, key: str) -> set[str]:
+    return {_decode(member) for member in conn.smembers(key)}  # type: ignore
+
+
+def sync_get(conn: redis.Redis, key: str) -> bytes | str | None:
+    return conn.get(key)  # type: ignore
+
+
+async def async_get(conn: async_redis.Redis, key: str) -> bytes | str | None:
+    return await conn.get(key)  # type: ignore
+
+
+async def async_lrange(
+    conn: async_redis.Redis,
+    key: str,
+    start: int,
+    end: int,
+) -> list[bytes | str]:
+    return await conn.lrange(key, start, end)  # type: ignore
