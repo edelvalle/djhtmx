@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 import random
 import typing as t
 from dataclasses import dataclass
 from enum import StrEnum
 
+from django.db import transaction
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
 from pydantic import Field
 
 from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, HtmxComponent, Query, SkipRender
+from djhtmx.sse import SSEEvent, SSESubscription, emit_sse_event
 
 from .models import Item
 
@@ -40,6 +46,16 @@ class BaseQueryFilter(HtmxComponent, public=False):
 @dataclass(slots=True)
 class SetEditing:
     item: Item | None
+
+
+@dataclass(slots=True)
+class TodoItemUpdated:
+    item_id: str
+
+
+@dataclass(slots=True)
+class TodoItemRemoved:
+    item_id: str
 
 
 class TodoList(BaseToggleFilter, BaseQueryFilter):
@@ -103,19 +119,40 @@ class ListHeader(HtmxComponent):
 class TodoItem(HtmxComponent):
     _template_name = "todo/TodoItem.html"
 
-    item: Item
+    item: Item | None
     editing: bool = False
 
+    @property
+    def sse_subscriptions(self):
+        if self.item:
+            topic = todo_item_topic(str(self.item.pk))
+            return {
+                SSESubscription(TodoItemUpdated, topic),
+                SSESubscription(TodoItemRemoved, topic),
+            }
+        else:
+            return set()
+
+    def _handle_sse_events(self, event: SSEEvent[TodoItemUpdated | TodoItemRemoved]):
+        match event.event:
+            case TodoItemUpdated():
+                yield None
+            case TodoItemRemoved():
+                yield Destroy(self.id)
+
     def delete(self):
-        self.item.delete()
+        if self.item:
+            self.item.delete()
         yield Destroy(self.id)
 
     def completed(self, completed: bool = False):
-        self.item.completed = completed
-        self.item.save()
+        if self.item:
+            self.item.completed = completed
+            self.item.save()
+        yield SkipRender(self)
 
     def toggle_editing(self):
-        if not self.item.completed:
+        if self.item and not self.item.completed:
             self.editing = not self.editing
         if self.editing:
             yield Focus(f"#{self.id} input[name=text]")
@@ -124,8 +161,9 @@ class TodoItem(HtmxComponent):
             yield Emit(SetEditing(item=None))
 
     def save(self, text):
-        self.item.text = text
-        self.item.save()
+        if self.item:
+            self.item.text = text
+            self.item.save()
         if self.editing:
             yield from self.toggle_editing()
 
@@ -141,8 +179,14 @@ class TodoCounter(HtmxComponent):
         sleep(random.random() * 3 + 0.5)
 
     @property
-    def subscriptions(self) -> set[str]:
-        return {"todo.item"}
+    def sse_subscriptions(self):
+        return {
+            SSESubscription(TodoItemUpdated, TODO_ITEMS_TOPIC),
+            SSESubscription(TodoItemRemoved, TODO_ITEMS_TOPIC),
+        }
+
+    def _handle_sse_events(self, event: SSEEvent[TodoItemUpdated | TodoItemRemoved]):
+        yield None
 
     @property
     def items(self):
@@ -156,3 +200,32 @@ class TodoFilter(HtmxComponent):
     def set_query(self, query: str = ""):
         self.query = query.strip()
         yield Emit(FilterChanged(self.query))
+
+
+def todo_item_topic(item_id: str):
+    return f"{TODO_ITEMS_TOPIC}.{item_id}"
+
+
+TODO_ITEMS_TOPIC = "todo.item"
+
+
+@receiver(post_save, sender=Item)
+def emit_todo_item_updated(sender, instance: Item, **kwargs):
+    item_id = str(instance.pk)
+    transaction.on_commit(
+        lambda: emit_sse_event(
+            TodoItemUpdated(item_id),
+            topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
+        )
+    )
+
+
+@receiver(post_delete, sender=Item)
+def emit_todo_item_removed(sender, instance: Item, **kwargs):
+    item_id = str(instance.pk)
+    transaction.on_commit(
+        lambda: emit_sse_event(
+            TodoItemRemoved(item_id),
+            topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
+        )
+    )
