@@ -23,19 +23,20 @@ emit_sse_event(
 
 The function is synchronous and fire-and-forget. It does not wait for any browser to receive the event, does not render components, and does not report how many components were affected.
 
-Use `transaction.on_commit` when the event describes database state that must be committed before consumers render:
+Use `djhtmx.utils.run_on_commit` when the event describes database state that must be committed before consumers render:
 
 ```python
-from django.db import transaction
 from djhtmx.sse import emit_sse_event
+from djhtmx.utils import run_on_commit
 
-transaction.on_commit(
-    lambda: emit_sse_event(
-        ReportPDFEvent(task_id=task.id, status=task.status),
-        topics={f"pdf-task:{task.id}"},
-    )
+run_on_commit(
+    emit_sse_event,
+    ReportPDFEvent(task_id=task.id, status=task.status),
+    topics={f"pdf-task:{task.id}"},
 )
 ```
+
+Do not call Django's `transaction.on_commit` directly for SSE emits that need to preserve djhtmx context. `run_on_commit` captures the current Python context before registering the commit callback, so context-local SSE metadata such as the source djhtmx session remains available when the callback eventually runs.
 
 `topics` are application-defined strings. A topic should be stable and specific enough to avoid waking unrelated components.
 
@@ -92,18 +93,19 @@ Rules:
 - If a component defines `sse_subscriptions` but not `_handle_sse_events`, djhtmx may warn and the component is not SSE-enabled.
 - If a component defines `_handle_sse_events` but not `sse_subscriptions`, djhtmx may warn and the component is not SSE-enabled.
 
-### `SSEEvent`
+### `SSEEventEnvelope`
 
-The handler receives an `SSEEvent[E]`, not the raw event directly.
+The handler receives an `SSEEventEnvelope[E]`, not the raw event directly.
 
 ```python
 @dataclass(slots=True, frozen=True)
-class SSEEvent[E]:
+class SSEEventEnvelope[E]:
     event: E
     topic: str
+    source_session_id: str | None = None
 ```
 
-`event.event` is the typed payload originally passed to `emit_sse_event`. `event.topic` is the topic that matched this component's subscription.
+`envelope.event` is the typed payload originally passed to `emit_sse_event`. `envelope.topic` is the topic that matched this component's subscription. `envelope.source_session_id` is the djhtmx session that emitted the event, when the event originated from a djhtmx request.
 
 ### `_handle_sse_events`
 
@@ -111,11 +113,11 @@ class SSEEvent[E]:
 
 ```python
 from djhtmx.component import Render, SkipRender
-from djhtmx.sse import SSEEvent
+from djhtmx.sse import SSEEventEnvelope
 
 class PDFButton(HtmxComponent):
-    def _handle_sse_events(self, event: SSEEvent[PDFTaskChanged]):
-        match event.event.status:
+    def _handle_sse_events(self, envelope: SSEEventEnvelope[PDFTaskChanged]):
+        match envelope.event.status:
             case "done" | "failed":
                 yield None
             case _:

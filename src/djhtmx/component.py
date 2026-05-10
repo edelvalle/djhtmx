@@ -440,6 +440,7 @@ class HtmxComponent(BaseModel):
     id: Annotated[str, Field(default_factory=generate_id)]
 
     user: Annotated[Any | None, Field(exclude=True)]  # type: ignore
+    session_id: Annotated[str | None, Field(default=None, exclude=True)] = None
     if TYPE_CHECKING:
         from django.contrib.auth.models import AbstractBaseUser
 

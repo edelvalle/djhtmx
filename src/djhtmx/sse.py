@@ -7,6 +7,8 @@ import logging
 import weakref
 from collections import defaultdict
 from collections.abc import Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, NamedTuple, Union, get_args, get_origin, get_type_hints
 
@@ -18,13 +20,9 @@ from pydantic import BaseModel
 from xotl.tools.objects import import_object
 
 from . import json, settings
-from .component import Destroy, Emit, HtmxComponent, Render, SkipRender
+from .component import BuildAndRender, Destroy, Emit, HtmxComponent, Render, SkipRender
 from .introspection import _extract_event_types, _resolve_typevars, _substitute_typevars
 from .utils import compact_hash
-
-logger = logging.getLogger(__name__)
-
-SSE_LISTENERS: dict[type, set[type[HtmxComponent]]] = defaultdict(set)
 
 
 class SSESubscription(NamedTuple):
@@ -33,9 +31,10 @@ class SSESubscription(NamedTuple):
 
 
 @dataclass(slots=True, frozen=True)
-class SSEEvent[E]:
+class SSEEventEnvelope[E]:
     event: E
     topic: str
+    source_session_id: str | None = None
 
 
 def event_type_name(event_type: type) -> str:
@@ -72,14 +71,15 @@ def index_key(event_type: type | str, topic: str) -> str:
 
 
 def get_sse_event_handler_event_types(f, owner: type | None = None) -> set[type]:
-    event = get_type_hints(f)["event"]
+    hints = get_type_hints(f)
+    event = next(annotation for name, annotation in hints.items() if name != "return")
     if owner is not None:
         typevar_map = _resolve_typevars(owner)
         if typevar_map:
             event = _substitute_typevars(event, typevar_map)
 
     origin = get_origin(event)
-    if origin is not SSEEvent:
+    if origin is not SSEEventEnvelope:
         return set()
 
     args = get_args(event)
@@ -184,12 +184,27 @@ class EventEnvelope[P]:
     event_type: str
     topic: str
     payload: P
+    source_session_id: str | None = None
 
 
-def emit_sse_event(event: Any, *, topics: Iterable[str]):
+@contextmanager
+def sse_source_session(session_id: str):
+    token = _SOURCE_SESSION_ID.set(session_id)
+    try:
+        yield
+    finally:
+        _SOURCE_SESSION_ID.reset(token)
+
+
+def current_source_session_id() -> str | None:
+    return _SOURCE_SESSION_ID.get()
+
+
+def emit_sse_event(event: Any, *, topics: Iterable[str], source_session_id: str | None = None):
     if type(event) not in SSE_LISTENERS:
         return
 
+    source_session_id = source_session_id or current_source_session_id()
     sync_redis_connection = get_sync_conn()
 
     event_type = event_type_name(type(event))
@@ -211,6 +226,7 @@ def emit_sse_event(event: Any, *, topics: Iterable[str]):
                 event_type=event_type,
                 topic=topic,
                 payload=event,
+                source_session_id=source_session_id,
             )
             sync_redis_connection.rpush(
                 session_events_key(session_id),
@@ -239,7 +255,7 @@ def get_async_conn() -> async_redis.Redis:
     return _async_conns[loop]
 
 
-def decode_event(envelope: EventEnvelope) -> SSEEvent[Any]:
+def decode_event(envelope: EventEnvelope) -> SSEEventEnvelope[Any]:
     event_type = import_object(envelope.event_type)
     payload = envelope.payload
     if inspect.isclass(event_type) and issubclass(event_type, BaseModel):
@@ -248,7 +264,11 @@ def decode_event(envelope: EventEnvelope) -> SSEEvent[Any]:
         event = event_type(**payload)
     else:
         event = event_type(payload)
-    return SSEEvent(event=event, topic=envelope.topic)
+    return SSEEventEnvelope(
+        event=event,
+        topic=envelope.topic,
+        source_session_id=envelope.source_session_id,
+    )
 
 
 async def load_consumer_metadata(id_: str) -> dict[str, Any] | None:
@@ -330,6 +350,11 @@ def _render_consumer_sse_events(
                 case Render(component=rendered):
                     rendered_self = rendered_self or rendered.id == component.id
                     result.append(str(repo.render_html(rendered, oob=command.oob or "true")))
+                case BuildAndRender(
+                    component=component_type, state=state, oob=oob, parent_id=parent_id
+                ):
+                    rendered = repo.build(component_type.__name__, state, parent_id=parent_id)
+                    result.append(str(repo.render_html(rendered, oob=oob)))
                 case Destroy(component_id):
                     repo.unregister_component(component_id)
                     result.append(
@@ -372,3 +397,11 @@ async def async_lrange(
     end: int,
 ) -> list[bytes | str]:
     return await conn.lrange(key, start, end)  # type: ignore
+
+
+logger = logging.getLogger(__name__)
+
+SSE_LISTENERS: dict[type, set[type[HtmxComponent]]] = defaultdict(set)
+_SOURCE_SESSION_ID: ContextVar[str | None] = ContextVar(
+    "djhtmx_sse_source_session_id", default=None
+)

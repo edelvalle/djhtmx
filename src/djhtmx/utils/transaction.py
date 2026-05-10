@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from contextvars import copy_context
 from typing import Any
 
 from django.db.transaction import on_commit as django_on_commit
@@ -15,4 +16,5 @@ def run_on_commit[**P](f: Callable[P, Any], *args: P.args, **kwargs: P.kwargs):
     if is_testing():
         f(*args, **kwargs)
     else:  # pragma: no cover
-        django_on_commit(lambda: f(*args, **kwargs))
+        context = copy_context()
+        django_on_commit(lambda: context.run(f, *args, **kwargs))

@@ -32,7 +32,7 @@ Primary motivating use cases:
 
 Components opt in by declaring SSE subscriptions and implementing a handler for matching SSE events. Both pieces are required.
 
-`SSESubscription` should be a `NamedTuple`, and delivered events should be wrapped in `SSEEvent` so handlers can inspect both the typed event payload and the topic that delivered it:
+`SSESubscription` should be a `NamedTuple`, and delivered events should be wrapped in `SSEEventEnvelope` so handlers can inspect both the typed event payload and the topic that delivered it:
 
 ```python
 from dataclasses import dataclass
@@ -43,9 +43,10 @@ class SSESubscription(NamedTuple):
     topic: str
 
 @dataclass(slots=True, frozen=True)
-class SSEEvent[E]:
+class SSEEventEnvelope[E]:
     event: E
     topic: str
+    source_session_id: str | None = None
 ```
 
 Example component:
@@ -58,7 +59,7 @@ class MyComponent(HtmxComponent):
             SSESubscription(ReportPDFEvent, topic=f"pdf-task:{self.task_id}"),
         }
 
-    def _handle_sse_event(self, event: SSEEvent[ReportPDFEvent | SomeOtherEvent]):
+    def _handle_sse_event(self, event: SSEEventEnvelope[ReportPDFEvent | SomeOtherEvent]):
         match event.event:
             case ReportPDFEvent(status="done"):
                 yield None  # default full render
@@ -76,7 +77,7 @@ Rules:
 - `_handle_sse_event` is only called for events delivered by the SSE bus.
 - Existing `_handle_event` remains the regular backend event listener mechanism and is unchanged.
 - Existing `subscriptions` remains unchanged and should not be overloaded for SSE.
-- `_handle_sse_event` receives `SSEEvent[Event1 | Event2]`, where `.event` is the typed payload and `.topic` is the matching topic.
+- `_handle_sse_event` receives `SSEEventEnvelope[Event1 | Event2]`, where `.event` is the typed payload and `.topic` is the matching topic.
 - `yield None` means “perform the default full render of this component”.
 - `yield SkipRender(self)` means “consume this SSE event but do not render this component”.
 - Explicit `Render(...)`, `Destroy(...)`, `Focus(...)`, `Open(...)`, etc. commands are allowed.
@@ -584,7 +585,7 @@ class TodoItem(HtmxComponent):
             SSESubscription(SSEModelEvent, topic=f"todo.item.{self.item.pk}.deleted"),
         }
 
-    def _handle_sse_event(self, event: SSEEvent[SSEModelEvent]):
+    def _handle_sse_event(self, event: SSEEventEnvelope[SSEModelEvent]):
         match event.event.action:
             case "updated":
                 self.__dict__.pop("item", None)
@@ -604,7 +605,7 @@ class TodoList(HtmxComponent):
             SSESubscription(SSEModelEvent, topic="todo.item.deleted"),
         }
 
-    def _handle_sse_event(self, event: SSEEvent[SSEModelEvent]):
+    def _handle_sse_event(self, event: SSEEventEnvelope[SSEModelEvent]):
         match event.event.action:
             case "created":
                 yield None
@@ -628,7 +629,7 @@ class PDFButton(BasePDFButton):
             return {SSESubscription(PDFTaskChanged, topic=f"pdf-task:{self.task_id}")}
         return set()
 
-    def _handle_sse_event(self, event: SSEEvent[PDFTaskChanged]):
+    def _handle_sse_event(self, event: SSEEventEnvelope[PDFTaskChanged]):
         self.__dict__.pop("task", None)
 
         match event.event.status:
@@ -660,7 +661,7 @@ class NotificationsToastList(HtmxComponent):
             )
         }
 
-    def _handle_sse_event(self, event: SSEEvent[NotificationToastChanged]):
+    def _handle_sse_event(self, event: SSEEventEnvelope[NotificationToastChanged]):
         notification_ids = {m.id for m in self.messages}
 
         if notification_ids != (self.last_notification_ids or set()):

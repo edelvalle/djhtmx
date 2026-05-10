@@ -173,12 +173,15 @@ class Repository:
         event_data: dict[str, Any],
     ) -> AsyncIterable[ProcessedCommand]:
         commands = CommandQueue([Execute(component_id, event_handler, event_data)])
+        from .sse import sse_source_session
+
         # Command loop
         try:
-            while commands:
-                processed_commands = self._run_command(commands)
-                while command := await db(next)(processed_commands, None):
-                    yield command
+            with sse_source_session(self.session.id):
+                while commands:
+                    processed_commands = self._run_command(commands)
+                    while command := await db(next)(processed_commands, None):
+                        yield command
         except ValidationError as e:
             # This is here to detect validation errors derived from an invalid User
             # Meaning that the user type is not the right one so a login redirect has to happen
@@ -198,11 +201,13 @@ class Repository:
         event_data: dict[str, Any],
     ) -> Iterable[ProcessedCommand]:
         commands = CommandQueue([Execute(component_id, event_handler, event_data)])
+        from .sse import sse_source_session
 
         # Command loop
         try:
-            while commands:
-                yield from self._run_command(commands)
+            with sse_source_session(self.session.id):
+                while commands:
+                    yield from self._run_command(commands)
         except ValidationError as e:
             # This is here to detect validation errors derived from an invalid User
             # Meaning that the user type is not the right one so a login redirect has to happen
@@ -425,6 +430,7 @@ class Repository:
             # Inject component name and user
             kwargs = state | {
                 "hx_name": component_name,
+                "session_id": self.session.id,
                 "user": None if isinstance(self.user, AnonymousUser) else self.user,
             }
             component = REGISTRY[component_name](**kwargs)
