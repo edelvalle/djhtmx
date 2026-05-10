@@ -119,6 +119,7 @@ async def sse_endpoint(request: HttpRequest):
     if not isinstance(request, ASGIRequest):
         return HttpResponse("SSE requires ASGI", status=HTTPStatus.NOT_IMPLEMENTED)
 
+    user = getattr(request, "user", None)
     query = cast(QueryDict, request.GET)
     session = query.get("session")
     if not session:
@@ -137,40 +138,38 @@ async def sse_endpoint(request: HttpRequest):
         redis = get_async_conn()
         pubsub = redis.pubsub()
         channel = wake_channel(session_id)
-        logger.debug("SSE stream subscribe session=%s channel=%s", session_id, channel)
+        logger.debug("SSE [%s] stream subscribe channel=%s", session_id, channel)
         await pubsub.subscribe(channel)
         try:
-            logger.debug("SSE stream connected session=%s", session_id)
+            logger.debug("SSE [%s] stream connected session", session_id)
+            yield b": connected\n\n"
             while True:
-                fragments = await render_sse_event_fragments(
-                    session_id,
-                    getattr(request, "user", None),
+                logger.debug("SSE [%s] draining session messages", session_id)
+                # This will drain the channel from messages at both connection time and later after
+                # a message is received (reentering the loop).
+                #
+                # Caveat: if the Redis pub/sub connection disconnects or the worker is restarted
+                # during that interval, the pub/sub wake can be lost.  That is why the loop drains
+                # pending events at the top before sleeping.  In that failure case, the event
+                # remains queued, but without another wake it might wait until the next heartbeat
+                # timeout or another publish causes the loop to check again.  Current timeout is
+                # 15s, so worst-case delay is roughly heartbeat interval.
+                for fragment in await render_sse_event_fragments(session_id, user):
+                    yield sse_message("djhtmx", fragment)
+                logger.debug(
+                    "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
                 )
-                if fragments:
-                    for fragment in fragments:
-                        yield sse_message("djhtmx", fragment)
-                else:
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
-                        timeout=15,
-                    )
-                    if message:
-                        fragments = await render_sse_event_fragments(
-                            session_id,
-                            getattr(request, "user", None),
-                        )
-                        for fragment in fragments:
-                            yield sse_message("djhtmx", fragment)
-                    else:
-                        yield b": heartbeat\n\n"
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=15)
+                if not message:
+                    yield b": heartbeat\n\n"
         except asyncio.CancelledError:
-            logger.info("SSE stream cancelled session=%s", session_id)
+            logger.info("SSE [%s] stream cancelled", session_id)
             raise
         except Exception:
-            logger.exception("SSE stream error session=%s", session_id)
+            logger.exception("SSE [%s] stream error", session_id)
             raise
         finally:
-            logger.debug("SSE stream closing session=%s channel=%s", session_id, channel)
+            logger.debug("SSE [%s] stream closing channel=%s", session_id, channel)
             await pubsub.unsubscribe(channel)
             await pubsub.close()
 
