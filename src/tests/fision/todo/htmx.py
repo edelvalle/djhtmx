@@ -5,13 +5,13 @@ import typing as t
 from dataclasses import dataclass
 from enum import StrEnum
 
-from django.db import transaction
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from pydantic import Field
 
 from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, HtmxComponent, Query, SkipRender
 from djhtmx.sse import SSEEvent, SSESubscription, emit_sse_event
+from djhtmx.utils import run_on_commit
 
 from .models import Item
 
@@ -113,7 +113,7 @@ class ListHeader(HtmxComponent):
 
     def add(self, new_item: str):
         item = Item.objects.create(text=new_item)
-        yield BuildAndRender.append("#todo-list", TodoItem, id=f"item-{item.id}", item=item)
+        yield BuildAndRender.append("#todo-list", TodoItem, id=f"item-id-{item.id.hex}", item=item)
 
 
 class TodoItem(HtmxComponent):
@@ -212,20 +212,18 @@ TODO_ITEMS_TOPIC = "todo.item"
 @receiver(post_save, sender=Item)
 def emit_todo_item_updated(sender, instance: Item, **kwargs):
     item_id = str(instance.pk)
-    transaction.on_commit(
-        lambda: emit_sse_event(
-            TodoItemUpdated(item_id),
-            topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
-        )
+    run_on_commit(
+        emit_sse_event,
+        TodoItemUpdated(item_id),
+        topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
     )
 
 
 @receiver(post_delete, sender=Item)
 def emit_todo_item_removed(sender, instance: Item, **kwargs):
     item_id = str(instance.pk)
-    transaction.on_commit(
-        lambda: emit_sse_event(
-            TodoItemRemoved(item_id),
-            topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
-        )
+    run_on_commit(
+        emit_sse_event,
+        TodoItemRemoved(item_id),
+        topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
     )
