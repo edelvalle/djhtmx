@@ -99,7 +99,7 @@ pyright:
 .PHONY: pyright
 
 
-SERVER_CMD ?= granian --reload --reload-paths . --port 8000 --access-log --workers 1 --workers-kill-timeout 1s --interface asginl fision.asgi:application
+SERVER_CMD ?= granian --reload --reload-paths fision --reload-paths ../djhtmx --port 8000 --access-log --workers 1 --workers-kill-timeout 1s --interface asginl fision.asgi:application
 
 run: install
 	@$(RUN) python src/tests/manage.py migrate
