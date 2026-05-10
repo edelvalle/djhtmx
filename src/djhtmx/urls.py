@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from functools import partial
 from http import HTTPStatus
 from typing import assert_never, cast
@@ -29,6 +30,7 @@ from .introspection import parse_request_data
 from .repo import Repository
 from .tracing import htmx_headers_as_tags, sentry_tags, tracing_span
 
+logger = logging.getLogger(__name__)
 signer = Signer()
 
 
@@ -130,36 +132,46 @@ async def sse_endpoint(request: HttpRequest):
     await asyncio.sleep(0)
 
     async def stream():
-        from .sse import get_async_conn, render_sse_events, sse_message, wake_channel
+        from .sse import get_async_conn, render_sse_event_fragments, sse_message, wake_channel
 
         redis = get_async_conn()
         pubsub = redis.pubsub()
-        await pubsub.subscribe(wake_channel(session_id))
+        channel = wake_channel(session_id)
+        logger.debug("SSE stream subscribe session=%s channel=%s", session_id, channel)
+        await pubsub.subscribe(channel)
         try:
-            yield b": connected\n\n"
+            logger.debug("SSE stream connected session=%s", session_id)
             while True:
-                html = await render_sse_events(
+                fragments = await render_sse_event_fragments(
                     session_id,
                     getattr(request, "user", None),
                 )
-                if html:
-                    yield sse_message("djhtmx", html)
+                if fragments:
+                    for fragment in fragments:
+                        yield sse_message("djhtmx", fragment)
                 else:
                     message = await pubsub.get_message(
                         ignore_subscribe_messages=True,
                         timeout=15,
                     )
                     if message:
-                        html = await render_sse_events(
+                        fragments = await render_sse_event_fragments(
                             session_id,
                             getattr(request, "user", None),
                         )
-                        if html:
-                            yield sse_message("djhtmx", html)
+                        for fragment in fragments:
+                            yield sse_message("djhtmx", fragment)
                     else:
                         yield b": heartbeat\n\n"
+        except asyncio.CancelledError:
+            logger.info("SSE stream cancelled session=%s", session_id)
+            raise
+        except Exception:
+            logger.exception("SSE stream error session=%s", session_id)
+            raise
         finally:
-            await pubsub.unsubscribe(wake_channel(session_id))
+            logger.debug("SSE stream closing session=%s channel=%s", session_id, channel)
+            await pubsub.unsubscribe(channel)
             await pubsub.close()
 
     return StreamingHttpResponse(

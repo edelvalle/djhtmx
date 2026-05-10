@@ -167,7 +167,7 @@ The component is hidden and uses the HTMX SSE extension. Conceptually its HTML i
 
 ```html
 <div hidden hx-ext="sse" sse-connect="/_htmx/_sse/connect?session=...">
-  <div sse-swap="djhtmx" hx-swap="none"></div>
+  <div sse-swap="djhtmx"></div>
 </div>
 ```
 
@@ -420,13 +420,11 @@ The extension provides:
      hidden
      hx-ext="sse"
      sse-connect="/_htmx/_sse/connect?session=...">
-  <div sse-swap="djhtmx" hx-swap="none"></div>
+  <div sse-swap="djhtmx"></div>
 </div>
 ```
 
-The inner element listens for `event: djhtmx`. `hx-swap="none"` prevents visible insertion into the hidden listener while still allowing HTMX to process OOB fragments.
-
-A prototype must confirm that OOB processing works with `hx-swap="none"` in the SSE extension path. If it does not, the listener can use a hidden target and a different swap strategy, or `htmx:sseBeforeMessage` can be intercepted.
+The inner element listens for `event: djhtmx`. The router is hidden, so the normal swap target is not visible, while HTMX still processes OOB fragments from the SSE payload.
 
 ### SSE payload format
 
@@ -449,7 +447,7 @@ data: <div id="hx-a" hx-swap-oob="delete"></div>
 The browser does not inspect `SSESubscription`. Browser-side routing is DOM/OOB-based:
 
 1. The SSE extension receives the `djhtmx` event.
-2. HTMX swaps the payload with `hx-swap="none"` on the listener.
+2. HTMX swaps the payload into the hidden listener.
 3. HTMX applies all OOB fragments.
 4. Each OOB fragment targets the existing element with the same `id`.
 

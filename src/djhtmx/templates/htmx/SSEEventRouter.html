@@ -4,5 +4,5 @@
      hidden
      hx-ext="sse"
      sse-connect="{% url 'djhtmx.sse' %}?session={{ htmx_repo.session_signed_id|urlencode }}">
-  <div sse-swap="djhtmx" hx-swap="none"></div>
+  <div sse-swap="djhtmx"></div>
 </div>

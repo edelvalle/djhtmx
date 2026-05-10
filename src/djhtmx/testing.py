@@ -4,6 +4,7 @@ from functools import reduce
 from typing import Any, ParamSpec, TypeVar
 from urllib.parse import urlparse
 
+from asgiref.sync import async_to_sync
 from django.contrib.auth.models import AnonymousUser
 from django.test import Client
 from lxml import html
@@ -56,8 +57,9 @@ class Htmx:
         assert session_id, "Can't find djhtmx session id"
         session_id = signer.unsign(session_id)
 
+        self.user = response.context.get("user") or AnonymousUser()
         self.repo = Repository(
-            user=response.context.get("user") or AnonymousUser(),
+            user=self.user,
             session=Session(session_id),
             params=get_params(self.query_string),
         )
@@ -161,31 +163,7 @@ class Htmx:
         for command in commands:
             match command:
                 case SendHtml(content):
-                    incoming = html.fromstring(content)
-                    oob: str = incoming.attrib["hx-swap-oob"]
-                    if oob == "true":
-                        target = self.dom.get_element_by_id(incoming.attrib["id"])
-                        parent = target.getparent()
-                        if parent is not None:
-                            parent.replace(target, incoming)
-                    elif oob.startswith("beforeend: "):
-                        target_selector = oob.removeprefix("beforeend: ")
-                        [target] = self.dom.cssselect(target_selector)
-                        target.append(incoming.getchildren()[0])
-                    elif oob.startswith("afterbegin: "):
-                        target_selector = oob.removeprefix("afterbegin: ")
-                        [target] = self.dom.cssselect(target_selector)
-                        target.insert(0, incoming.getchildren()[0])
-                    elif oob.startswith("afterend: "):
-                        target_selector = oob.removeprefix("afterend: ")
-                        [target] = self.dom.cssselect(target_selector)
-                        target.addnext(incoming.getchildren()[0])
-                    elif oob.startswith("beforebegin: "):
-                        target_selector = oob.removeprefix("afterend: ")
-                        [target] = self.dom.cssselect(target_selector)
-                        target.addprevious(incoming.getchildren()[0])
-                    else:
-                        assert False, "Unknown swap strategy, please define it here"
+                    self._apply_oob_html(str(content))
 
                 case Destroy(component_id):
                     target = self.dom.get_element_by_id(component_id)
@@ -204,5 +182,50 @@ class Htmx:
                 case Focus() | ScrollIntoView() | DispatchDOMEvent():
                     pass
 
+        if sse_html := async_to_sync(self._render_sse_events)():
+            self._apply_oob_html(sse_html)
+
         if navigate_to_url:
             self.navigate_to(navigate_to_url)
+
+    async def _render_sse_events(self):
+        from .sse import render_sse_events
+
+        return await render_sse_events(self.repo.session.id, self.user)
+
+    def _apply_oob_html(self, content: str):
+        fragments = [
+            fragment
+            for fragment in html.fragments_fromstring(content)
+            if isinstance(fragment, html.HtmlElement)
+        ]
+        for incoming in fragments:
+            oob: str = incoming.attrib["hx-swap-oob"]
+            if oob == "true":
+                target = self.dom.get_element_by_id(incoming.attrib["id"])
+                parent = target.getparent()
+                if parent is not None:
+                    parent.replace(target, incoming)
+            elif oob.startswith("beforeend: "):
+                target_selector = oob.removeprefix("beforeend: ")
+                [target] = self.dom.cssselect(target_selector)
+                target.append(incoming.getchildren()[0])
+            elif oob.startswith("afterbegin: "):
+                target_selector = oob.removeprefix("afterbegin: ")
+                [target] = self.dom.cssselect(target_selector)
+                target.insert(0, incoming.getchildren()[0])
+            elif oob.startswith("afterend: "):
+                target_selector = oob.removeprefix("afterend: ")
+                [target] = self.dom.cssselect(target_selector)
+                target.addnext(incoming.getchildren()[0])
+            elif oob.startswith("beforebegin: "):
+                target_selector = oob.removeprefix("afterend: ")
+                [target] = self.dom.cssselect(target_selector)
+                target.addprevious(incoming.getchildren()[0])
+            elif oob == "delete":
+                target = self.dom.get_element_by_id(incoming.attrib["id"])
+                parent = target.getparent()
+                if parent is not None:
+                    parent.remove(target)
+            else:
+                assert False, "Unknown swap strategy, please define it here"

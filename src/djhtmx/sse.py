@@ -259,6 +259,10 @@ def sse_message(event: str, data: str) -> bytes:
 
 
 async def render_sse_events(session_id: str, user) -> str:
+    return "\n".join(await render_sse_event_fragments(session_id, user))
+
+
+async def render_sse_event_fragments(session_id: str, user) -> list[str]:
     conn = get_async_conn()
     raw_events = await conn.lrange(session_events_key(session_id), 0, -1)
     if raw_events:
@@ -282,7 +286,7 @@ async def render_sse_events(session_id: str, user) -> str:
             )
             html.extend(rendered)
 
-    return "\n".join(html)
+    return html
 
 
 def _render_consumer_sse_events(
