@@ -139,7 +139,7 @@ The first version is focused on commands that can be represented as HTML/OOB upd
 - default render via `None`;
 - `Destroy`.
 
-Browser commands such as `Focus`, `ScrollIntoView`, `Open`, `Redirect`, `PushURL`, and `ReplaceURL` need a later command-carrier design for SSE because SSE payloads cannot use HTMX response headers.
+`Open` is supported through a strict session-scoped browser command sink in `SSEEventRouter`. Other browser commands such as `Focus`, `ScrollIntoView`, `Redirect`, `PushURL`, and `ReplaceURL` need a later command-carrier design for SSE because SSE payloads cannot use HTMX response headers.
 
 The command `Emit` is ignored, logged as an error, and won't be supported in any future release.  Simply stated, SSE events and internal in-process events (`Emit`) are very different architecturally.
 
@@ -461,10 +461,32 @@ The extension provides:
      hx-ext="sse"
      sse-connect="/_htmx/_sse/connect?session=...">
   <div sse-swap="djhtmx"></div>
+  <div id="djhtmx-sse-commands-abc123"
+       data-djhtmx-sse-command-sink="abc123"
+       hidden></div>
 </div>
 ```
 
 The inner element listens for `event: djhtmx`. The router is hidden, so the normal swap target is not visible, while HTMX still processes OOB fragments from the SSE payload.
+
+### Browser command sink
+
+`SSEEventRouter` includes a hidden, session-scoped command sink. Commands are accepted only when HTMX OOB-swaps them into this sink and their `data-session` value matches the sink's session hash.
+
+`Open` commands are encoded as inert HTML attributes, not JSON:
+
+```html
+<div hx-swap-oob="beforeend: #djhtmx-sse-commands-abc123">
+  <div data-command="open"
+       data-session="abc123"
+       data-url="/files/report.pdf"
+       data-name="report.pdf"
+       data-target="_blank"
+       data-rel="noopener noreferrer"></div>
+</div>
+```
+
+The browser processor is intentionally picky: it only processes commands inside the matching sink, only accepts known command names, requires same-origin URLs for `open`, restricts targets to known browser target names, and removes each command element after processing.
 
 ### SSE payload format
 

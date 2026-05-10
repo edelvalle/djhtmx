@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from xotl.tools.objects import import_object
 
 from . import json, settings
-from .component import BuildAndRender, Destroy, Emit, HtmxComponent, Render, SkipRender
+from .component import BuildAndRender, Destroy, Emit, HtmxComponent, Open, Render, SkipRender
 from .introspection import _extract_event_types, _resolve_typevars, _substitute_typevars
 from .utils import compact_hash, get_fqn
 
@@ -73,6 +73,10 @@ def session_events_key(session_id: str) -> str:
 
 def wake_channel(session_id: str) -> str:
     return f"djhtmx:sse:wake:session:{compact_hash(session_id)}"
+
+
+def sse_command_sink_id(session_id: str) -> str:
+    return f"djhtmx-sse-commands-{compact_hash(session_id)}"
 
 
 def index_key(event_type: type | str, topic: str) -> str:
@@ -451,6 +455,8 @@ def _render_consumer_sse_events(
                 ):
                     rendered = repo.build(component_type.__name__, state, parent_id=parent_id)
                     result.append(str(repo.render_html(rendered, oob=oob)))
+                case Open() as open_command:
+                    result.append(_render_open_command(repo.session.id, open_command))
                 case Destroy(component_id):
                     repo.unregister_component(component_id)
                     result.append(
@@ -464,6 +470,30 @@ def _render_consumer_sse_events(
         result.append(str(repo.render_html(component, oob="true")))
     repo.session.flush()
     return result
+
+
+def _render_open_command(session_id: str, command: Open) -> str:
+    session_hash = compact_hash(session_id)
+    return str(
+        format_html(
+            """
+            <div hx-swap-oob="beforeend: #{sink_id}">
+              <div data-command="open"
+                   data-session="{session_hash}"
+                   data-url="{url}"
+                   data-name="{name}"
+                   data-target="{target}"
+                   data-rel="{rel}"></div>
+            </div>
+            """,
+            sink_id=sse_command_sink_id(session_id),
+            session_hash=session_hash,
+            url=command.url,
+            name=command.name,
+            target=command.target,
+            rel=command.rel,
+        ).strip()
+    )
 
 
 def _sse_heartbeat_topic(session_id: str, pace: int) -> str:

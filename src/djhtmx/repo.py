@@ -49,7 +49,7 @@ from .settings import (
     SESSION_TTL,
     conn,
 )
-from .utils import db, get_params
+from .utils import compact_hash, db, get_params
 
 signer = Signer()
 
@@ -158,6 +158,7 @@ class Repository:
         self.user = user
         self.session = session
         self.session_signed_id = signer.sign(session.id)
+        self.session_hash = compact_hash(session.id)
         self.params = params
 
     # Component life cycle & management
