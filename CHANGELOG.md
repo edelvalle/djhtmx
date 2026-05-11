@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added experimental SSE channel with a single router per page `SSEEventRouter` (#54)
+
 ## [1.3.12] - 2026-04-24
 
 ### Added
@@ -197,7 +199,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for `None` in actions parameter to include bare prefix subscriptions
 
 ### Technical Details
-- The `Render` dataclass now includes a `context: dict[str, Any] | None = None` field  
+- The `Render` dataclass now includes a `context: dict[str, Any] | None = None` field
 - The `Repository.render_html` method signature now includes an optional `context` parameter
 - Template rendering logic now supports context override while maintaining backwards compatibility
 - All custom context changes are fully backwards compatible - existing code continues to work without modification
