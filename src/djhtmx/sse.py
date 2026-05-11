@@ -14,6 +14,7 @@ import redis
 import redis.asyncio as async_redis
 from asgiref.sync import sync_to_async
 from django.utils.html import format_html
+from django.utils.safestring import SafeString
 from pydantic import BaseModel, Field
 from xotl.tools.objects import import_object
 
@@ -387,7 +388,7 @@ async def render_sse_heartbeat_fragments(
     session_id: str,
     user,
     paces: Iterable[int],
-) -> list[str]:
+) -> list[SafeString]:
     paces_by_topic = {_sse_heartbeat_topic(session_id, pace): pace for pace in paces}
     heartbeat = event_type_name(SSEHeartbeat)
     envelopes_by_consumer = {
@@ -421,7 +422,7 @@ def _render_consumer_sse_events(
     user,
     metadata: dict[str, Any],
     envelopes: list[EventEnvelope],
-) -> list[str]:
+) -> list[SafeString]:
     from django.contrib.auth.models import AnonymousUser
 
     from .repo import Repository, Session
@@ -434,7 +435,7 @@ def _render_consumer_sse_events(
     if not isinstance(component, HtmxComponent) or not hasattr(component, "_handle_sse_events"):
         return []
 
-    result: list[str] = []
+    result: list[SafeString] = []
     render_component = False
     rendered_self = False
     for envelope in envelopes:
@@ -449,50 +450,46 @@ def _render_consumer_sse_events(
                     render_component = False
                 case Render(component=rendered):
                     rendered_self = rendered_self or rendered.id == component.id
-                    result.append(str(repo.render_html(rendered, oob=command.oob or "true")))
+                    result.append(repo.render_html(rendered, oob=command.oob or "true"))
                 case BuildAndRender(
                     component=component_type, state=state, oob=oob, parent_id=parent_id
                 ):
                     rendered = repo.build(component_type.__name__, state, parent_id=parent_id)
-                    result.append(str(repo.render_html(rendered, oob=oob)))
+                    result.append(repo.render_html(rendered, oob=oob))
                 case Open() as open_command:
                     result.append(_render_open_command(repo.session.id, open_command))
                 case Destroy(component_id):
                     repo.unregister_component(component_id)
                     result.append(
-                        str(format_html('<div id="{}" hx-swap-oob="delete"></div>', component_id))
+                        format_html('<div id="{}" hx-swap-oob="delete"></div>', component_id)
                     )
                 case Emit():
                     logger.error("Emit is not supported from SSE handlers: %s", command)
                 case _:
                     logger.error("Command is not supported from SSE handlers: %s", command)
     if render_component and not rendered_self:
-        result.append(str(repo.render_html(component, oob="true")))
+        result.append(repo.render_html(component, oob="true"))
     repo.session.flush()
     return result
 
 
-def _render_open_command(session_id: str, command: Open) -> str:
+def _render_open_command(session_id: str, command: Open) -> SafeString:
     session_hash = compact_hash(session_id)
-    return str(
-        format_html(
-            """
-            <div hx-swap-oob="beforeend: #{sink_id}">
+    return format_html(
+        """<div hx-swap-oob="beforeend: #{sink_id}">
               <div data-command="open"
                    data-session="{session_hash}"
                    data-url="{url}"
                    data-name="{name}"
                    data-target="{target}"
                    data-rel="{rel}"></div>
-            </div>
-            """,
-            sink_id=sse_command_sink_id(session_id),
-            session_hash=session_hash,
-            url=command.url,
-            name=command.name,
-            target=command.target,
-            rel=command.rel,
-        ).strip()
+            </div>""",
+        sink_id=sse_command_sink_id(session_id),
+        session_hash=session_hash,
+        url=command.url,
+        name=command.name,
+        target=command.target,
+        rel=command.rel,
     )
 
 
