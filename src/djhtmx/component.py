@@ -14,8 +14,6 @@ from typing import (
     Annotated,
     Any,
     Literal,
-    ParamSpec,
-    TypeVar,
     cast,
     get_type_hints,
 )
@@ -269,18 +267,6 @@ def _get_querystring_subscriptions(component_name: str) -> frozenset[str]:
     })
 
 
-A = TypeVar("A")
-B = TypeVar("B")
-P = ParamSpec("P")
-
-
-def _compose(f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B]:
-    def result(*args: P.args, **kwargs: P.kwargs):
-        return g(f(*args, **kwargs))
-
-    return result
-
-
 RENDER_FUNC: dict[str, RenderFunction] = {}
 
 
@@ -343,6 +329,8 @@ class HtmxComponent(BaseModel):
                 not any(cls.__own_event_handlers(get_parent_ones=True))
                 and not hasattr(cls, "_handle_event")
                 and not hasattr(cls, "subscriptions")
+                and not hasattr(cls, "sse_subscriptions")
+                and not hasattr(cls, "_handle_sse_events")
             ):
                 logger.warning(
                     "HTMX Component <%s> has no event handlers, probably should not exist and be just a template",
@@ -385,6 +373,10 @@ class HtmxComponent(BaseModel):
             if handle_event := getattr(cls, "_handle_event", None):
                 for event_type in get_event_handler_event_types(handle_event, owner=cls):
                     LISTENERS[event_type].add(component_name)
+
+            from .sse import register_sse_listener
+
+            register_sse_listener(cls)
 
             cls._properties = {
                 attr
@@ -448,6 +440,7 @@ class HtmxComponent(BaseModel):
     id: Annotated[str, Field(default_factory=generate_id)]
 
     user: Annotated[Any | None, Field(exclude=True)]  # type: ignore
+    session_id: Annotated[str | None, Field(default=None, exclude=True)] = None
     if TYPE_CHECKING:
         from django.contrib.auth.models import AbstractBaseUser
 
@@ -530,10 +523,7 @@ class Triggers:
         return {header: json.dumps(value) for header, value in headers if value}
 
 
-F = TypeVar("F")
-
-
-def annotated_handler(**annotations) -> Callable[[F], F]:
+def annotated_handler[F](**annotations) -> Callable[[F], F]:
     """Annotate the HTMX handler with customized values.
 
     Some of these annotations are HtmxUnhandledError use the annotations so that the application can
@@ -552,7 +542,17 @@ def annotated_handler(**annotations) -> Callable[[F], F]:
     return decorator
 
 
+def _compose[**P, A, B](f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B]:
+    def result(*args: P.args, **kwargs: P.kwargs):
+        return g(f(*args, **kwargs))
+
+    return result
+
+
 logger = logging.getLogger(__name__)
-
-
 _ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")
+
+
+class SSEEventRouter(HtmxComponent):
+    _template_name = "htmx/SSEEventRouter.html"
+    id: str = "djhtmx-sse-router"

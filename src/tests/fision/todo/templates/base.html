@@ -11,6 +11,7 @@
     {% htmx-headers %}
   </head>
   <body hx-boost="true">
+    {% htmx "SSEEventRouter" %}
     <section>
       {% block body %}
       {% endblock body %}

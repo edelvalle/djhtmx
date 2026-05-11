@@ -121,11 +121,16 @@ def hx_tag(context: Context):
     component: HtmxComponent = context["this"]
     oob = context.get("hx_oob")
     context["hx_oob"] = False
+    repo = context["htmx_repo"]
     attrs = {
         "id": component.id,
         "hx-swap-oob": "true" if oob else None,
-        "hx-headers": json.dumps({"HX-Session": context["htmx_repo"].session_signed_id}),
+        "hx-headers": json.dumps({"HX-Session": repo.session_signed_id}),
     }
+    from djhtmx.sse import consumer_id, get_sse_subscriptions
+
+    if get_sse_subscriptions(component):
+        attrs["data-djhtmx-sse-consumer"] = consumer_id(repo.session.id, component.id)
     if context.get("hx_lazy"):
         context["hx_lazy"] = False
         jitter = random.randint(100, 1000)

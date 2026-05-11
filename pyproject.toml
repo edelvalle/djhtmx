@@ -46,7 +46,7 @@ dependencies = [
    "orjson>=3.10.7",
    "channels>=4.1.0",
    "uuid6>=2024.7.10",
-   "redis[hiredis]>=5.0.8",
+   "redis[hiredis]>=7.4.0",
    "mmh3>=5.1.0",
 ]
 
@@ -67,9 +67,9 @@ test = [
    "coverage[toml]>=7.6.9",
 ]
 typing = [
-    "basedpyright==1.28.1",
-    "django-types>=0.22.0",
-    "types-lxml>=2024.11.8",
+  "basedpyright==1.28.1",
+  "django-types>=0.22.0",
+  "types-lxml>=2024.11.8",
 ]
 lint = [
     "ruff==0.11.*",
@@ -80,7 +80,7 @@ devtools = [
     "whitenoise~=6.7.0",
     "ipdb~=0.13.13",
     "django-extensions~=3.2.3",
-    "granian[reload]>=2.5.4",
+    "granian[reload]>=2.7.4",
     "pygments>=2.18.0",
 ]
 dev = [

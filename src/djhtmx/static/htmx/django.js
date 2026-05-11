@@ -1,6 +1,7 @@
 (() => {
 	// WebSocket Management
 	const sentComponents = new Set();
+	const observedSSECommandSinks = new WeakSet();
 
 	function sendRemovedComponents(event) {
 		const removedComponents = Array.from(sentComponents).filter(
@@ -55,6 +56,99 @@
 			el.classList.remove("htmx-request");
 		}
 	}
+
+	function installSSECommandProcessors() {
+		for (const sink of document.querySelectorAll("[data-djhtmx-sse-command-sink]")) {
+			if (!observedSSECommandSinks.has(sink)) {
+				observedSSECommandSinks.add(sink);
+				const session = sink.dataset.djhtmxSseCommandSink;
+				const observer = new MutationObserver((records) => {
+					for (const record of records) {
+						for (const node of record.addedNodes) {
+							processSSECommandNode(node, sink, session);
+						}
+					}
+				});
+				observer.observe(sink, { childList: true });
+				for (const child of sink.children) {
+					processSSECommandNode(child, sink, session);
+				}
+			}
+		}
+	}
+
+	function processSSECommandNode(node, sink, session) {
+		if (node instanceof HTMLElement) {
+			const elements = [
+				...(node.matches("[data-command]") ? [node] : []),
+				...node.querySelectorAll("[data-command]"),
+			];
+			for (const element of elements) {
+				if (sink.contains(element)) {
+					processSSECommandElement(element, session);
+				}
+			}
+		}
+	}
+
+	function processSSECommandElement(element, session) {
+		if (element.dataset.session !== session) {
+			console.error("Ignoring SSE command for the wrong session");
+			element.remove();
+			return;
+		}
+
+		const command = element.dataset.command;
+		if (command === "open") {
+			processSSEOpenCommand(element);
+		} else {
+			console.error("Unknown SSE command:", command);
+		}
+		element.remove();
+	}
+
+	function processSSEOpenCommand(element) {
+		const rawUrl = element.dataset.url;
+		if (rawUrl) {
+			let url;
+			try {
+				url = new URL(rawUrl, window.location.href);
+			} catch {
+				console.error("Ignoring SSE open command with invalid URL:", rawUrl);
+				return;
+			}
+
+			if (url.origin === window.location.origin) {
+				const target = element.dataset.target || "_blank";
+				if (["_blank", "_self", "_parent", "_top"].includes(target)) {
+					openURL({
+						url: url.href,
+						name: element.dataset.name,
+						target,
+						rel: element.dataset.rel,
+					});
+				} else {
+					console.error("Ignoring SSE open command with invalid target:", target);
+				}
+			} else {
+				console.error("Ignoring cross-origin SSE open command:", url.href);
+			}
+		}
+	}
+
+	function openURL({ url, name, target, rel }) {
+		const link = document.createElement("a");
+		link.href = url;
+		link.target = target || "_blank";
+		if (name) {
+			link.download = name;
+		}
+		link.rel = rel || "noopener noreferrer";
+		link.click();
+	}
+
+	document.addEventListener("DOMContentLoaded", installSSECommandProcessors);
+	document.addEventListener("htmx:load", installSSECommandProcessors);
 
 	document.addEventListener("htmx:wsOpen", (event) => {
 		console.log("OPEN", event);
@@ -221,16 +315,7 @@
 
 	document.addEventListener("hxOpenURL", (event) => {
 		for (const { url, name, target, rel } of event.detail.value) {
-			const link = document.createElement("a");
-			link.href = url;
-			link.target = target || "_blank";
-			if (name) {
-				link.download = name;
-			}
-			if (rel) {
-				link.rel = rel;
-			}
-			link.click();
+			openURL({ url, name, target, rel });
 		}
 	});
 })();
