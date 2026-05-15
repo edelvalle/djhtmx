@@ -233,18 +233,16 @@ def app_name_of_component(cls: type):
     return cls_module
 
 
-urlpatterns = [
-    path("_sse/connect", sse_endpoint, name="djhtmx.sse"),
-    *[
-        path(
-            f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
-            csrf_exempt(partial(endpoint, component_name=component_name)),
-            name=f"djhtmx.{component_name}",
-        )
-        for component_name, component in REGISTRY.items()
-    ],
+sse_patterns = [path("_sse/connect", sse_endpoint, name="djhtmx.sse")]
+component_patterns = [
+    path(
+        f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
+        csrf_exempt(partial(endpoint, component_name=component_name)),
+        name=f"djhtmx.{component_name}",
+    )
+    for component_name, component in REGISTRY.items()
 ]
-
+urlpatterns = [*sse_patterns, *component_patterns]
 
 ws_urlpatterns = [
     re_path("ws", Consumer.as_asgi(), name="djhtmx.ws"),  # type: ignore
