@@ -4,6 +4,8 @@ from collections.abc import Awaitable, Callable
 from asgiref.sync import sync_to_async
 from django.http import HttpRequest, HttpResponse
 
+__all__ = ("middleware",)
+
 
 def middleware(
     get_response: Callable[[HttpRequest], HttpResponse]

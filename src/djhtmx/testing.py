@@ -27,6 +27,8 @@ from .introspection import parse_request_data
 from .repo import Repository, Session, signer
 from .utils import get_params
 
+__all__ = ("Htmx",)
+
 P = ParamSpec("P")
 TPComponent = TypeVar("TPComponent", bound=HtmxComponent)
 

@@ -23,6 +23,8 @@ from .component import (
 from .introspection import get_related_fields
 from .utils import get_model_subscriptions
 
+__all__ = ("CommandQueue",)
+
 
 class CommandQueue:
     def __init__(self, commands: list[Command]):

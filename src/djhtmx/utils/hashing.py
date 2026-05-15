@@ -1,6 +1,8 @@
 import mmh3
 from uuid6 import uuid7
 
+__all__ = ("compact_hash", "generate_id")
+
 
 def generate_id():
     return f"hx-{uuid7().hex}"

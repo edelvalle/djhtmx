@@ -31,6 +31,12 @@ from .introspection import parse_request_data
 from .repo import Repository
 from .tracing import htmx_headers_as_tags, sentry_tags, tracing_span
 
+__all__ = (
+    "sse_patterns",
+    "urlpatterns",
+    "ws_urlpatterns",
+)
+
 logger = logging.getLogger(__name__)
 signer = Signer()
 

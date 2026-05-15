@@ -10,6 +10,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 from pydantic import BaseModel
 
+__all__ = ("HtmxEncoder", "decode", "default", "dumps", "encode", "loads")
+
 loads = orjson.loads
 
 

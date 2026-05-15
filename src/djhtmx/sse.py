@@ -23,6 +23,14 @@ from .component import BuildAndRender, Destroy, Emit, HtmxComponent, Open, Rende
 from .introspection import _extract_event_types, _resolve_typevars, _substitute_typevars
 from .utils import compact_hash, get_fqn
 
+__all__ = (
+    "SSEEventEnvelope",
+    "SSEHeartbeat",
+    "SSESubscription",
+    "emit_sse_event",
+    "event_type_name",
+)
+
 
 class SSESubscription(NamedTuple):
     event_type: type
