@@ -194,7 +194,7 @@ async def sse_endpoint(request: HttpRequest):
                 logger.debug(
                     "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
                 )
-                timeout = 15
+                timeout = settings.SSE_HEARTBEAT_MAX_TIME
                 if heartbeat_due_at:
                     next_heartbeat_tick = min(heartbeat_due_at.values())
                     timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))
