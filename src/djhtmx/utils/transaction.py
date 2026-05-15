@@ -6,6 +6,8 @@ from django.db.transaction import on_commit as django_on_commit
 
 from .runtime import is_testing
 
+__all__ = ("run_on_commit",)
+
 
 def run_on_commit[**P](f: Callable[P, Any], *args: P.args, **kwargs: P.kwargs):
     """Run `f(*args, **kwargs)` when the current transaction commits.

@@ -2,6 +2,8 @@ from collections.abc import Sequence
 
 from django.db import models
 
+__all__ = ("get_instance_subscriptions", "get_model_subscriptions")
+
 
 def get_instance_subscriptions(
     obj: models.Model,

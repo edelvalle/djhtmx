@@ -40,7 +40,32 @@ from .query import Query, QueryPatcher
 from .tracing import tracing_span
 from .utils import generate_id
 
-__all__ = ("ComponentNotFound", "HtmxComponent", "ModelConfig", "Query")
+__all__ = (
+    "BuildAndRender",
+    "Command",
+    "ComponentNotFound",
+    "Destroy",
+    "DispatchDOMEvent",
+    "Emit",
+    "Execute",
+    "Focus",
+    "HtmxComponent",
+    "ModelConfig",
+    "Open",
+    "PushURL",
+    "Query",
+    "Redirect",
+    "Render",
+    "RenderFunction",
+    "ReplaceURL",
+    "SSEEventRouter",
+    "ScrollIntoView",
+    "Signal",
+    "SkipRender",
+    "Triggers",
+    "annotated_handler",
+    "get_template",
+)
 
 
 @dataclass(slots=True)

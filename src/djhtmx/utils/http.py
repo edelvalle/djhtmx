@@ -4,6 +4,8 @@ from django.http.request import HttpRequest, QueryDict
 
 from djhtmx import json
 
+__all__ = ("get_params",)
+
 
 def get_params(obj: HttpRequest | QueryDict | str | None) -> QueryDict:
     if isinstance(obj, HttpRequest):

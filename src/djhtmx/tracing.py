@@ -3,6 +3,11 @@ from collections.abc import Mapping
 
 from djhtmx import settings
 
+__all__ = (
+    "sentry_tags",
+    "tracing_span",
+)
+
 # pragma: no cover
 
 try:

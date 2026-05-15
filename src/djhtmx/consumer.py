@@ -11,6 +11,14 @@ from .introspection import parse_request_data
 from .repo import Repository
 from .utils import get_params
 
+__all__ = (
+    "ComponentsAdded",
+    "ComponentsRemoved",
+    "Consumer",
+    "Event",
+    "EventAdapter",
+)
+
 
 class ComponentsRemoved(BaseModel):
     type: Literal["removed"]

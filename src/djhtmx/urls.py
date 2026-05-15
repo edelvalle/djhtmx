@@ -31,6 +31,12 @@ from .introspection import parse_request_data
 from .repo import Repository
 from .tracing import htmx_headers_as_tags, sentry_tags, tracing_span
 
+__all__ = (
+    "sse_patterns",
+    "urlpatterns",
+    "ws_urlpatterns",
+)
+
 logger = logging.getLogger(__name__)
 signer = Signer()
 
@@ -194,7 +200,7 @@ async def sse_endpoint(request: HttpRequest):
                 logger.debug(
                     "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
                 )
-                timeout = 15
+                timeout = settings.SSE_HEARTBEAT_MAX_TIME
                 if heartbeat_due_at:
                     next_heartbeat_tick = min(heartbeat_due_at.values())
                     timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))
@@ -233,18 +239,16 @@ def app_name_of_component(cls: type):
     return cls_module
 
 
-urlpatterns = [
-    path("_sse/connect", sse_endpoint, name="djhtmx.sse"),
-    *[
-        path(
-            f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
-            csrf_exempt(partial(endpoint, component_name=component_name)),
-            name=f"djhtmx.{component_name}",
-        )
-        for component_name, component in REGISTRY.items()
-    ],
+sse_patterns = [path("_sse/connect", sse_endpoint, name="djhtmx.sse")]
+component_patterns = [
+    path(
+        f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
+        csrf_exempt(partial(endpoint, component_name=component_name)),
+        name=f"djhtmx.{component_name}",
+    )
+    for component_name, component in REGISTRY.items()
 ]
-
+urlpatterns = [*sse_patterns, *component_patterns]
 
 ws_urlpatterns = [
     re_path("ws", Consumer.as_asgi(), name="djhtmx.ws"),  # type: ignore

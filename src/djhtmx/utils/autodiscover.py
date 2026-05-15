@@ -4,6 +4,8 @@ import pkgutil
 
 from django.apps import apps
 
+__all__ = ("autodiscover_htmx_modules",)
+
 
 def autodiscover_htmx_modules():
     """

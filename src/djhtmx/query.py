@@ -16,6 +16,8 @@ from djhtmx.introspection import (
 )
 from djhtmx.utils import compact_hash
 
+__all__ = ("Query", "QueryPatcher")
+
 
 @dataclass(slots=True, unsafe_hash=True)
 class Query:
