@@ -39,6 +39,10 @@ class SSEHeartbeat(BaseModel):
     pace: int
 
 
+def get_sse_heartbeat_subscription(component: HtmxComponent, pace: int) -> SSESubscription:
+    return SSESubscription(SSEHeartbeat, get_sse_heartbeat_topic(component, pace))
+
+
 def get_sse_heartbeat_topic(component: HtmxComponent, pace: int) -> str:
     if pace <= 0:
         raise ValueError("SSE heartbeat pace must be greater than zero")
