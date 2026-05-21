@@ -394,6 +394,11 @@ async def render_sse_heartbeat_fragments(
 ) -> list[str]:
     paces_by_topic = {_sse_heartbeat_topic(session_id, pace): pace for pace in paces}
     heartbeat = event_type_name(SSEHeartbeat)
+    metadata_by_consumer = {
+        consumer: metadata
+        for consumer in await async_smembers_text(conn, session_consumers_key(session_id))
+        if (metadata := await load_consumer_metadata(consumer, conn))
+    }
     envelopes_by_consumer = {
         consumer: [
             EventEnvelope(
@@ -406,13 +411,12 @@ async def render_sse_heartbeat_fragments(
             if subscription.get("event_type") == heartbeat
             if (topic := subscription.get("topic")) in paces_by_topic
         ]
-        for consumer in await async_smembers_text(conn, session_consumers_key(session_id))
-        if (metadata := await load_consumer_metadata(consumer, conn))
+        for consumer, metadata in metadata_by_consumer.items()
     }
     html = [
         fragment
         for consumer, envelopes in envelopes_by_consumer.items()
-        if (metadata := await load_consumer_metadata(consumer, conn))
+        if (metadata := metadata_by_consumer.get(consumer))
         for fragment in await sync_to_async(_render_consumer_sse_events)(
             session_id, user, metadata, envelopes
         )
@@ -421,6 +425,26 @@ async def render_sse_heartbeat_fragments(
 
 
 def _render_consumer_sse_events(
+    session_id: str,
+    user,
+    metadata: dict[str, Any],
+    envelopes: list[EventEnvelope],
+) -> list[str]:
+    try:
+        return _render_consumer_sse_events_impl(session_id, user, metadata, envelopes)
+    finally:
+        # SSE streams never fire `request_finished`, and the sticky
+        # `sync_to_async` thread keeps Django's per-thread connection alive
+        # for the lifetime of the browser tab.  `close_old_connections()`
+        # honours `CONN_MAX_AGE` and would leave the connection pinned, so
+        # close unconditionally to release it back to the pool each render.
+        from django.db import connections
+
+        for conn in connections.all():
+            conn.close()
+
+
+def _render_consumer_sse_events_impl(
     session_id: str,
     user,
     metadata: dict[str, Any],
