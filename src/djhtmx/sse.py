@@ -426,6 +426,26 @@ def _render_consumer_sse_events(
     metadata: dict[str, Any],
     envelopes: list[EventEnvelope],
 ) -> list[str]:
+    try:
+        return _render_consumer_sse_events_impl(session_id, user, metadata, envelopes)
+    finally:
+        # SSE streams never fire `request_finished`, and the sticky
+        # `sync_to_async` thread keeps Django's per-thread connection alive
+        # for the lifetime of the browser tab.  `close_old_connections()`
+        # honours `CONN_MAX_AGE` and would leave the connection pinned, so
+        # close unconditionally to release it back to the pool each render.
+        from django.db import connections
+
+        for conn in connections.all():
+            conn.close()
+
+
+def _render_consumer_sse_events_impl(
+    session_id: str,
+    user,
+    metadata: dict[str, Any],
+    envelopes: list[EventEnvelope],
+) -> list[str]:
     from django.contrib.auth.models import AnonymousUser
 
     from .repo import Repository, Session

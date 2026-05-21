@@ -241,6 +241,28 @@ Semantics:
 
 The SSE loop refreshes the session state key, the session's SSE consumer/event keys, each consumer metadata key, each consumer reverse-index key, and each topic/type index key referenced by those consumers.
 
+### Database connection lifetime
+
+SSE breaks Django's two normal mechanisms for releasing database connections:
+
+- `StreamingHttpResponse` keeps the request open for the lifetime of the browser tab, so the `request_finished` signal never fires and Django's per-request `close_old_connections()` hook never runs.
+- Render work is dispatched through `sync_to_async(..., thread_sensitive=True)`, which pins the sync block to a sticky per-connection thread. Django's connections are thread-local, so that sticky thread owns one `connections['default']` entry for as long as the SSE stream is alive.
+
+Combined, each open SSE stream holds one PostgreSQL connection on its sticky `sync_to_async` thread for as long as the browser is connected, even when the loop is idle between heartbeats. With Granian configured for a single worker and a large backlog (e.g. 1024), a single worker can host hundreds of concurrent SSE streams, and each one parks a PG connection. The pool is exhausted by stream count alone, well before normal HTTP traffic.
+
+`close_old_connections()` is not sufficient: it calls `close_if_unusable_or_obsolete()`, which only closes when `CONN_MAX_AGE` has elapsed. Host projects that set `CONN_MAX_AGE > 0` (the common case, since it amortizes connect cost for short HTTP requests) would still see the sticky thread keep the connection warm forever, because every heartbeat or event reuses it before it goes obsolete.
+
+The SSE render path must therefore close connections unconditionally after every event or heartbeat drain, regardless of `CONN_MAX_AGE`:
+
+```python
+from django.db import connections
+
+for conn in connections.all():
+    conn.close()
+```
+
+This runs in the `finally` of the sync render helper so it executes even when a handler raises. The cost is one reconnect per drain on the SSE worker thread; this is acceptable because SSE drains are infrequent compared to normal request traffic, and the alternative is pool exhaustion.
+
 ### Runtime topology
 
 The intended production topology is Granian/ASGI workers.

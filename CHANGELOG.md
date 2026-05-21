@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - SSE: Experimental SSE channel with a single router per page `SSEEventRouter` (https://github.com/edelvalle/djhtmx/pull/54)
 
+### Fixed
+
+- **SSE PostgreSQL connection leak**: SSE render work runs on a sticky
+  `sync_to_async` thread for the lifetime of the browser connection, and
+  `StreamingHttpResponse` never fires `request_finished`, so Django's
+  per-request connection cleanup never runs. Each open SSE tab therefore
+  retained one DB connection per worker, exhausting the pool under load. The
+  SSE render path now closes all DB connections after every event/heartbeat
+  drain regardless of `CONN_MAX_AGE`.
+
 ## [1.3.12] - 2026-04-24
 
 ### Added
