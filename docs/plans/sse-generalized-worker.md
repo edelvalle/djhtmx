@@ -29,7 +29,8 @@ single behavior, and the stopgap is removed in the same change.
 - [x] Phase 2.1 — Extract `CommandProcessor` from `Repository`
   (commit `2e8e673`)
 - [x] Phase 2.5 — Transport-neutral `CommandBatch` and HTTP serializer
-- [ ] Phase 2.2 — `HandleSSEEvents` internal command
+- [x] Phase 2.2 — Command type split (`Command` / `InternalCommand` /
+  `ProcessedCommand`), `HandleSSEEvents`, command docstrings
 - [ ] Phase 2.3 — Normalize handler return semantics
 - [ ] Phase 2.4 — Replace SSE ad-hoc command loop with `CommandProcessor`
 - [ ] Phase 2.6 — Generalize the SSE command sink
@@ -524,14 +525,65 @@ The processor owns what is currently in:
 
 Existing tests must pass unchanged.
 
-### Sub-phase 2.2 — `HandleSSEEvents` internal command
+### Sub-phase 2.2 — Command type split + `HandleSSEEvents`
 
-Add an internal command representing "deliver these SSE envelopes to
-this component":
+This sub-phase tightens the command type model so that handlers can
+only yield user-facing commands, then adds the SSE entry-point command.
+
+#### 2.2.a — Three named unions in `djhtmx.commands`
+
+```python
+# Handler-yieldable.  This is the public API surface for event handlers.
+Command = (
+    Render | BuildAndRender | Destroy | Emit | SkipRender
+    | Open | Focus | ScrollIntoView | Redirect | DispatchDOMEvent
+    | PushURL | ReplaceURL
+    | Execute            # server-side handler invocation; user code may chain
+)
+
+# Queue-only.  Created by the transport or by the processor itself.
+# Handlers must never yield these.
+InternalCommand = Signal | HandleSSEEvents
+
+# Wire-effect subset that the transport (CommandBatch) consumes.
+ProcessedCommand = (
+    SendHtml | Destroy | Open | Focus | ScrollIntoView | Redirect
+    | DispatchDOMEvent | PushURL | ReplaceURL
+)
+```
+
+`SendHtml` is intentionally not in `Command` (handlers don't yield it)
+nor in `InternalCommand` (it's never enqueued — `_run_command`
+synthesizes it from `Render` and yields it out to the transport).  It
+appears only in `ProcessedCommand`.
+
+`CommandQueue` is typed `list[Command | InternalCommand]`.
+
+`CommandProcessor.process(commands: Iterable[Command | InternalCommand])`.
+
+`Repository.dispatch_event` / `adispatch_event` return
+`Iterable[ProcessedCommand]`.
+
+Handlers' yield type becomes `Iterable[Command | None] | None`.  The
+`None`s are normalized in Phase 2.3.
+
+Today the legacy `Command` union conflates handler-yieldable with
+queue-internal (`Signal` and `Execute` are both in it).  After this
+sub-phase, type-checking catches handlers that accidentally yield
+`Signal`/`HandleSSEEvents` — they're no longer assignable to
+`Command`.  `Execute` stays in `Command` because user code legitimately
+yields it to chain into other handlers (see the comparison with
+`DispatchDOMEvent`: `Execute` is server-side method dispatch,
+`DispatchDOMEvent` is browser-side event fire — different planes).
+
+#### 2.2.b — `HandleSSEEvents`
+
+Add the new internal command:
 
 ```python
 @dataclass(slots=True)
 class HandleSSEEvents:
+    """Internal.  Deliver a batch of SSE envelopes to a component."""
     component_id: str
     envelopes: tuple[SSEEventEnvelope[Any], ...]
 ```
@@ -571,6 +623,18 @@ HandleSSEEvents
 
 `FeedbackMessages` becomes page-global for SSE-triggered notifications
 with no special case.
+
+#### 2.2.c — Docstrings
+
+Every command dataclass gets a substantive docstring covering:
+
+- Whether it is handler-yieldable, internal, or transport-output.
+- The semantics (what effect it has).
+- When to use it from application code (or that it's internal).
+- Field-level notes where the meaning is non-obvious.
+
+This addresses the long-standing "every command has a one-line
+fragment of a docstring or none at all" state of `commands.py`.
 
 ### Sub-phase 2.3 — Normalize handler return semantics
 
