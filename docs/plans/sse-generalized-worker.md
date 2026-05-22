@@ -33,9 +33,10 @@ single behavior, and the stopgap is removed in the same change.
   `ProcessedCommand`), `HandleSSEEvents`, command docstrings
 - [x] Phase 2.3 — Normalise handler return semantics (drop legacy
   `yield None`, single `_process_emitted_commands` helper)
-- [ ] Phase 2.4 — Replace SSE ad-hoc command loop with `CommandProcessor`
+- [x] Phase 2.4 — Replace SSE ad-hoc command loop with `CommandProcessor`
 - [ ] Phase 2.6 — Generalize the SSE command sink
 - [ ] Phase 2.7 — Unify browser-side command execution
+- [ ] Phase 2.8 — Clean up SSE consumer records on `Destroy`
 
 ## Problems we are solving
 
@@ -849,6 +850,50 @@ Note: the current JS WebSocket switch uses `dispatch_event`, while the
 Python command literal is `dispatch_dom_event`. Normalize to
 `dispatch_dom_event`; optionally accept `dispatch_event` as a legacy
 alias.
+
+### Sub-phase 2.8 — Clean up SSE consumer records on `Destroy`
+
+Today the SSE consumer record in Redis (`consumer_key`,
+`consumer_indexes_key`, `session_consumers_key` membership, and the
+topic/type index sets) is only re-registered through `render_html` →
+`register_component`.  When a component is destroyed,
+`Repository.unregister_component` clears the session state but leaves
+the consumer record and indexes intact.  Producers (`emit_sse_event`)
+keep enqueuing events for the now-orphaned consumer until TTL expiry.
+
+The Phase 2.4 `HandleSSEEvents` case silently skips when
+`get_component_by_id` returns `Destroy` precisely because of this
+leak (matches the pre-2.4 silent-skip in `_render_consumer_sse_events`).
+That keeps us correct, but the work — Redis writes by the producer,
+metadata round-trip on every drain — is wasted.
+
+Add a symmetric `unregister_component` step in `sse.py`:
+
+```python
+def unregister_component(session_id: str, component_id: str):
+    """Remove the SSE consumer record + indexes for a destroyed component."""
+    id_ = consumer_id(session_id, component_id)
+    indexes_key = consumer_indexes_key(id_)
+    sync_redis_connection = get_sync_conn()
+    for key in sync_smembers_text(sync_redis_connection, indexes_key):
+        sync_redis_connection.srem(key, id_)
+    sync_redis_connection.delete(consumer_key(id_))
+    sync_redis_connection.delete(indexes_key)
+    sync_redis_connection.srem(session_consumers_key(session_id), id_)
+```
+
+Wire it into `Repository.unregister_component` (or
+`Session.unregister_component`, which handles the recursive child
+cascade so children get their consumer records cleaned too).
+
+After this lands:
+
+- The `case Destroy(): return` defence-in-depth in
+  `CommandProcessor._run_command`'s `HandleSSEEvents` case becomes
+  cold code (only fires under TTL races).  Keep it as a safety net.
+- Producers stop fanning events to destroyed consumers.
+- Per-drain `load_consumer_metadata` calls drop for sessions with
+  churn (component creations + destroys).
 
 ### Behavioral decisions made explicit
 
