@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TestCase` transactional tests see uncommitted data. See
   `docs/plans/sse-generalized-worker.md` for the deployment topology and
   sizing guidance.
+- **`CommandProcessor`**: extracted the command-loop logic from
+  `Repository._run_command` / `_process_emited_commands` into a dedicated
+  `djhtmx.command_processor.CommandProcessor`. `Repository.dispatch_event`
+  and `adispatch_event` are now thin wrappers around it. HTTP behavior is
+  unchanged; this prepares the ground for the SSE/HTTP command-pipeline
+  unification described in Phase 2 of the plan.
+
 ### Changed
 
 - **SSE PostgreSQL connection leak (refactor)**: the per-render

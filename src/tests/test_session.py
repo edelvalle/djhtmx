@@ -2,7 +2,9 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-from djhtmx.component import Destroy, HtmxComponent
+from djhtmx.command_processor import CommandProcessor
+from djhtmx.commands import Destroy
+from djhtmx.component import HtmxComponent
 from djhtmx.repo import Session
 
 
@@ -208,7 +210,7 @@ class TestAutomaticRelationshipTracking(TestCase):
         from django.http import QueryDict
 
         from djhtmx.command_queue import CommandQueue
-        from djhtmx.component import BuildAndRender
+        from djhtmx.commands import BuildAndRender
         from djhtmx.repo import Repository, Session
 
         # Mock Redis to return empty data
@@ -230,7 +232,7 @@ class TestAutomaticRelationshipTracking(TestCase):
 
         # Process the command through the repository
         commands = CommandQueue([build_command])
-        list(repo._run_command(commands))
+        list(CommandProcessor(repo)._run_command(commands))
 
         # Verify parent-child relationship was automatically established
         self.assertIn(parent_id, session.children)
@@ -243,7 +245,7 @@ class TestAutomaticRelationshipTracking(TestCase):
         from django.http import QueryDict
 
         from djhtmx.command_queue import CommandQueue
-        from djhtmx.component import BuildAndRender
+        from djhtmx.commands import BuildAndRender
         from djhtmx.repo import Repository, Session
 
         # Mock Redis to return empty data
@@ -262,7 +264,7 @@ class TestAutomaticRelationshipTracking(TestCase):
         commands = CommandQueue([build_command])
 
         # Process the command
-        list(repo._run_command(commands))
+        list(CommandProcessor(repo)._run_command(commands))
 
         # Verify no self-relationship was created
         self.assertEqual(len(session.children), 0)
@@ -274,7 +276,7 @@ class TestAutomaticRelationshipTracking(TestCase):
         from django.http import QueryDict
 
         from djhtmx.command_queue import CommandQueue
-        from djhtmx.component import BuildAndRender
+        from djhtmx.commands import BuildAndRender
         from djhtmx.repo import Repository, Session
 
         # Mock Redis to return empty data
@@ -293,7 +295,7 @@ class TestAutomaticRelationshipTracking(TestCase):
         commands = CommandQueue([build_command])
 
         # Process the command
-        list(repo._run_command(commands))
+        list(CommandProcessor(repo)._run_command(commands))
 
         # Verify no relationship was created
         self.assertEqual(len(session.children), 0)
@@ -305,7 +307,7 @@ class TestAutomaticRelationshipTracking(TestCase):
         from django.http import QueryDict
 
         from djhtmx.command_queue import CommandQueue
-        from djhtmx.component import BuildAndRender
+        from djhtmx.commands import BuildAndRender
         from djhtmx.repo import Repository, Session
 
         # Mock Redis to return empty data
@@ -327,7 +329,7 @@ class TestAutomaticRelationshipTracking(TestCase):
                 component=MockComponent, state={"id": child_id}, oob="true", parent_id=parent_id
             )
             commands = CommandQueue([build_command])
-            list(repo._run_command(commands))
+            list(CommandProcessor(repo)._run_command(commands))
 
         # Verify relationships were established
         self.assertEqual(len(session.children[parent_id]), 2)
@@ -348,7 +350,7 @@ class TestAutomaticRelationshipTracking(TestCase):
 
     def test_build_and_render_api_usage_examples(self):
         """Test different ways to use BuildAndRender with parent_id."""
-        from djhtmx.component import BuildAndRender
+        from djhtmx.commands import BuildAndRender
 
         # Example 1: Child component appended to parent's container
         child_in_parent = BuildAndRender.append(
