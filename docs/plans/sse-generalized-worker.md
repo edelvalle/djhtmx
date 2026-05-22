@@ -564,8 +564,9 @@ appears only in `ProcessedCommand`.
 `Repository.dispatch_event` / `adispatch_event` return
 `Iterable[ProcessedCommand]`.
 
-Handlers' yield type becomes `Iterable[Command | None] | None`.  The
-`None`s are normalized in Phase 2.3.
+Handlers' yield type becomes `Iterable[Command] | None`.  A bare
+`return` (or no yields) triggers the default render; see Phase 2.3
+for the normalization rules.  Handlers may *not* yield `None`.
 
 Today the legacy `Command` union conflates handler-yieldable with
 queue-internal (`Signal` and `Execute` are both in it).  After this
@@ -638,14 +639,21 @@ fragment of a docstring or none at all" state of `commands.py`.
 
 ### Sub-phase 2.3 — Normalize handler return semantics
 
-Today SSE supports:
+Today's situation is divergent:
 
-- handler returns `None` → default render;
-- handler yields `None` → default render;
-- handler yields `SkipRender(self)` → no default render.
+- SSE's ad-hoc loop had a `case None:` branch that treated a yielded
+  `None` as "default render".
+- HTTP's `_process_emited_commands` had no such case — a yielded
+  `None` would crash later in `CommandQueue._priority`'s
+  `assert_never`.
 
-HTTP does not normalize `None` commands safely. Introduce a shared
-helper in `command_processor.py`:
+After Phase 2.2, `Command` excludes `None`, so pyright statically
+catches handlers that yield `None`.  Phase 2.3 makes the runtime
+match: `yield None` is unsupported, and the legacy SSE branch is
+removed.  Handlers that want a default render simply finish without
+yielding anything, or use a bare `return`/`pass` in a branch.
+
+Introduce a shared helper in `command_processor.py`:
 
 ```text
 normalize_handler_commands(component, emitted, render_policy)
@@ -654,8 +662,10 @@ normalize_handler_commands(component, emitted, render_policy)
 Rules:
 
 1. If the handler returns `None`, enqueue an implicit default render.
-2. If the handler yields no commands, enqueue an implicit default render.
-3. If the handler yields `None`, treat it as `Render(component)`.
+2. If the handler yields no commands, enqueue an implicit default
+   render.
+3. Handlers must not yield `None`; `Command` excludes it.  No special
+   case in the normalizer.
 4. If the handler yields `SkipRender(component)`, suppress only the
    implicit default render for that handler invocation.
 5. Explicit `Render`, `BuildAndRender`, `Destroy`, `Emit`, etc. are
@@ -663,9 +673,12 @@ Rules:
 6. For HTTP direct event handlers, keep the current behavior where the
    direct component render uses `lazy=False`.
 7. For SSE handlers and internal `Emit` handlers, keep the current
-   non-direct behavior where default rendering respects `component.lazy`.
+   non-direct behavior where default rendering respects
+   `component.lazy`.
 
-Same SSE API; behavior moves into the single processor.
+The user-visible spec change in `docs/plans/sse-spec.md` drops the
+"`yield None` means default render" line.  Same SSE API otherwise;
+behavior moves into the single normalization helper.
 
 ### Sub-phase 2.4 — Replace SSE ad-hoc command loop
 
@@ -964,8 +977,9 @@ one per consumer.
 #### Command processor
 
 - HTTP direct handler still renders the component by default.
-- Handler yielding `SkipRender(self)` suppresses default render.
-- Handler yielding `None` results in default render.
+- Handler that yields nothing (or returns `None`) gets the implicit
+  default render.
+- Handler yielding `SkipRender(self)` suppresses the default render.
 - `Emit` wakes `_handle_event` listeners and renders them.
 - `BuildAndRender` registers parent/child relationship.
 - Multiple `Render` for the same component coalesce.
@@ -983,11 +997,13 @@ Adapt existing `src/tests/test_urls.py`:
 
 #### SSE processor
 
-Tests where an SSE handler yields each of: `Render(self)`, `None`,
+Tests where an SSE handler yields each of: `Render(self)`,
 `SkipRender(self)`, `Destroy(...)`, `BuildAndRender(...)`, `Open(...)`,
 `Focus(...)`, `ScrollIntoView(...)`, `Redirect(...)`, `PushURL(...)`,
 `ReplaceURL(...)`, `DispatchDOMEvent(...)`,
-`Emit(FeedbackMessage.success(...))`.
+`Emit(FeedbackMessage.success(...))`.  Plus the no-yield case: the
+handler returns without yielding and the framework emits the default
+`Render(self)`.
 
 The key regression:
 

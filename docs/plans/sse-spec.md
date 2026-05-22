@@ -119,24 +119,28 @@ class PDFButton(HtmxComponent):
     def _handle_sse_events(self, envelope: SSEEventEnvelope[PDFTaskChanged]):
         match envelope.event.status:
             case "done" | "failed":
-                yield None
+                pass  # default render
             case _:
                 yield SkipRender(self)
 ```
 
 Return/yield semantics:
 
-- `yield None` means "render this component normally", it is the same as `yield Render(self)`
+- If the handler doesn't yield any command (or returns `None`), the
+  framework enqueues an implicit `Render(self)` — the default render.
 - `yield Render(self)` explicitly renders this component.
 - `yield Render(other_component)` may render another component if available.
 - `yield SkipRender(self)` consumes the event without rendering this component.
 - `yield Destroy(component_id)` removes a component from the page and from djhtmx state.
-- if the handler doesn't yield any command, it's like `yield None`.
+
+Handlers must not `yield None`.  Use a bare `return`/`pass` to skip a
+branch, or `yield SkipRender(self)` to explicitly suppress the default
+render.
 
 The first version is focused on commands that can be represented as HTML/OOB updates:
 
 - `Render`;
-- default render via `None`;
+- default render (no yields);
 - `Destroy`.
 
 `Open` is supported through a strict session-scoped browser command sink in `SSEEventRouter`. Other browser commands such as `Focus`, `ScrollIntoView`, `Redirect`, `PushURL`, and `ReplaceURL` need a later command-carrier design for SSE because SSE payloads cannot use HTMX response headers.
