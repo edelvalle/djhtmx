@@ -199,6 +199,25 @@ def register_component(session_id: str, component: HtmxComponent, ttl: int = set
         sync_redis_connection.delete(indexes_key)
 
 
+def unregister_consumer(session_id: str, component_id: str) -> None:
+    """Remove the SSE consumer record + indexes for a destroyed component.
+
+    Symmetric with `register_component`: without this, the consumer record
+    and its topic/type index memberships linger until TTL, and
+    `emit_sse_event` keeps enqueuing events that the drain will silently
+    skip (via the `case Destroy(): return` guard in
+    `CommandProcessor._run_command`'s `HandleSSEEvents` case).
+    """
+    id_ = consumer_id(session_id, component_id)
+    indexes_key = consumer_indexes_key(id_)
+    sync_redis_connection = get_sync_conn()
+    for key in sync_smembers_text(sync_redis_connection, indexes_key):
+        sync_redis_connection.srem(key, id_)
+    sync_redis_connection.delete(consumer_key(id_))
+    sync_redis_connection.delete(indexes_key)
+    sync_redis_connection.srem(session_consumers_key(session_id), id_)
+
+
 class EventEnvelope[P: BaseModel](BaseModel):
     consumer_id: str
     event_type: str

@@ -141,8 +141,15 @@ class Repository:
     # Component life cycle & management
 
     def unregister_component(self, component_id: str):
-        # delete component state
+        # Delete component state recursively, then clean up the SSE consumer
+        # record for every component that was just destroyed (the explicit one
+        # plus any children cascaded by `Session.unregister_component`).
+        from .sse import unregister_consumer
+
+        before = set(self.session.unregistered)
         self.session.unregister_component(component_id)
+        for id_ in self.session.unregistered - before:
+            unregister_consumer(self.session.id, id_)
 
     async def adispatch_event(  # pragma: no cover
         self,
