@@ -1,7 +1,7 @@
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from functools import reduce
-from typing import Any, ParamSpec, TypeVar
+from typing import Any
 from urllib.parse import urlparse
 
 from asgiref.sync import async_to_sync
@@ -13,22 +13,23 @@ from pygments.formatters import TerminalTrueColorFormatter
 from pygments.lexers import HtmlLexer
 
 from . import json
-from .commands import PushURL, ReplaceURL, SendHtml
-from .component import (
+from .commands import (
     Destroy,
     DispatchDOMEvent,
     Focus,
-    HtmxComponent,
     Open,
+    PushURL,
     Redirect,
+    ReplaceURL,
     ScrollIntoView,
+    SendHtml,
 )
+from .component import HtmxComponent
 from .introspection import parse_request_data
 from .repo import Repository, Session, signer
 from .utils import get_params
 
-P = ParamSpec("P")
-TPComponent = TypeVar("TPComponent", bound=HtmxComponent)
+__all__ = ("Htmx",)
 
 
 class Htmx:
@@ -64,11 +65,11 @@ class Htmx:
             params=get_params(self.query_string),
         )
 
-    def get_component_by_type(self, component_type: type[TPComponent]) -> TPComponent:
+    def get_component_by_type[C: HtmxComponent](self, component_type: type[C]) -> C:
         [component] = self.repo.get_components_by_names(component_type.__name__)
         return component  # type: ignore
 
-    def get_components_by_type(self, component_type: type[TPComponent]) -> Iterable[TPComponent]:
+    def get_components_by_type[C: HtmxComponent](self, component_type: type[C]) -> Iterable[C]:
         return self.repo.get_components_by_names(component_type.__name__)  # type: ignore
 
     def get_component_by_id(self, component_id: str):
@@ -153,7 +154,7 @@ class Htmx:
         vals |= json.loads(element.attrib.get("hx-vals", "{}"))
         self.dispatch_event(component_id, event_handler, parse_request_data(vals))
 
-    def send(self, method: Callable[P, Any], *args: P.args, **kwargs: P.kwargs):
+    def send[**P](self, method: Callable[P, Any], *args: P.args, **kwargs: P.kwargs):
         assert not args, "All parameters have to be passed by name"
         self.dispatch_event(method.__self__.id, method.__name__, kwargs)  # type: ignore
 

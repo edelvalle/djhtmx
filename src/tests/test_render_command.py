@@ -2,7 +2,8 @@ from unittest.mock import Mock
 
 from django.test import TestCase
 
-from djhtmx.component import HtmxComponent, Render
+from djhtmx.commands import Render
+from djhtmx.component import HtmxComponent
 from djhtmx.repo import Repository
 
 

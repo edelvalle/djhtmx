@@ -5,8 +5,16 @@ from django.test import RequestFactory, TestCase
 from django.utils.safestring import mark_safe
 from fision.todo.htmx import TodoItem  # type: ignore[import-untyped]
 
-from djhtmx.commands import PushURL, ReplaceURL, SendHtml
-from djhtmx.component import Destroy, DispatchDOMEvent, Focus, Open, Redirect
+from djhtmx.commands import (
+    Destroy,
+    DispatchDOMEvent,
+    Focus,
+    Open,
+    PushURL,
+    Redirect,
+    ReplaceURL,
+    SendHtml,
+)
 from djhtmx.urls import APP_CONFIGS, app_name_of_component, endpoint
 
 

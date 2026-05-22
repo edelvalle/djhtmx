@@ -3,9 +3,7 @@ from typing import assert_never
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
 
-from djhtmx.commands import PushURL, ReplaceURL
-
-from .component import (
+from .commands import (
     BuildAndRender,
     Command,
     Destroy,
@@ -14,8 +12,10 @@ from .component import (
     Execute,
     Focus,
     Open,
+    PushURL,
     Redirect,
     Render,
+    ReplaceURL,
     ScrollIntoView,
     Signal,
     SkipRender,

@@ -10,7 +10,8 @@ from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from pydantic import BaseModel, Field
 
-from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, HtmxComponent, Query, SkipRender
+from djhtmx.commands import BuildAndRender, Destroy, Emit, Focus, SkipRender
+from djhtmx.component import HtmxComponent, Query
 from djhtmx.sse import SSEEventEnvelope, SSESubscription, emit_sse_event
 from djhtmx.utils import run_on_commit
 

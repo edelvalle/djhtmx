@@ -15,15 +15,19 @@ from django.urls import path, re_path
 from django.utils.html import format_html
 from django.views.decorators.csrf import csrf_exempt
 
-from .commands import PushURL, ReplaceURL, SendHtml
-from .component import (
-    REGISTRY,
+from .commands import (
     Destroy,
     DispatchDOMEvent,
     Focus,
     Open,
+    PushURL,
     Redirect,
+    ReplaceURL,
     ScrollIntoView,
+    SendHtml,
+)
+from .component import (
+    REGISTRY,
     Triggers,
 )
 from .consumer import Consumer
@@ -249,3 +253,8 @@ urlpatterns = [
 ws_urlpatterns = [
     re_path("ws", Consumer.as_asgi(), name="djhtmx.ws"),  # type: ignore
 ]
+
+__all__ = (
+    "urlpatterns",
+    "ws_urlpatterns",
+)
