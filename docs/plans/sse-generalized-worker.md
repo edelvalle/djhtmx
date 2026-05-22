@@ -22,6 +22,19 @@ design rather than introducing it from scratch. There is no need for a
 staged rollout or compatibility flag: the executor pool ships as the
 single behavior, and the stopgap is removed in the same change.
 
+## Progress
+
+- [x] Phase 1 — SSE render executor (commit `61210cf`, deployed to
+  staging)
+- [x] Phase 2.1 — Extract `CommandProcessor` from `Repository`
+  (commit `2e8e673`)
+- [x] Phase 2.5 — Transport-neutral `CommandBatch` and HTTP serializer
+- [ ] Phase 2.2 — `HandleSSEEvents` internal command
+- [ ] Phase 2.3 — Normalize handler return semantics
+- [ ] Phase 2.4 — Replace SSE ad-hoc command loop with `CommandProcessor`
+- [ ] Phase 2.6 — Generalize the SSE command sink
+- [ ] Phase 2.7 — Unify browser-side command execution
+
 ## Problems we are solving
 
 ### Connection-leak problem
@@ -763,7 +776,9 @@ alias.
 
 #### `Emit` from SSE
 
-- Session-local.
+`Emit` is **always** session-local.  No opt-in cross-session republish.
+The only way to reach other sessions is `emit_sse_event`.
+
 - Wakes `_handle_event` listeners already rendered in the same djhtmx
   session.
 - Does not publish Redis SSE events.
@@ -771,7 +786,7 @@ alias.
 - Processed synchronously inside the SSE command queue.
 - Usable for page-global UI effects such as `FeedbackMessages`.
 
-The distinction with `emit_sse_event`:
+The distinction with `emit_sse_event` is load-bearing and intentional:
 
 ```text
 Emit(...)
@@ -780,6 +795,11 @@ Emit(...)
 emit_sse_event(...)
   -> Redis-backed cross-worker/cross-session SSE event delivery
 ```
+
+Mixing the two — e.g. having `Emit` optionally republish to Redis —
+blurs the boundary, makes failure modes harder to reason about
+(Redis-down vs in-process error), and complicates the SSE producer
+contract.  Keep them separate.
 
 #### SSE browser commands
 
