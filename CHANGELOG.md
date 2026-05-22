@@ -9,77 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- SSE: Experimental SSE channel with a single router per page `SSEEventRouter` (https://github.com/edelvalle/djhtmx/pull/54)
-- **SSE render executor**: a dedicated thread pool now hosts the sync render
-  path used by the SSE endpoint. Each worker thread keeps its own Django DB
-  connection across renders, so PostgreSQL connection count is bounded by
-  `DJHTMX_SSE_RENDER_WORKERS` (default `8`) rather than growing with SSE
-  stream count. New settings: `DJHTMX_SSE_RENDER_WORKERS`,
-  `DJHTMX_SSE_RENDER_QUEUE_MAX`, `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`,
-  `DJHTMX_SSE_RENDER_ROTATE_EVERY`. Under `utils.runtime.is_testing()` the
-  executor is bypassed for thread-sensitive `sync_to_async` dispatch so
-  `TestCase` transactional tests see uncommitted data. See
-  `docs/plans/sse-generalized-worker.md` for the deployment topology and
-  sizing guidance.
-- **`CommandProcessor`**: extracted the command-loop logic from
-  `Repository._run_command` / `_process_emited_commands` into a dedicated
-  `djhtmx.command_processor.CommandProcessor`. `Repository.dispatch_event`
-  and `adispatch_event` are now thin wrappers around it. HTTP behavior is
-  unchanged; this prepares the ground for the SSE/HTTP command-pipeline
-  unification described in Phase 2 of the plan.
-- **`CommandBatch`**: transport-neutral accumulator for the
-  `ProcessedCommand` stream, plus an HTTP serializer in
-  `djhtmx.command_response`. `urls.endpoint`'s per-iteration command
-  match (Destroy/Redirect/Focus/...) moves into one place that both
-  HTTP and (later) SSE consume. Endpoint logic is now four lines:
-  build the batch from `repo.dispatch_event(...)` and hand it to
-  `to_http_response`. Externally visible HTTP behavior is unchanged,
-  including the rule that `HX-Redirect` suppresses `HX-Push-Url` and
-  `HX-Replace-Url`.
-- **Command type split**: `djhtmx.commands` now defines three named
-  unions making the role of each command explicit. `Command`
-  (handler-yieldable) is the public API surface for event handlers
-  (`Render`, `BuildAndRender`, `Destroy`, `Emit`, `SkipRender`,
-  `Open`, `Focus`, `ScrollIntoView`, `Redirect`, `DispatchDOMEvent`,
-  `PushURL`, `ReplaceURL`, `Execute`). `InternalCommand` (`Signal`,
-  `HandleSSEEvents`) is queue-only — handlers must not yield these.
-  `ProcessedCommand` is the wire-effect subset that the
-  `CommandBatch` / transport serializers consume. Pyright now catches
-  handlers that accidentally yield internal commands.
-- **`HandleSSEEvents` internal command**: the SSE drain entry point
-  for the unified command pipeline. `CommandProcessor` handles the
-  new command by loading the consumer's component, walking the
-  envelopes through `_handle_sse_events`, wrapping handler
-  exceptions as `Emit(HtmxUnhandledError(...))`, and routing the
-  yielded commands through `_process_emited_commands`
-  (`during_execute=False`). Application code does not yield this;
-  the SSE renderer enqueues it in Phase 2.4.
-- **Command docstrings**: every command dataclass in `djhtmx.commands`
-  now carries a substantive docstring covering whether it is
-  handler-yieldable / internal / transport-output, the semantics, and
-  when to use it from application code. `Execute` vs `DispatchDOMEvent`
-  is explicitly clarified as "server-side method dispatch" vs
-  "browser-side DOM event fire".
+- Experimental SSE channel with a single per-page `SSEEventRouter` (https://github.com/edelvalle/djhtmx/pull/54).
+- SSE settings to size the render thread pool and connection lifecycle:
+  `DJHTMX_SSE_RENDER_WORKERS` (default `8`),
+  `DJHTMX_SSE_RENDER_QUEUE_MAX`,
+  `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`,
+  `DJHTMX_SSE_RENDER_ROTATE_EVERY`.
 
 ### Changed
 
-- **SSE PostgreSQL connection leak (refactor)**: the per-render
-  `connections.close()` stopgap in `_render_consumer_sse_events` is
-  replaced by the new render executor's connection lifecycle (rotation
-  every `DJHTMX_SSE_RENDER_ROTATE_EVERY` renders, plus close-on-error for
-  `OperationalError`/`InterfaceError`). The acute leak symptom (Sentry
-  KAIKO-JH) remains fixed; the new design also amortizes the connection
-  handshake across many renders instead of paying it on every drain.
+- **Imports of command classes**: `Destroy`, `Redirect`, `Open`,
+  `Focus`, `ScrollIntoView`, `DispatchDOMEvent`, `Render`,
+  `BuildAndRender`, `Emit`, `Signal`, `Execute`, `SkipRender`,
+  `Command`, `PushURL`, `ReplaceURL`, and `SendHtml` now live in
+  `djhtmx.commands` (previously some were re-exported from
+  `djhtmx.component`). Update imports to `from djhtmx.commands import …`.
+- Handler-yield typing: handlers may yield commands from the
+  `Command` union (`Render`, `BuildAndRender`, `Destroy`, `Emit`,
+  `SkipRender`, `Open`, `Focus`, `ScrollIntoView`, `Redirect`,
+  `DispatchDOMEvent`, `PushURL`, `ReplaceURL`, `Execute`). `Signal`
+  and `SendHtml` are no longer in `Command`; they are framework
+  internals.
 
 ### Fixed
 
-- **SSE PostgreSQL connection leak**: SSE render work runs on a sticky
-  `sync_to_async` thread for the lifetime of the browser connection, and
-  `StreamingHttpResponse` never fires `request_finished`, so Django's
-  per-request connection cleanup never runs. Each open SSE tab therefore
-  retained one DB connection per worker, exhausting the pool under load. The
-  SSE render path now closes all DB connections after every event/heartbeat
-  drain regardless of `CONN_MAX_AGE`.
+- PostgreSQL connection exhaustion under SSE load. Each open SSE
+  stream used to retain a DB connection for the lifetime of the
+  browser tab; under sustained traffic this drained the pool. SSE
+  renders now share a small bounded thread pool with explicit
+  connection lifecycle, so PG connection count is bounded by
+  `DJHTMX_SSE_RENDER_WORKERS` regardless of stream count.
 
 ## [1.3.12] - 2026-04-24
 
