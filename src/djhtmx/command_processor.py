@@ -109,19 +109,19 @@ class CommandProcessor:
                         handler = getattr(component, event_handler)
                         handler_kwargs = filter_parameters(handler, event_data)
                         try:
-                            emited_commands = handler(**handler_kwargs)
+                            emitted_commands = handler(**handler_kwargs)
                         except Exception as error:
                             annotations = getattr(handler, "_htmx_annotations_", None)
                             logger.exception(
                                 "HTMX unhandled exception in component %s",
                                 component.__class__.__name__,
                             )
-                            emited_commands = [
+                            emitted_commands = [
                                 Emit(HtmxUnhandledError(error, handler_annotations=annotations))
                             ]
-                        yield from self._process_emited_commands(
+                        yield from self._process_emitted_commands(
                             component,
-                            emited_commands,
+                            emitted_commands,
                             commands,
                             during_execute=True,
                             method_name=event_handler,
@@ -138,7 +138,7 @@ class CommandProcessor:
                             # Component dropped its SSE subscription between
                             # enqueue and dispatch; nothing to do.
                             return
-                        emited_commands: list[Command] = []
+                        emitted_commands: list[Command] = []
                         for envelope in envelopes:
                             try:
                                 yielded = handler(envelope)
@@ -148,13 +148,13 @@ class CommandProcessor:
                                     component.__class__.__name__,
                                 )
                                 if not isinstance(error, HtmxUnhandledError):
-                                    emited_commands.append(Emit(HtmxUnhandledError(error)))
+                                    emitted_commands.append(Emit(HtmxUnhandledError(error)))
                                 continue
                             if yielded is not None:
-                                emited_commands.extend(c for c in yielded if c is not None)
-                        yield from self._process_emited_commands(
+                                emitted_commands.extend(yielded)
+                        yield from self._process_emitted_commands(
                             component,
-                            emited_commands,
+                            emitted_commands,
                             commands,
                             during_execute=False,
                             method_name="_handle_sse_events",
@@ -188,7 +188,7 @@ class CommandProcessor:
                     commands.processing_component_id = component.id
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     try:
-                        emited_commands = component._handle_event(event)  # type: ignore
+                        emitted_commands = component._handle_event(event)  # type: ignore
                     except Exception as error:
                         logger.exception(
                             "HTMX unhandled error in the event handler of %s",
@@ -196,12 +196,12 @@ class CommandProcessor:
                         )
                         # Don't enter a spiral of death with HtmxUnhandledError
                         if not isinstance(event, HtmxUnhandledError):
-                            emited_commands = [Emit(HtmxUnhandledError(error))]
+                            emitted_commands = [Emit(HtmxUnhandledError(error))]
                         else:
                             raise
-                    yield from self._process_emited_commands(
+                    yield from self._process_emitted_commands(
                         component,
-                        emited_commands,
+                        emitted_commands,
                         commands,
                         during_execute=False,
                         method_name="_handle_event",
@@ -232,18 +232,44 @@ class CommandProcessor:
         commands.extend(commands_to_append)
         repo.session.flush()
 
-    def _process_emited_commands(
+    def _process_emitted_commands(
         self,
         component: HtmxComponent,
-        emmited_commands: Iterable[Command] | None,
+        emitted_commands: Iterable[Command] | None,
         commands: CommandQueue,
         during_execute: bool,
         method_name: str | None = None,
     ) -> Iterable[ProcessedCommand]:
+        """Normalise the commands a handler emitted for `component`.
+
+        Shared post-processing for the three handler entry points
+        (`Execute`, `Emit` fan-out, `HandleSSEEvents`).  Rules:
+
+        - If the handler returns `None` or yields nothing, enqueue an
+          implicit default `Render(component)`.
+        - If the handler yields `SkipRender(component)` (i.e. of the
+          same component being handled), suppress the implicit default
+          render for this invocation.  Other yielded commands still
+          take effect.
+        - An explicit `Render(component)` likewise stands in for the
+          default render.
+        - Under `during_execute=True` (HTTP direct event handler), the
+          default render — and any partial `Render` for the same
+          component with `lazy is None` — is forced non-lazy.  In the
+          `Emit`/`HandleSSEEvents` paths the default render respects
+          `component.lazy`.
+        - Query-patcher parameter changes emit a `ReplaceURL` and a
+          `Signal` for subscribers.
+
+        Handlers must not yield `None`; the `Command` union excludes it
+        and pyright catches it statically.  A `None` that sneaks through
+        at runtime will trip `assert_never` downstream — undefined
+        behaviour, not silently swallowed.
+        """
         repo = self.repo
         component_was_rendered = False
         commands_to_add: list[Command | InternalCommand] = []
-        for command in emmited_commands or []:
+        for command in emitted_commands or []:
             if method_name:
                 logger.debug("< YIELD: %s.%s -> %s", component.hx_name, method_name, command)
             component_was_rendered = component_was_rendered or (

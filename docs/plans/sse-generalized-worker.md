@@ -31,7 +31,8 @@ single behavior, and the stopgap is removed in the same change.
 - [x] Phase 2.5 — Transport-neutral `CommandBatch` and HTTP serializer
 - [x] Phase 2.2 — Command type split (`Command` / `InternalCommand` /
   `ProcessedCommand`), `HandleSSEEvents`, command docstrings
-- [ ] Phase 2.3 — Normalize handler return semantics
+- [x] Phase 2.3 — Normalise handler return semantics (drop legacy
+  `yield None`, single `_process_emitted_commands` helper)
 - [ ] Phase 2.4 — Replace SSE ad-hoc command loop with `CommandProcessor`
 - [ ] Phase 2.6 — Generalize the SSE command sink
 - [ ] Phase 2.7 — Unify browser-side command execution

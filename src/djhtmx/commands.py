@@ -261,7 +261,7 @@ class SkipRender:
     component would be wasteful or wrong.
 
     Only suppresses the *implicit* default render that
-    `_process_emited_commands` adds for the running component; an
+    `_process_emitted_commands` adds for the running component; an
     explicit `Render(self)` elsewhere in the yields still takes
     effect.
     """
@@ -433,7 +433,7 @@ class HandleSSEEvents:
     pending events.  `CommandProcessor._run_command`'s case loads the
     component, calls `_handle_sse_events(envelope)` for each envelope,
     wraps handler exceptions as `Emit(HtmxUnhandledError(...))`, and
-    routes the yielded commands through `_process_emited_commands`
+    routes the yielded commands through `_process_emitted_commands`
     with `during_execute=False`.
 
     Application code does not yield this; it's the SSE entry point
