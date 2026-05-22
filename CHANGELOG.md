@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Experimental SSE channel with a single per-page `SSEEventRouter` (https://github.com/edelvalle/djhtmx/pull/54).
-- SSE settings to size the render thread pool and connection lifecycle:
+- Experimental SSE channel with a single per-page `SSEEventRouter`
+  and a bounded render thread pool. New settings:
   `DJHTMX_SSE_RENDER_WORKERS` (default `8`),
   `DJHTMX_SSE_RENDER_QUEUE_MAX`,
   `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`,
@@ -18,27 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Imports of command classes**: `Destroy`, `Redirect`, `Open`,
-  `Focus`, `ScrollIntoView`, `DispatchDOMEvent`, `Render`,
-  `BuildAndRender`, `Emit`, `Signal`, `Execute`, `SkipRender`,
-  `Command`, `PushURL`, `ReplaceURL`, and `SendHtml` now live in
-  `djhtmx.commands` (previously some were re-exported from
-  `djhtmx.component`). Update imports to `from djhtmx.commands import …`.
-- Handler-yield typing: handlers may yield commands from the
-  `Command` union (`Render`, `BuildAndRender`, `Destroy`, `Emit`,
-  `SkipRender`, `Open`, `Focus`, `ScrollIntoView`, `Redirect`,
-  `DispatchDOMEvent`, `PushURL`, `ReplaceURL`, `Execute`). `Signal`
-  and `SendHtml` are no longer in `Command`; they are framework
-  internals.
-
-### Fixed
-
-- PostgreSQL connection exhaustion under SSE load. Each open SSE
-  stream used to retain a DB connection for the lifetime of the
-  browser tab; under sustained traffic this drained the pool. SSE
-  renders now share a small bounded thread pool with explicit
-  connection lifecycle, so PG connection count is bounded by
-  `DJHTMX_SSE_RENDER_WORKERS` regardless of stream count.
+- Command classes (`Destroy`, `Redirect`, `Open`, `Focus`,
+  `ScrollIntoView`, `DispatchDOMEvent`, `Render`, `BuildAndRender`,
+  `Emit`, `Execute`, `SkipRender`, `PushURL`, `ReplaceURL`,
+  `SendHtml`, and the `Command` union) now live in `djhtmx.commands`.
+  Update imports to `from djhtmx.commands import …`.  The `Command`
+  union is also narrower: `Signal` and `SendHtml` are framework
+  internals and no longer in it.
 
 ## [1.3.12] - 2026-04-24
 

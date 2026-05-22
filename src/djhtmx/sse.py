@@ -9,7 +9,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import (
-    TYPE_CHECKING,
     Annotated,
     Any,
     NamedTuple,
@@ -21,15 +20,11 @@ from typing import (
 
 import redis
 import redis.asyncio as async_redis
-from django.utils.html import format_html
 from pydantic import BaseModel, Field
 from xotl.tools.objects import import_object
 
 from . import json, settings
 from .component import HtmxComponent
-
-if TYPE_CHECKING:
-    from .commands import Open
 from .introspection import _extract_event_types, _resolve_typevars, _substitute_typevars
 from .sse_executor import submit_sse_render
 from .utils import compact_hash, get_fqn
@@ -89,10 +84,6 @@ def session_events_key(session_id: str) -> str:
 
 def wake_channel(session_id: str) -> str:
     return f"djhtmx:sse:wake:session:{compact_hash(session_id)}"
-
-
-def sse_command_sink_id(session_id: str) -> str:
-    return f"djhtmx-sse-commands-{compact_hash(session_id)}"
 
 
 def index_key(event_type: type | str, topic: str) -> str:
@@ -360,6 +351,8 @@ async def render_sse_event_fragments(
     user,
     conn: async_redis.Redis | None = None,
 ) -> list[str]:
+    from .commands import HandleSSEEvents
+
     conn = conn or get_async_conn()
     raw_events = await async_lrange(conn, session_events_key(session_id), 0, -1)
     if raw_events:
@@ -370,20 +363,21 @@ async def render_sse_event_fragments(
         envelope = EventEnvelope.envelope_validate_json(raw_event)
         envelopes_by_consumer[envelope.consumer_id].append(envelope)
 
-    html: list[str] = []
-    for id_, envelopes in envelopes_by_consumer.items():
-        metadata = await load_consumer_metadata(id_, conn)
+    handle_commands: list[HandleSSEEvents] = []
+    for consumer_id, envelopes in envelopes_by_consumer.items():
+        metadata = await load_consumer_metadata(consumer_id, conn)
         if metadata:
-            rendered = await submit_sse_render(
-                _render_consumer_sse_events,
-                session_id,
-                user,
-                metadata,
-                envelopes,
+            handle_commands.append(
+                HandleSSEEvents(
+                    component_id=metadata["component_id"],
+                    envelopes=tuple(decode_event(env) for env in envelopes),
+                )
             )
-            html.extend(rendered)
 
-    return html
+    if not handle_commands:
+        return []
+
+    return await submit_sse_render(_drain_sse_session, session_id, user, handle_commands)
 
 
 async def get_sse_heartbeat_paces(conn: async_redis.Redis, session_id: str) -> set[int]:
@@ -405,117 +399,58 @@ async def render_sse_heartbeat_fragments(
     user,
     paces: Iterable[int],
 ) -> list[str]:
+    from .commands import HandleSSEEvents
+
     paces_by_topic = {_sse_heartbeat_topic(session_id, pace): pace for pace in paces}
     heartbeat = event_type_name(SSEHeartbeat)
-    metadata_by_consumer = {
-        consumer: metadata
-        for consumer in await async_smembers_text(conn, session_consumers_key(session_id))
-        if (metadata := await load_consumer_metadata(consumer, conn))
-    }
-    envelopes_by_consumer = {
-        consumer: [
-            EventEnvelope(
-                consumer_id=consumer,
-                event_type=heartbeat,
+    handle_commands: list[HandleSSEEvents] = []
+    for consumer_id in await async_smembers_text(conn, session_consumers_key(session_id)):
+        metadata = await load_consumer_metadata(consumer_id, conn)
+        if not metadata:
+            continue
+        envelopes = tuple(
+            SSEEventEnvelope(
+                event=SSEHeartbeat(pace=paces_by_topic[topic]),
                 topic=topic,
-                payload=SSEHeartbeat(pace=paces_by_topic[topic]),
+                source_session_id=None,
             )
             for subscription in metadata.get("subscriptions", [])
             if subscription.get("event_type") == heartbeat
             if (topic := subscription.get("topic")) in paces_by_topic
-        ]
-        for consumer, metadata in metadata_by_consumer.items()
-    }
-    html = [
-        fragment
-        for consumer, envelopes in envelopes_by_consumer.items()
-        if (metadata := metadata_by_consumer.get(consumer))
-        for fragment in await submit_sse_render(
-            _render_consumer_sse_events, session_id, user, metadata, envelopes
         )
-    ]
-    return html
+        if envelopes:
+            handle_commands.append(
+                HandleSSEEvents(component_id=metadata["component_id"], envelopes=envelopes)
+            )
+
+    if not handle_commands:
+        return []
+
+    return await submit_sse_render(_drain_sse_session, session_id, user, handle_commands)
 
 
-def _render_consumer_sse_events(
-    session_id: str,
-    user,
-    metadata: dict[str, Any],
-    envelopes: list[EventEnvelope],
-) -> list[str]:
+def _drain_sse_session(session_id: str, user, handle_commands: list) -> list[str]:
+    """Sync render path executed on the SSE render worker thread.
+
+    Builds one `Repository` for the session, runs all the consumers'
+    `HandleSSEEvents` commands through a single `CommandProcessor` (one
+    `CommandQueue`, one render coalescing pass, one `Emit` fan-out
+    cascade), and serializes the resulting `ProcessedCommand` stream
+    via `to_sse_fragments`.
+    """
     from django.contrib.auth.models import AnonymousUser
 
-    from .commands import BuildAndRender, Destroy, Emit, Open, Render, SkipRender
+    from .command_processor import CommandProcessor
+    from .command_response import CommandBatch, to_sse_fragments
     from .repo import Repository, Session
     from .utils import get_params
 
     repo = Repository(
         user=user or AnonymousUser(), session=Session(session_id), params=get_params(None)
     )
-    component = repo.get_component_by_id(metadata["component_id"])
-    if not isinstance(component, HtmxComponent) or not hasattr(component, "_handle_sse_events"):
-        return []
-
-    result: list[str] = []
-    render_component = False
-    rendered_self = False
-    for envelope in envelopes:
-        event = decode_event(envelope)
-        emitted = component._handle_sse_events(event)  # type: ignore[attr-defined]
-        commands = [] if emitted is None else list(emitted)
-        for command in commands:
-            match command:
-                case None:
-                    render_component = True
-                case SkipRender():
-                    render_component = False
-                case Render(component=rendered):
-                    rendered_self = rendered_self or rendered.id == component.id
-                    result.append(str(repo.render_html(rendered, oob=command.oob or "true")))
-                case BuildAndRender(
-                    component=component_type, state=state, oob=oob, parent_id=parent_id
-                ):
-                    rendered = repo.build(component_type.__name__, state, parent_id=parent_id)
-                    result.append(str(repo.render_html(rendered, oob=oob)))
-                case Open() as open_command:
-                    result.append(_render_open_command(repo.session.id, open_command))
-                case Destroy(component_id):
-                    repo.unregister_component(component_id)
-                    result.append(
-                        str(format_html('<div id="{}" hx-swap-oob="delete"></div>', component_id))
-                    )
-                case Emit():
-                    logger.error("Emit is not supported from SSE handlers: %s", command)
-                case _:
-                    logger.error("Command is not supported from SSE handlers: %s", command)
-    if render_component and not rendered_self:
-        result.append(str(repo.render_html(component, oob="true")))
-    repo.session.flush()
-    return result
-
-
-def _render_open_command(session_id: str, command: Open) -> str:
-    session_hash = compact_hash(session_id)
-    return str(
-        format_html(
-            """
-            <div hx-swap-oob="beforeend: #{sink_id}">
-              <div data-command="open"
-                   data-session="{session_hash}"
-                   data-url="{url}"
-                   data-name="{name}"
-                   data-target="{target}"
-                   data-rel="{rel}"></div>
-            </div>
-            """,
-            sink_id=sse_command_sink_id(session_id),
-            session_hash=session_hash,
-            url=command.url,
-            name=command.name,
-            target=command.target,
-            rel=command.rel,
-        ).strip()
-    )
+    processor = CommandProcessor(repo)
+    batch = CommandBatch.from_processed(processor.process(handle_commands))
+    return to_sse_fragments(batch, session_id)
 
 
 def _sse_heartbeat_topic(session_id: str, pace: int) -> str:

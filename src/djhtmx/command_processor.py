@@ -130,8 +130,15 @@ class CommandProcessor:
             case HandleSSEEvents(component_id, envelopes):
                 commands.processing_component_id = component_id
                 match repo.get_component_by_id(component_id):
-                    case Destroy() as command:
-                        yield command
+                    case Destroy():
+                        # Stale consumer record: the component was destroyed
+                        # elsewhere in this dispatch (or earlier) but its SSE
+                        # consumer entry in Redis hasn't been cleaned up yet
+                        # — see Phase 2.8 of the SSE-generalized-worker plan.
+                        # Silently skip; the browser-side OOB delete has
+                        # already been (or will be) emitted by whoever
+                        # destroyed it.
+                        return
                     case HtmxComponent() as component:
                         handler = getattr(component, "_handle_sse_events", None)
                         if handler is None:

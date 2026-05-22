@@ -159,7 +159,8 @@ class TodoItem(HtmxComponent):
     def _handle_sse_events(self, envelope: SSEEventEnvelope[TodoItemUpdated | TodoItemRemoved]):
         match envelope.event:
             case TodoItemUpdated(item_id=item_id) if self.item and item_id == self.item.pk:
-                yield None
+                # No yields: framework emits the default Render(self).
+                pass
             case TodoItemRemoved(item_id=item_id) if self.item and item_id == self.item.pk:
                 yield Destroy(self.id)
             case TodoItemRemoved() | TodoItemUpdated():
@@ -217,7 +218,8 @@ class TodoCounter(HtmxComponent):
         self,
         envelope: SSEEventEnvelope[TodoItemAdded | TodoItemUpdated | TodoItemRemoved],
     ):
-        yield None
+        # No yields: framework emits the default Render(self).
+        return
 
     @property
     def items(self):
