@@ -36,6 +36,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `to_http_response`. Externally visible HTTP behavior is unchanged,
   including the rule that `HX-Redirect` suppresses `HX-Push-Url` and
   `HX-Replace-Url`.
+- **Command type split**: `djhtmx.commands` now defines three named
+  unions making the role of each command explicit. `Command`
+  (handler-yieldable) is the public API surface for event handlers
+  (`Render`, `BuildAndRender`, `Destroy`, `Emit`, `SkipRender`,
+  `Open`, `Focus`, `ScrollIntoView`, `Redirect`, `DispatchDOMEvent`,
+  `PushURL`, `ReplaceURL`, `Execute`). `InternalCommand` (`Signal`,
+  `HandleSSEEvents`) is queue-only — handlers must not yield these.
+  `ProcessedCommand` is the wire-effect subset that the
+  `CommandBatch` / transport serializers consume. Pyright now catches
+  handlers that accidentally yield internal commands.
+- **`HandleSSEEvents` internal command**: the SSE drain entry point
+  for the unified command pipeline. `CommandProcessor` handles the
+  new command by loading the consumer's component, walking the
+  envelopes through `_handle_sse_events`, wrapping handler
+  exceptions as `Emit(HtmxUnhandledError(...))`, and routing the
+  yielded commands through `_process_emited_commands`
+  (`during_execute=False`). Application code does not yield this;
+  the SSE renderer enqueues it in Phase 2.4.
+- **Command docstrings**: every command dataclass in `djhtmx.commands`
+  now carries a substantive docstring covering whether it is
+  handler-yieldable / internal / transport-output, the semantics, and
+  when to use it from application code. `Execute` vs `DispatchDOMEvent`
+  is explicitly clarified as "server-side method dispatch" vs
+  "browser-side DOM event fire".
 
 ### Changed
 

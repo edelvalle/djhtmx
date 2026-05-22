@@ -19,15 +19,8 @@ from djhtmx.tracing import tracing_span
 from . import json
 from .commands import (
     Destroy,
-    DispatchDOMEvent,
     Execute,
-    Focus,
-    Open,
-    PushURL,
-    Redirect,
-    ReplaceURL,
-    ScrollIntoView,
-    SendHtml,
+    ProcessedCommand,
 )
 from .component import (
     REGISTRY,
@@ -48,17 +41,9 @@ signer = Signer()
 logger = logging.getLogger(__name__)
 
 
-ProcessedCommand = (
-    Destroy
-    | Redirect
-    | Open
-    | Focus
-    | ScrollIntoView
-    | DispatchDOMEvent
-    | SendHtml
-    | PushURL
-    | ReplaceURL
-)
+# `ProcessedCommand` is re-exported from `.commands` so existing imports
+# (`from djhtmx.repo import ProcessedCommand`) keep working.
+__all__ = ("ProcessedCommand", "Repository", "Session", "signer")
 
 
 class Repository:

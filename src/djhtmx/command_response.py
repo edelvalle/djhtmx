@@ -30,6 +30,7 @@ from .commands import (
     DispatchDOMEvent,
     Focus,
     Open,
+    ProcessedCommand,
     PushURL,
     Redirect,
     ReplaceURL,
@@ -37,7 +38,6 @@ from .commands import (
     SendHtml,
 )
 from .component import Triggers
-from .repo import ProcessedCommand
 
 BrowserCommand = Focus | ScrollIntoView | Open | DispatchDOMEvent
 
@@ -78,7 +78,7 @@ class CommandBatch:
                 self.replace_url = command
             case Focus() | ScrollIntoView() | Open() | DispatchDOMEvent():
                 self.browser_commands.append(command)
-            case _ as unreachable:
+            case unreachable:
                 assert_never(unreachable)
 
     @classmethod
@@ -125,7 +125,7 @@ def to_http_response(batch: CommandBatch) -> HttpResponse:
                         "composed": composed,
                     },
                 )
-            case _ as unreachable:
+            case unreachable:
                 assert_never(unreachable)
 
     if batch.redirect is not None:

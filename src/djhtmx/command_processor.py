@@ -33,7 +33,10 @@ from .commands import (
     Emit,
     Execute,
     Focus,
+    HandleSSEEvents,
+    InternalCommand,
     Open,
+    ProcessedCommand,
     PushURL,
     Redirect,
     Render,
@@ -51,7 +54,7 @@ from .introspection import filter_parameters
 from .settings import LOGIN_URL
 
 if TYPE_CHECKING:
-    from .repo import ProcessedCommand, Repository
+    from .repo import Repository
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +70,7 @@ class CommandProcessor:
     def __init__(self, repo: Repository):
         self.repo = repo
 
-    def process(self, commands: Iterable[Command]) -> Generator[ProcessedCommand]:
+    def process(self, commands: Iterable[Command | InternalCommand]) -> Generator[ProcessedCommand]:
         """Drive the command queue until exhausted, yielding processed output.
 
         Catches `ValidationError`s whose root cause is an invalid `user`
@@ -122,6 +125,39 @@ class CommandProcessor:
                             commands,
                             during_execute=True,
                             method_name=event_handler,
+                        )
+
+            case HandleSSEEvents(component_id, envelopes):
+                commands.processing_component_id = component_id
+                match repo.get_component_by_id(component_id):
+                    case Destroy() as command:
+                        yield command
+                    case HtmxComponent() as component:
+                        handler = getattr(component, "_handle_sse_events", None)
+                        if handler is None:
+                            # Component dropped its SSE subscription between
+                            # enqueue and dispatch; nothing to do.
+                            return
+                        emited_commands: list[Command] = []
+                        for envelope in envelopes:
+                            try:
+                                yielded = handler(envelope)
+                            except Exception as error:
+                                logger.exception(
+                                    "HTMX unhandled exception in _handle_sse_events of %s",
+                                    component.__class__.__name__,
+                                )
+                                if not isinstance(error, HtmxUnhandledError):
+                                    emited_commands.append(Emit(HtmxUnhandledError(error)))
+                                continue
+                            if yielded is not None:
+                                emited_commands.extend(c for c in yielded if c is not None)
+                        yield from self._process_emited_commands(
+                            component,
+                            emited_commands,
+                            commands,
+                            during_execute=False,
+                            method_name="_handle_sse_events",
                         )
 
             case SkipRender(component):
@@ -206,7 +242,7 @@ class CommandProcessor:
     ) -> Iterable[ProcessedCommand]:
         repo = self.repo
         component_was_rendered = False
-        commands_to_add: list[Command] = []
+        commands_to_add: list[Command | InternalCommand] = []
         for command in emmited_commands or []:
             if method_name:
                 logger.debug("< YIELD: %s.%s -> %s", component.hx_name, method_name, command)

@@ -78,7 +78,7 @@ class Consumer(AsyncJsonWebsocketConsumer):
                     ):
                         logger.debug("< Command: %s", command)
                         await self.send_json(command)
-                    case _ as unreachable:
+                    case unreachable:
                         assert_never(unreachable)
 
     async def send_commands(self, commands: list[Command]):
