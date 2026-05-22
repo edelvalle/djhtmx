@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `adispatch_event` are now thin wrappers around it. HTTP behavior is
   unchanged; this prepares the ground for the SSE/HTTP command-pipeline
   unification described in Phase 2 of the plan.
+- **`CommandBatch`**: transport-neutral accumulator for the
+  `ProcessedCommand` stream, plus an HTTP serializer in
+  `djhtmx.command_response`. `urls.endpoint`'s per-iteration command
+  match (Destroy/Redirect/Focus/...) moves into one place that both
+  HTTP and (later) SSE consume. Endpoint logic is now four lines:
+  build the batch from `repo.dispatch_event(...)` and hand it to
+  `to_http_response`. Externally visible HTTP behavior is unchanged,
+  including the rule that `HX-Redirect` suppresses `HX-Push-Url` and
+  `HX-Replace-Url`.
 
 ### Changed
 
