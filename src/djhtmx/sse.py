@@ -8,18 +8,30 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Annotated, Any, NamedTuple, Union, get_args, get_origin, get_type_hints
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    NamedTuple,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 import redis
 import redis.asyncio as async_redis
-from asgiref.sync import sync_to_async
 from django.utils.html import format_html
 from pydantic import BaseModel, Field
 from xotl.tools.objects import import_object
 
 from . import json, settings
-from .component import BuildAndRender, Destroy, Emit, HtmxComponent, Open, Render, SkipRender
+from .component import HtmxComponent
+
+if TYPE_CHECKING:
+    from .commands import Open
 from .introspection import _extract_event_types, _resolve_typevars, _substitute_typevars
+from .sse_executor import submit_sse_render
 from .utils import compact_hash, get_fqn
 
 
@@ -362,7 +374,8 @@ async def render_sse_event_fragments(
     for id_, envelopes in envelopes_by_consumer.items():
         metadata = await load_consumer_metadata(id_, conn)
         if metadata:
-            rendered = await sync_to_async(_render_consumer_sse_events)(
+            rendered = await submit_sse_render(
+                _render_consumer_sse_events,
                 session_id,
                 user,
                 metadata,
@@ -417,8 +430,8 @@ async def render_sse_heartbeat_fragments(
         fragment
         for consumer, envelopes in envelopes_by_consumer.items()
         if (metadata := metadata_by_consumer.get(consumer))
-        for fragment in await sync_to_async(_render_consumer_sse_events)(
-            session_id, user, metadata, envelopes
+        for fragment in await submit_sse_render(
+            _render_consumer_sse_events, session_id, user, metadata, envelopes
         )
     ]
     return html
@@ -430,28 +443,9 @@ def _render_consumer_sse_events(
     metadata: dict[str, Any],
     envelopes: list[EventEnvelope],
 ) -> list[str]:
-    try:
-        return _render_consumer_sse_events_impl(session_id, user, metadata, envelopes)
-    finally:
-        # SSE streams never fire `request_finished`, and the sticky
-        # `sync_to_async` thread keeps Django's per-thread connection alive
-        # for the lifetime of the browser tab.  `close_old_connections()`
-        # honours `CONN_MAX_AGE` and would leave the connection pinned, so
-        # close unconditionally to release it back to the pool each render.
-        from django.db import connections
-
-        for conn in connections.all():
-            conn.close()
-
-
-def _render_consumer_sse_events_impl(
-    session_id: str,
-    user,
-    metadata: dict[str, Any],
-    envelopes: list[EventEnvelope],
-) -> list[str]:
     from django.contrib.auth.models import AnonymousUser
 
+    from .commands import BuildAndRender, Destroy, Emit, Open, Render, SkipRender
     from .repo import Repository, Session
     from .utils import get_params
 

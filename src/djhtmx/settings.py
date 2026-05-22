@@ -54,3 +54,27 @@ KEY_SIZE_SAMPLE_PROB = getattr(
 )
 
 STRICT_PUBLIC_BASE = getattr(settings, "DJHTMX_STRICT_PUBLIC_BASE", False)
+
+
+# SSE render executor: a small pool of long-lived worker threads owns one
+# Django DB connection each.  Sized in coordination with the host project's
+# PG pool budget — see docs/plans/sse-generalized-worker.md.
+SSE_RENDER_WORKERS = getattr(settings, "DJHTMX_SSE_RENDER_WORKERS", 8)
+if SSE_RENDER_WORKERS < 1:
+    raise ValueError("DJHTMX_SSE_RENDER_WORKERS must be >= 1")
+
+# 0 = unbounded queue; otherwise the executor raises when this many jobs are
+# already in flight, so the SSE loop logs and drops rather than blowing up.
+SSE_RENDER_QUEUE_MAX = getattr(settings, "DJHTMX_SSE_RENDER_QUEUE_MAX", 0)
+
+# Render calls per worker between explicit `is_usable()` checks on the DB
+# connection.  Catches half-broken connections without paying the cost on
+# every render.
+SSE_RENDER_HEALTHCHECK_EVERY = getattr(settings, "DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY", 50)
+
+# Render calls per worker before closing and rotating the DB connection.
+# Interacts with psycopg-pool's `max_lifetime`: a persistent worker would
+# otherwise keep its connection checked out indefinitely and defer the pool's
+# scheduled recycle.  Rotation returns the connection so the pool can retire
+# aged-out entries.
+SSE_RENDER_ROTATE_EVERY = getattr(settings, "DJHTMX_SSE_RENDER_ROTATE_EVERY", 200)

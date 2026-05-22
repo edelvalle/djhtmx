@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - SSE: Experimental SSE channel with a single router per page `SSEEventRouter` (https://github.com/edelvalle/djhtmx/pull/54)
+- **SSE render executor**: a dedicated thread pool now hosts the sync render
+  path used by the SSE endpoint. Each worker thread keeps its own Django DB
+  connection across renders, so PostgreSQL connection count is bounded by
+  `DJHTMX_SSE_RENDER_WORKERS` (default `8`) rather than growing with SSE
+  stream count. New settings: `DJHTMX_SSE_RENDER_WORKERS`,
+  `DJHTMX_SSE_RENDER_QUEUE_MAX`, `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`,
+  `DJHTMX_SSE_RENDER_ROTATE_EVERY`. Under `utils.runtime.is_testing()` the
+  executor is bypassed for thread-sensitive `sync_to_async` dispatch so
+  `TestCase` transactional tests see uncommitted data. See
+  `docs/plans/sse-generalized-worker.md` for the deployment topology and
+  sizing guidance.
+### Changed
+
+- **SSE PostgreSQL connection leak (refactor)**: the per-render
+  `connections.close()` stopgap in `_render_consumer_sse_events` is
+  replaced by the new render executor's connection lifecycle (rotation
+  every `DJHTMX_SSE_RENDER_ROTATE_EVERY` renders, plus close-on-error for
+  `OperationalError`/`InterfaceError`). The acute leak symptom (Sentry
+  KAIKO-JH) remains fixed; the new design also amortizes the connection
+  handshake across many renders instead of paying it on every drain.
 
 ### Fixed
 
