@@ -8,9 +8,10 @@ batch into wire output:
 - `to_http_response` — HTTP endpoint response, with HTMX headers and
   `HX-Trigger-After-Settle` payloads for browser commands.
 - `to_sse_fragments` — list of OOB HTML fragments for an SSE drain.
-  `Open` is supported via the session-scoped command sink; other
-  browser commands and URL mutations have no carrier until Phase 2.6
-  generalizes the sink, and are logged as unsupported.
+  HTML commands flow as direct OOB fragments; browser-effect and URL
+  commands ride through the session-scoped browser command sink as
+  base64url-encoded JSON payloads that the browser-side
+  `executeBrowserCommand` decodes.
 
 This module is the single place that decides how a `ProcessedCommand`
 maps to wire effects.  `urls.endpoint` and `sse.py` consume it without
@@ -21,6 +22,8 @@ See `docs/plans/sse-generalized-worker.md` for the rationale.
 
 from __future__ import annotations
 
+import base64
+import dataclasses
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -31,6 +34,7 @@ from django.http.response import HttpResponse
 from django.utils.html import format_html
 from django.utils.safestring import SafeString
 
+from . import json
 from .commands import (
     Destroy,
     DispatchDOMEvent,
@@ -47,6 +51,10 @@ from .component import Triggers
 from .utils import compact_hash
 
 logger = logging.getLogger(__name__)
+
+BrowserSinkCommand = (
+    Focus | ScrollIntoView | Open | DispatchDOMEvent | Redirect | PushURL | ReplaceURL
+)
 
 BrowserCommand = Focus | ScrollIntoView | Open | DispatchDOMEvent
 
@@ -154,78 +162,58 @@ def to_http_response(batch: CommandBatch) -> HttpResponse:
 def to_sse_fragments(batch: CommandBatch, session_id: str) -> list[str]:
     """Serialize a `CommandBatch` as a list of SSE OOB HTML fragments.
 
-    SSE payloads cannot use HTMX response headers, so URL-mutating
-    commands and most browser commands have no carrier in the MVP shape
-    of the SSE wire protocol.  Only `Open` is supported via the
-    session-scoped command sink; other browser commands (`Focus`,
-    `ScrollIntoView`, `DispatchDOMEvent`) and URL commands (`Redirect`,
-    `PushURL`, `ReplaceURL`) are logged as unsupported.
-
-    Phase 2.6 of the SSE-generalized-worker plan generalizes the
-    command sink to carry the full browser command set; at that point
-    this function will route them all through the sink.
+    HTML-producing commands (`SendHtml`, `Destroy`) become OOB fragments
+    directly.  Browser-effect and URL-mutating commands (`Focus`,
+    `ScrollIntoView`, `Open`, `DispatchDOMEvent`, `Redirect`, `PushURL`,
+    `ReplaceURL`) are carried through the session-scoped browser
+    command sink as base64url-encoded JSON payloads; the browser-side
+    `executeBrowserCommand` decodes and dispatches them by `command`
+    name.
     """
     fragments = [str(fragment) for fragment in batch.html]
-
     for command in batch.browser_commands:
-        match command:
-            case Open() as open_command:
-                fragments.append(_render_open_command(session_id, open_command))
-            case Focus() | ScrollIntoView() | DispatchDOMEvent():
-                logger.error(
-                    "%s is not supported from SSE handlers yet "
-                    "(needs Phase 2.6 generalized command sink): %s",
-                    type(command).__name__,
-                    command,
-                )
-            case _ as unreachable:
-                assert_never(unreachable)
-
+        fragments.append(_render_sink_command(session_id, command))
     if batch.redirect is not None:
-        logger.error(
-            "Redirect is not supported from SSE handlers yet "
-            "(needs Phase 2.6 generalized command sink): %s",
-            batch.redirect,
-        )
+        fragments.append(_render_sink_command(session_id, batch.redirect))
     if batch.push_url is not None:
-        logger.error(
-            "PushURL is not supported from SSE handlers yet "
-            "(needs Phase 2.6 generalized command sink): %s",
-            batch.push_url,
-        )
+        fragments.append(_render_sink_command(session_id, batch.push_url))
     if batch.replace_url is not None:
-        logger.error(
-            "ReplaceURL is not supported from SSE handlers yet "
-            "(needs Phase 2.6 generalized command sink): %s",
-            batch.replace_url,
-        )
-
+        fragments.append(_render_sink_command(session_id, batch.replace_url))
     return fragments
 
 
-def _render_open_command(session_id: str, command: Open) -> str:
+def _render_sink_command(session_id: str, command: BrowserSinkCommand) -> str:
+    """Encode a browser/URL command as a sink-targeted OOB fragment.
+
+    The payload is base64url-encoded JSON of the command's fields,
+    including the `command` discriminator that the browser sink reader
+    matches on.  Wrapping the payload in a `<template>` element keeps
+    the browser from rendering or processing its (empty) content; only
+    the data attributes are read by the MutationObserver-driven
+    processor in `django.js`.
+    """
     session_hash = compact_hash(session_id)
     sink_id = f"djhtmx-sse-commands-{session_hash}"
+    payload_json = json.dumps(dataclasses.asdict(command))
+    payload = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip("=")
     return str(
         format_html(
-            """
-            <div hx-swap-oob="beforeend: #{sink_id}">
-              <div data-command="open"
-                   data-session="{session_hash}"
-                   data-url="{url}"
-                   data-name="{name}"
-                   data-target="{target}"
-                   data-rel="{rel}"></div>
-            </div>
-            """,
+            '<div hx-swap-oob="beforeend: #{sink_id}">'
+            "<template data-djhtmx-browser-command "
+            'data-session="{session_hash}" '
+            'data-payload="{payload}"></template>'
+            "</div>",
             sink_id=sink_id,
             session_hash=session_hash,
-            url=command.url,
-            name=command.name,
-            target=command.target,
-            rel=command.rel,
-        ).strip()
+            payload=payload,
+        )
     )
 
 
-__all__ = ("BrowserCommand", "CommandBatch", "to_http_response", "to_sse_fragments")
+__all__ = (
+    "BrowserCommand",
+    "BrowserSinkCommand",
+    "CommandBatch",
+    "to_http_response",
+    "to_sse_fragments",
+)
