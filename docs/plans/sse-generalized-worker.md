@@ -34,9 +34,9 @@ single behavior, and the stopgap is removed in the same change.
 - [x] Phase 2.3 — Normalise handler return semantics (drop legacy
   `yield None`, single `_process_emitted_commands` helper)
 - [x] Phase 2.4 — Replace SSE ad-hoc command loop with `CommandProcessor`
-- [ ] Phase 2.6 — Generalize the SSE command sink
-- [ ] Phase 2.7 — Unify browser-side command execution
-- [ ] Phase 2.8 — Clean up SSE consumer records on `Destroy`
+- [x] Phase 2.6 — Generalize the SSE command sink
+- [x] Phase 2.7 — Unify browser-side command execution
+- [x] Phase 2.8 — Clean up SSE consumer records on `Destroy`
 
 ## Problems we are solving
 
