@@ -77,10 +77,12 @@ async def sse_endpoint(request: HttpRequest):
             sse_message,
             wake_channel,
         )
+        from .utils import compact_hash
 
         redis = get_async_conn()
         pubsub = redis.pubsub()
         channel = wake_channel(session_id)
+        session_tag = compact_hash(session_id)
         logger.debug("SSE [%s] stream subscribe channel=%s", session_id, channel)
         await pubsub.subscribe(channel)
 
@@ -91,47 +93,61 @@ async def sse_endpoint(request: HttpRequest):
             logger.debug("SSE [%s] stream connected session", session_id)
             yield b": connected\n\n"
             while True:
-                # Keep the Redis keys alive for as long there is a SSE connection
-                now = time.monotonic()
-                if refresh_interval and now - last_refresh >= refresh_interval:
-                    await refresh_sse_session_liveness(redis, session_id)
-                    last_refresh = now
+                with tracing_span("djhtmx.sse.iteration", session=session_tag):
+                    # Keep the Redis keys alive for as long there is a SSE connection
+                    now = time.monotonic()
+                    if refresh_interval and now - last_refresh >= refresh_interval:
+                        await refresh_sse_session_liveness(redis, session_id)
+                        last_refresh = now
 
-                logger.debug("SSE [%s] draining heartbeat subscriptions", session_id)
-                heartbeat_paces = await get_sse_heartbeat_paces(redis, session_id)
-                for pace in heartbeat_paces - heartbeat_due_at.keys():
-                    heartbeat_due_at[pace] = now + pace
-                for stale_pace in heartbeat_due_at.keys() - heartbeat_paces:
-                    heartbeat_due_at.pop(stale_pace)
-                due_paces = {pace for pace, due_at in heartbeat_due_at.items() if now >= due_at}
-                if due_paces:
-                    for pace in due_paces:
+                    logger.debug("SSE [%s] draining heartbeat subscriptions", session_id)
+                    heartbeat_paces = await get_sse_heartbeat_paces(redis, session_id)
+                    for pace in heartbeat_paces - heartbeat_due_at.keys():
                         heartbeat_due_at[pace] = now + pace
-                    for fragment in await render_sse_heartbeat_fragments(
-                        redis, session_id, user, due_paces
-                    ):
+                    for stale_pace in heartbeat_due_at.keys() - heartbeat_paces:
+                        heartbeat_due_at.pop(stale_pace)
+                    due_paces = {pace for pace, due_at in heartbeat_due_at.items() if now >= due_at}
+                    if due_paces:
+                        for pace in due_paces:
+                            heartbeat_due_at[pace] = now + pace
+                        with tracing_span(
+                            "djhtmx.sse.heartbeat_drain",
+                            session=session_tag,
+                            paces=",".join(str(p) for p in sorted(due_paces)),
+                        ):
+                            heartbeat_fragments = await render_sse_heartbeat_fragments(
+                                redis, session_id, user, due_paces
+                            )
+                        for fragment in heartbeat_fragments:
+                            yield sse_message("djhtmx", fragment)
+
+                    logger.debug("SSE [%s] draining session messages", session_id)
+                    # This will drain the channel from messages at both connection time and later
+                    # after a message is received (reentering the loop).
+                    #
+                    # Caveat: if the Redis pub/sub connection disconnects or the worker is
+                    # restarted during that interval, the pub/sub wake can be lost.  That is why
+                    # the loop drains pending events at the top before sleeping.  In that failure
+                    # case, the event remains queued, but without another wake it might wait until
+                    # the next heartbeat timeout or another publish causes the loop to check
+                    # again.  Current timeout is 15s, so worst-case delay is roughly heartbeat
+                    # interval.
+                    with tracing_span("djhtmx.sse.event_drain", session=session_tag):
+                        event_fragments = await render_sse_event_fragments(session_id, user)
+                    for fragment in event_fragments:
                         yield sse_message("djhtmx", fragment)
 
-                logger.debug("SSE [%s] draining session messages", session_id)
-                # This will drain the channel from messages at both connection time and later after
-                # a message is received (reentering the loop).
-                #
-                # Caveat: if the Redis pub/sub connection disconnects or the worker is restarted
-                # during that interval, the pub/sub wake can be lost.  That is why the loop drains
-                # pending events at the top before sleeping.  In that failure case, the event
-                # remains queued, but without another wake it might wait until the next heartbeat
-                # timeout or another publish causes the loop to check again.  Current timeout is
-                # 15s, so worst-case delay is roughly heartbeat interval.
-                for fragment in await render_sse_event_fragments(session_id, user):
-                    yield sse_message("djhtmx", fragment)
-                logger.debug(
-                    "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
-                )
-                timeout = 15
-                if heartbeat_due_at:
-                    next_heartbeat_tick = min(heartbeat_due_at.values())
-                    timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=timeout)
+                    logger.debug(
+                        "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
+                    )
+                    timeout = 15.0
+                    if heartbeat_due_at:
+                        next_heartbeat_tick = min(heartbeat_due_at.values())
+                        timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))
+                with tracing_span("djhtmx.sse.wait", session=session_tag, timeout=f"{timeout:.2f}"):
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=timeout
+                    )
                 if not message:
                     yield b": heartbeat\n\n"
         except asyncio.CancelledError:

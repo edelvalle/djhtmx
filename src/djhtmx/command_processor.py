@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 
 from djhtmx.global_events import HtmxUnhandledError
+from djhtmx.tracing import tracing_span
 
 from .command_queue import CommandQueue
 from .commands import (
@@ -78,21 +79,27 @@ class CommandProcessor:
         previous `Repository.dispatch_event` behavior.
         """
         from .sse import sse_source_session
+        from .utils import compact_hash
 
         queue = CommandQueue(list(commands))
-        try:
-            with sse_source_session(self.repo.session.id):
-                while queue:
-                    yield from self._run_command(queue)
-        except ValidationError as e:
-            if any(
-                e
-                for error in e.errors()
-                if error["type"] == "is_instance_of" and error["loc"] == ("user",)
-            ):
-                yield Redirect(LOGIN_URL)
-            else:
-                raise
+        with tracing_span(
+            "djhtmx.CommandProcessor.process",
+            session=compact_hash(self.repo.session.id),
+            roots=str(len(queue._commands)),
+        ):
+            try:
+                with sse_source_session(self.repo.session.id):
+                    while queue:
+                        yield from self._run_command(queue)
+            except ValidationError as e:
+                if any(
+                    e
+                    for error in e.errors()
+                    if error["type"] == "is_instance_of" and error["loc"] == ("user",)
+                ):
+                    yield Redirect(LOGIN_URL)
+                else:
+                    raise
 
     def _run_command(self, commands: CommandQueue) -> Generator[ProcessedCommand]:
         repo = self.repo
