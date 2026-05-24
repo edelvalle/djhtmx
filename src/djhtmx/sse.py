@@ -28,6 +28,7 @@ from . import json, settings
 from .component import HtmxComponent
 from .introspection import _extract_event_types, _resolve_typevars, _substitute_typevars
 from .sse_executor import submit_sse_render
+from .tracing import tracing_span
 from .utils import compact_hash, get_fqn
 
 
@@ -158,72 +159,77 @@ def get_sse_subscriptions(component: HtmxComponent) -> set[SSESubscription]:
 
 
 def register_component(session_id: str, component: HtmxComponent, ttl: int = settings.SESSION_TTL):
-    subscriptions = get_sse_subscriptions(component)
-    id_ = consumer_id(session_id, component.id)
-    indexes_key = consumer_indexes_key(id_)
-    sync_redis_connection = get_sync_conn()
-    new_indexes = {
-        index_key(subscription.event_type, subscription.topic) for subscription in subscriptions
-    }
-    metadata_json = (
-        json.dumps({
-            "session_id": session_id,
-            "component_id": component.id,
-            "component_name": component.hx_name,
-            "subscriptions": [
-                {
-                    "event_type": event_type_name(subscription.event_type),
-                    "topic": subscription.topic,
-                }
-                for subscription in subscriptions
-            ],
-        })
-        if subscriptions
-        else None
-    )
-
-    # WATCH the per-consumer indexes set so concurrent register/unregister for
-    # the *same* consumer is serialised — without it, two callers can compute
-    # `stale_indexes` against the same snapshot and leave orphan id_ entries
-    # in the shared event/topic index sets after their writes interleave.
-    # All mutations happen inside MULTI/EXEC so readers never see partial
-    # state.
-    done = False
-    attempt = 0
-    with sync_redis_connection.pipeline(transaction=True) as pipe:
-        while not done and attempt < settings.SSE_REGISTER_MAX_ATTEMPTS:
-            attempt += 1
-            try:
-                pipe.watch(indexes_key)
-                old_indexes = {_decode(member) for member in pipe.smembers(indexes_key)}  # type: ignore
-                stale_indexes = old_indexes - new_indexes
-                pipe.multi()
-                for key in stale_indexes:
-                    pipe.srem(key, id_)
-                if metadata_json is not None:
-                    pipe.set(consumer_key(id_), metadata_json, ex=ttl)
-                    pipe.sadd(session_consumers_key(session_id), id_)
-                    pipe.expire(session_consumers_key(session_id), ttl)
-                    pipe.delete(indexes_key)
-                    if new_indexes:
-                        pipe.sadd(indexes_key, *new_indexes)
-                        pipe.expire(indexes_key, ttl)
-                    for key in new_indexes:
-                        pipe.sadd(key, id_)
-                        pipe.expire(key, ttl)
-                else:
-                    pipe.delete(consumer_key(id_))
-                    pipe.srem(session_consumers_key(session_id), id_)
-                    pipe.delete(indexes_key)
-                pipe.execute()
-                done = True
-            except WatchError:
-                pipe.reset()
-    if not done:
-        raise RuntimeError(
-            f"register_component: contention on {indexes_key} exceeded "
-            f"{settings.SSE_REGISTER_MAX_ATTEMPTS} WATCH attempts"
+    with tracing_span(
+        "djhtmx.sse.register_component",
+        session=compact_hash(session_id),
+        component=component.hx_name,
+    ):
+        subscriptions = get_sse_subscriptions(component)
+        id_ = consumer_id(session_id, component.id)
+        indexes_key = consumer_indexes_key(id_)
+        sync_redis_connection = get_sync_conn()
+        new_indexes = {
+            index_key(subscription.event_type, subscription.topic) for subscription in subscriptions
+        }
+        metadata_json = (
+            json.dumps({
+                "session_id": session_id,
+                "component_id": component.id,
+                "component_name": component.hx_name,
+                "subscriptions": [
+                    {
+                        "event_type": event_type_name(subscription.event_type),
+                        "topic": subscription.topic,
+                    }
+                    for subscription in subscriptions
+                ],
+            })
+            if subscriptions
+            else None
         )
+
+        # WATCH the per-consumer indexes set so concurrent register/unregister for
+        # the *same* consumer is serialised — without it, two callers can compute
+        # `stale_indexes` against the same snapshot and leave orphan id_ entries
+        # in the shared event/topic index sets after their writes interleave.
+        # All mutations happen inside MULTI/EXEC so readers never see partial
+        # state.
+        done = False
+        attempt = 0
+        with sync_redis_connection.pipeline(transaction=True) as pipe:
+            while not done and attempt < settings.SSE_REGISTER_MAX_ATTEMPTS:
+                attempt += 1
+                try:
+                    pipe.watch(indexes_key)
+                    old_indexes = {_decode(member) for member in pipe.smembers(indexes_key)}  # type: ignore
+                    stale_indexes = old_indexes - new_indexes
+                    pipe.multi()
+                    for key in stale_indexes:
+                        pipe.srem(key, id_)
+                    if metadata_json is not None:
+                        pipe.set(consumer_key(id_), metadata_json, ex=ttl)
+                        pipe.sadd(session_consumers_key(session_id), id_)
+                        pipe.expire(session_consumers_key(session_id), ttl)
+                        pipe.delete(indexes_key)
+                        if new_indexes:
+                            pipe.sadd(indexes_key, *new_indexes)
+                            pipe.expire(indexes_key, ttl)
+                        for key in new_indexes:
+                            pipe.sadd(key, id_)
+                            pipe.expire(key, ttl)
+                    else:
+                        pipe.delete(consumer_key(id_))
+                        pipe.srem(session_consumers_key(session_id), id_)
+                        pipe.delete(indexes_key)
+                    pipe.execute()
+                    done = True
+                except WatchError:
+                    pipe.reset()
+        if not done:
+            raise RuntimeError(
+                f"register_component: contention on {indexes_key} exceeded "
+                f"{settings.SSE_REGISTER_MAX_ATTEMPTS} WATCH attempts"
+            )
 
 
 def unregister_consumer(session_id: str, component_id: str) -> None:
@@ -239,32 +245,37 @@ def unregister_consumer(session_id: str, component_id: str) -> None:
     consumer arbitrate via `WatchError` instead of interleaving and leaving
     orphan id_ entries in the shared event/topic index sets.
     """
-    id_ = consumer_id(session_id, component_id)
-    indexes_key = consumer_indexes_key(id_)
-    sync_redis_connection = get_sync_conn()
-    done = False
-    attempt = 0
-    with sync_redis_connection.pipeline(transaction=True) as pipe:
-        while not done and attempt < settings.SSE_REGISTER_MAX_ATTEMPTS:
-            attempt += 1
-            try:
-                pipe.watch(indexes_key)
-                shared_indexes = {_decode(member) for member in pipe.smembers(indexes_key)}  # type: ignore
-                pipe.multi()
-                for key in shared_indexes:
-                    pipe.srem(key, id_)
-                pipe.delete(consumer_key(id_))
-                pipe.delete(indexes_key)
-                pipe.srem(session_consumers_key(session_id), id_)
-                pipe.execute()
-                done = True
-            except WatchError:
-                pipe.reset()
-    if not done:
-        raise RuntimeError(
-            f"unregister_consumer: contention on {indexes_key} exceeded "
-            f"{settings.SSE_REGISTER_MAX_ATTEMPTS} WATCH attempts"
-        )
+    with tracing_span(
+        "djhtmx.sse.unregister_consumer",
+        session=compact_hash(session_id),
+        component=compact_hash(component_id),
+    ):
+        id_ = consumer_id(session_id, component_id)
+        indexes_key = consumer_indexes_key(id_)
+        sync_redis_connection = get_sync_conn()
+        done = False
+        attempt = 0
+        with sync_redis_connection.pipeline(transaction=True) as pipe:
+            while not done and attempt < settings.SSE_REGISTER_MAX_ATTEMPTS:
+                attempt += 1
+                try:
+                    pipe.watch(indexes_key)
+                    shared_indexes = {_decode(member) for member in pipe.smembers(indexes_key)}  # type: ignore
+                    pipe.multi()
+                    for key in shared_indexes:
+                        pipe.srem(key, id_)
+                    pipe.delete(consumer_key(id_))
+                    pipe.delete(indexes_key)
+                    pipe.srem(session_consumers_key(session_id), id_)
+                    pipe.execute()
+                    done = True
+                except WatchError:
+                    pipe.reset()
+        if not done:
+            raise RuntimeError(
+                f"unregister_consumer: contention on {indexes_key} exceeded "
+                f"{settings.SSE_REGISTER_MAX_ATTEMPTS} WATCH attempts"
+            )
 
 
 class EventEnvelope[P: BaseModel](BaseModel):
