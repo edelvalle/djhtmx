@@ -18,6 +18,7 @@ import contextvars
 import functools
 import logging
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
@@ -25,6 +26,7 @@ from asgiref.sync import sync_to_async
 from django.db import InterfaceError, OperationalError, connections
 
 from . import settings
+from .tracing import metric_distribution, metric_incr
 from .utils.runtime import is_testing
 
 logger = logging.getLogger(__name__)
@@ -93,13 +95,21 @@ async def submit_sse_render[**P, R](
         return await sync_to_async(fn, thread_sensitive=True)(*args, **kwargs)
 
     executor = get_sse_render_executor()
-    if settings.SSE_RENDER_QUEUE_MAX and _approx_pending(executor) >= settings.SSE_RENDER_QUEUE_MAX:
+    pending = _approx_pending(executor)
+    metric_distribution("djhtmx.sse.render.queue_depth", pending)
+    if settings.SSE_RENDER_QUEUE_MAX and pending >= settings.SSE_RENDER_QUEUE_MAX:
+        metric_incr("djhtmx.sse.render.drops", 1)
+        logger.warning(
+            "djhtmx SSE render queue at cap (%d); dropping submission",
+            settings.SSE_RENDER_QUEUE_MAX,
+        )
         raise SSERenderQueueFull(f"SSE render queue at cap ({settings.SSE_RENDER_QUEUE_MAX})")
 
     loop = asyncio.get_running_loop()
     ctx = contextvars.copy_context()
     bound = functools.partial(fn, *args, **kwargs)
-    return await loop.run_in_executor(executor, _run_with_lifecycle, ctx, bound)
+    submitted_at = time.monotonic()
+    return await loop.run_in_executor(executor, _run_with_lifecycle, ctx, bound, submitted_at)
 
 
 class SSERenderQueueFull(RuntimeError):
@@ -111,11 +121,16 @@ def _approx_pending(executor: ThreadPoolExecutor) -> int:
     return queue.qsize() if queue is not None else 0
 
 
-def _run_with_lifecycle[R](ctx: contextvars.Context, bound: Callable[[], R]) -> R:
-    return ctx.run(_render_with_connection_lifecycle, bound)
+def _run_with_lifecycle[R](
+    ctx: contextvars.Context, bound: Callable[[], R], submitted_at: float
+) -> R:
+    return ctx.run(_render_with_connection_lifecycle, bound, submitted_at)
 
 
-def _render_with_connection_lifecycle[R](bound: Callable[[], R]) -> R:
+def _render_with_connection_lifecycle[R](bound: Callable[[], R], submitted_at: float) -> R:
+    started_at = time.monotonic()
+    metric_distribution("djhtmx.sse.render.queue_wait_ms", (started_at - submitted_at) * 1000.0)
+
     thread_id = threading.get_ident()
     count = _bump_render_count(thread_id)
 
@@ -126,10 +141,18 @@ def _render_with_connection_lifecycle[R](bound: Callable[[], R]) -> R:
         return bound()
     except (OperationalError, InterfaceError):
         logger.warning("djhtmx SSE render: closing broken DB connection on worker", exc_info=True)
+        metric_incr("djhtmx.sse.render.broken_connection_closes", 1)
         _close_connections()
         raise
     finally:
+        metric_distribution(
+            "djhtmx.sse.render.duration_ms", (time.monotonic() - started_at) * 1000.0
+        )
         if settings.SSE_RENDER_ROTATE_EVERY and count % settings.SSE_RENDER_ROTATE_EVERY == 0:
+            metric_incr("djhtmx.sse.render.rotations", 1)
+            logger.info(
+                "djhtmx SSE render: rotating DB connection on worker after %d renders", count
+            )
             _close_connections()
 
 
@@ -145,11 +168,15 @@ def _health_check_connections() -> None:
         if conn.connection is None:
             continue
         try:
-            if not conn.is_usable():
-                conn.close()
+            usable = conn.is_usable()
         except Exception:
             logger.warning("djhtmx SSE render: health check failed; closing", exc_info=True)
+            metric_incr("djhtmx.sse.render.healthcheck_closes", 1)
             conn.close()
+        else:
+            if not usable:
+                metric_incr("djhtmx.sse.render.healthcheck_closes", 1)
+                conn.close()
 
 
 def _close_connections() -> None:

@@ -65,12 +65,64 @@ def tracing_span(name: str, **tags: str):
         yield
 
 
+# Metrics: thin dual-backend wrapper.  Each helper publishes to Sentry's
+# metrics API (when sentry-sdk is installed and metrics tracing is on) and
+# Logfire's metric instruments (when logfire is installed and Logfire
+# tracing is on).  Helpers are no-ops if neither backend is enabled.
+
+
+def metric_incr(name: str, value: int = 1) -> None:
+    """Counter increment: a monotonically increasing per-process tally."""
+    if _sentry_metrics is not None:
+        _sentry_metrics.incr(name, value)
+    if _logfire_metric_counter is not None:
+        instrument = _logfire_counters.get(name)
+        if instrument is None:
+            instrument = _logfire_metric_counter(name)
+            _logfire_counters[name] = instrument
+        instrument.add(value)  # type: ignore[attr-defined]
+
+
+def metric_distribution(name: str, value: float) -> None:
+    """Distribution / histogram sample.  Used for durations and queue waits."""
+    if _sentry_metrics is not None:
+        _sentry_metrics.distribution(name, value)
+    if _logfire_metric_histogram is not None:
+        instrument = _logfire_histograms.get(name)
+        if instrument is None:
+            instrument = _logfire_metric_histogram(name)
+            _logfire_histograms[name] = instrument
+        instrument.record(value)  # type: ignore[attr-defined]
+
+
 def htmx_headers_as_tags(headers: Mapping[str, object]) -> dict[str, str]:
     return {
         tag: value
         for header, tag in SAFE_HTMX_REQUEST_HEADERS.items()
         if (value := _get_header_value(headers, header)) not in (None, "")
     }
+
+
+if settings.ENABLE_SENTRY_TRACING and sentry_sdk is not None:
+    _sentry_metrics = getattr(sentry_sdk, "metrics", None)
+else:
+    _sentry_metrics = None
+
+
+def _build_logfire_instruments() -> tuple:
+    if not (settings.ENABLE_LOGFIRE_TRACING and logfire is not None):
+        return None, None
+    counter = getattr(logfire, "metric_counter", None)
+    histogram = getattr(logfire, "metric_histogram", None)
+    return counter, histogram
+
+
+_logfire_metric_counter, _logfire_metric_histogram = _build_logfire_instruments()
+
+# Caches: Logfire's metric_* factories return instrument objects that must be
+# reused; recreating them on every call would double-register metrics.
+_logfire_counters: dict[str, object] = {}
+_logfire_histograms: dict[str, object] = {}
 
 
 def _get_header_value(headers: Mapping[str, object], header: str) -> str | None:

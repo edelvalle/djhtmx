@@ -9,22 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Experimental SSE channel with a single per-page `SSEEventRouter`
-  and a bounded render thread pool. New settings:
-  `DJHTMX_SSE_RENDER_WORKERS` (default `8`),
-  `DJHTMX_SSE_RENDER_QUEUE_MAX`,
-  `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`,
-  `DJHTMX_SSE_RENDER_ROTATE_EVERY`.
+- Experimental SSE channel with a single per-page `SSEEventRouter` and a bounded render thread pool. New settings: `DJHTMX_SSE_RENDER_WORKERS` (default `8`), `DJHTMX_SSE_RENDER_QUEUE_MAX`, `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`, `DJHTMX_SSE_RENDER_ROTATE_EVERY`.
+
+- SSE render-pool metrics published through Sentry and Logfire under the `djhtmx.sse.render.*` namespace: `queue_depth` (distribution), `queue_wait_ms` (distribution), `duration_ms` (distribution), `drops` (counter), `rotations` (counter), `healthcheck_closes` (counter), and `broken_connection_closes` (counter).  New helpers `metric_incr`,  `metric_distribution` in `djhtmx.tracing` mirror the existing `tracing_span` dual-backend pattern.
 
 ### Changed
 
-- Command classes (`Destroy`, `Redirect`, `Open`, `Focus`,
-  `ScrollIntoView`, `DispatchDOMEvent`, `Render`, `BuildAndRender`,
-  `Emit`, `Execute`, `SkipRender`, `PushURL`, `ReplaceURL`,
-  `SendHtml`, and the `Command` union) now live in `djhtmx.commands`.
-  Update imports to `from djhtmx.commands import …`.  The `Command`
-  union is also narrower: `Signal` and `SendHtml` are framework
-  internals and no longer in it.
+- Command classes (`Destroy`, `Redirect`, `Open`, `Focus`, `ScrollIntoView`, `DispatchDOMEvent`, `Render`, `BuildAndRender`, `Emit`, `Execute`, `SkipRender`, `PushURL`, `ReplaceURL`, `SendHtml`, and the `Command` union) now live in `djhtmx.commands`.  Update imports to `from djhtmx.commands import …`.  The `Command` union is also narrower: `Signal` and `SendHtml` are framework internals and no longer in it.
 
 ## [1.3.12] - 2026-04-24
 
