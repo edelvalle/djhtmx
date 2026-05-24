@@ -372,6 +372,10 @@ async def render_sse_event_fragments(
     from .commands import HandleSSEEvents
 
     conn = conn or get_async_conn()
+    # TODO: LRANGE+DELETE is not atomic.  A concurrent emit_sse_event that
+    # RPUSHes between these two calls will have its envelope deleted before
+    # it's read.  Replace with LPOP COUNT (Redis 6.2+) or a MULTI/EXEC block
+    # so the read-and-clear is atomic.
     raw_events = await async_lrange(conn, session_events_key(session_id), 0, -1)
     if raw_events:
         await conn.delete(session_events_key(session_id))
