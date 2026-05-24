@@ -397,14 +397,20 @@ class Session:
     def flush(self, ttl: int = SESSION_TTL):
         if self.is_dirty:
             key = f"{self.id}:states"
-            if self.unregistered:
-                conn.hdel(key, *self.unregistered)
-                self.unregistered.clear()
-            if self.states:
-                conn.hset(key, mapping=self.states)
-            conn.hset(key, "__subs__", json.dumps(self.subscriptions))
-            conn.hset(key, "__children__", json.dumps(self.children))
-            conn.expire(key, ttl)
+            # Apply the dirty hash and refresh its TTL in a single MULTI/EXEC so
+            # a concurrent reader (`_ensure_read`) can never observe partial
+            # state — e.g. updated `states` but a `__subs__`/`__children__` from
+            # the previous flush.
+            with conn.pipeline(transaction=True) as pipe:
+                if self.unregistered:
+                    pipe.hdel(key, *self.unregistered)
+                if self.states:
+                    pipe.hset(key, mapping=self.states)
+                pipe.hset(key, "__subs__", json.dumps(self.subscriptions))
+                pipe.hset(key, "__children__", json.dumps(self.children))
+                pipe.expire(key, ttl)
+                pipe.execute()
+            self.unregistered.clear()
             # The command MEMORY USAGE is considered slow:
             # https://redis.io/docs/latest/commands/memory-usage/
             #
