@@ -130,8 +130,8 @@ async def sse_endpoint(request: HttpRequest):
                     # the loop drains pending events at the top before sleeping.  In that failure
                     # case, the event remains queued, but without another wake it might wait until
                     # the next heartbeat timeout or another publish causes the loop to check
-                    # again.  Current timeout is 15s, so worst-case delay is roughly heartbeat
-                    # interval.
+                    # again.  The wait is capped by `SSE_HEARTBEAT_TIMEOUT`, so worst-case delay
+                    # is roughly that value.
                     with tracing_span("djhtmx.sse.event_drain", session=session_tag):
                         event_fragments = await render_sse_event_fragments(session_id, user)
                     for fragment in event_fragments:
@@ -140,7 +140,7 @@ async def sse_endpoint(request: HttpRequest):
                     logger.debug(
                         "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
                     )
-                    timeout = 15.0
+                    timeout = settings.SSE_HEARTBEAT_TIMEOUT
                     if heartbeat_due_at:
                         next_heartbeat_tick = min(heartbeat_due_at.values())
                         timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))

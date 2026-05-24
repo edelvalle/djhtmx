@@ -363,7 +363,7 @@ async for tick in stream:
     refresh_session_liveness_if_due()
     drain_due_heartbeats()  # builds SSEHeartbeat envelopes for due paces
     drain_pending_events()  # LRANGE + DEL the session events list
-    sleep_until_woken_or_timeout(max=15s, bounded_by_next_heartbeat_due)
+    sleep_until_woken_or_timeout(max=DJHTMX_SSE_HEARTBEAT_TIMEOUT, bounded_by_next_heartbeat_due)
 ```
 
 Both drains funnel into the same render path:
@@ -378,7 +378,9 @@ Both drains funnel into the same render path:
 
 Stale consumer records (component already destroyed in this dispatch) are detected inside `CommandProcessor` and silently skipped.
 
-If the Redis pub/sub connection drops between drains, a wake can be lost.  The loop tolerates this by draining pending events at the top of every iteration; in the worst case the next heartbeat tick (≤15 s by default) brings the loop back around and delivers the queued events.
+If the Redis pub/sub connection drops between drains, a wake can be lost.  The loop tolerates this by draining pending events at the top of every iteration; in the worst case the next heartbeat tick (≤ `DJHTMX_SSE_HEARTBEAT_TIMEOUT`, default 30 s) brings the loop back around and delivers the queued events.
+
+`DJHTMX_SSE_HEARTBEAT_TIMEOUT` (default 30) is the cap on each `pubsub.get_message` wait.  When heartbeat subscriptions are active, the next due tick further shortens the wait; when none are scheduled, the value is the wait.  Lowering it tightens the recovery window for lost pub/sub wakes at the cost of more idle iterations; raising it does the opposite.  Must be `>= 1`; values `< 30` are accepted but discouraged.
 
 ### Command conversion
 

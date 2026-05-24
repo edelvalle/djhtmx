@@ -78,3 +78,13 @@ SSE_RENDER_HEALTHCHECK_EVERY = getattr(settings, "DJHTMX_SSE_RENDER_HEALTHCHECK_
 # scheduled recycle.  Rotation returns the connection so the pool can retire
 # aged-out entries.
 SSE_RENDER_ROTATE_EVERY = getattr(settings, "DJHTMX_SSE_RENDER_ROTATE_EVERY", 200)
+
+
+# Upper bound on the SSE loop's `pubsub.get_message` wait between drains.  When
+# heartbeat subscriptions are active, the next due tick further shortens this;
+# when none are scheduled, this value is the wait.  It also caps the recovery
+# window if a Redis pub/sub wake is lost: pending events are still drained on
+# the next iteration, so worst-case delay is roughly this timeout.
+SSE_HEARTBEAT_TIMEOUT = getattr(settings, "DJHTMX_SSE_HEARTBEAT_TIMEOUT", 30)
+if SSE_HEARTBEAT_TIMEOUT < 1:
+    raise ValueError("SSE_HEARTBEAT_TIMEOUT must be >= 1; preferably >= 30")
