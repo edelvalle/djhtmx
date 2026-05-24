@@ -77,6 +77,7 @@ async def sse_endpoint(request: HttpRequest):
             sse_message,
             wake_channel,
         )
+        from .sse_executor import SSERenderQueueFull
         from .utils import compact_hash
 
         redis = get_async_conn()
@@ -115,9 +116,15 @@ async def sse_endpoint(request: HttpRequest):
                             session=session_tag,
                             paces=",".join(str(p) for p in sorted(due_paces)),
                         ):
-                            heartbeat_fragments = await render_sse_heartbeat_fragments(
-                                redis, session_id, user, due_paces
-                            )
+                            try:
+                                heartbeat_fragments = await render_sse_heartbeat_fragments(
+                                    redis, session_id, user, due_paces
+                                )
+                            except SSERenderQueueFull as exc:
+                                logger.warning(
+                                    "SSE [%s] dropping heartbeat drain: %s", session_id, exc
+                                )
+                                heartbeat_fragments = []
                         for fragment in heartbeat_fragments:
                             yield sse_message("djhtmx", fragment)
 
@@ -133,7 +140,11 @@ async def sse_endpoint(request: HttpRequest):
                     # again.  The wait is capped by `SSE_HEARTBEAT_TIMEOUT`, so worst-case delay
                     # is roughly that value.
                     with tracing_span("djhtmx.sse.event_drain", session=session_tag):
-                        event_fragments = await render_sse_event_fragments(session_id, user)
+                        try:
+                            event_fragments = await render_sse_event_fragments(session_id, user)
+                        except SSERenderQueueFull as exc:
+                            logger.warning("SSE [%s] dropping event drain: %s", session_id, exc)
+                            event_fragments = []
                     for fragment in event_fragments:
                         yield sse_message("djhtmx", fragment)
 
