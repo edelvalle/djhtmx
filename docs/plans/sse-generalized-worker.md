@@ -172,18 +172,18 @@ For deployments expecting sustained SSE traffic, raise `WEB_DB_POOL_MAX_SIZE` on
 The recommended deployment splits Granian into two processes routed by Caddy:
 
 ```
-                     ┌────────────────────────┐
-              /_sse* │ Granian (SSE)          │
-   Caddy ────────────┤  WEB_DB_POOL_MAX_SIZE  │
-              other  │  DJHTMX_SSE_RENDER_…   │
-              ┌──────┤                        │
-              │      └────────────────────────┘
-              v
-        ┌────────────────────────┐
-        │ Granian (HTTP)         │
-        │  WEB_DB_POOL_MAX_SIZE  │
-        └────────────────────────┘
+                       ┌────────────────────────┐
+               /_sse*  │ Granian (SSE)          │
+           ┌───────────┤  WEB_DB_POOL_MAX_SIZE  │
+           │           │  DJHTMX_SSE_RENDER_…   │
+   Caddy ──┤           └────────────────────────┘
+           │           ┌────────────────────────┐
+           │   other   │ Granian (HTTP)         │
+           └───────────┤  WEB_DB_POOL_MAX_SIZE  │
+                       └────────────────────────┘
 ```
+
+Caddy fans out to both upstreams: `/_sse*` to the SSE Granian process, everything else to the HTTP Granian process.  The two processes share nothing in-process; their only coupling is Redis (for SSE routing) and Postgres (each with its own pool slice).
 
 Benefits:
 
