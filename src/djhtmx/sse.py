@@ -372,13 +372,14 @@ async def render_sse_event_fragments(
     from .commands import HandleSSEEvents
 
     conn = conn or get_async_conn()
-    # TODO: LRANGE+DELETE is not atomic.  A concurrent emit_sse_event that
-    # RPUSHes between these two calls will have its envelope deleted before
-    # it's read.  Replace with LPOP COUNT (Redis 6.2+) or a MULTI/EXEC block
-    # so the read-and-clear is atomic.
-    raw_events = await async_lrange(conn, session_events_key(session_id), 0, -1)
-    if raw_events:
-        await conn.delete(session_events_key(session_id))
+    # Read-and-clear the events list atomically: a plain LRANGE followed by
+    # DELETE would lose any envelope RPUSHed by emit_sse_event between the
+    # two calls.  MULTI/EXEC serialises both commands as a single unit.
+    events_key = session_events_key(session_id)
+    async with conn.pipeline(transaction=True) as pipe:
+        pipe.lrange(events_key, 0, -1)
+        pipe.delete(events_key)
+        raw_events, _ = await pipe.execute()
 
     envelopes_by_consumer: dict[str, list[EventEnvelope]] = defaultdict(list)
     for raw_event in raw_events:
@@ -516,15 +517,6 @@ async def async_smembers_text(conn: async_redis.Redis, key: str) -> set[str]:
 
 async def async_expire(conn: async_redis.Redis, key: str, ttl: int):
     await conn.expire(key, ttl)  # type: ignore
-
-
-async def async_lrange(
-    conn: async_redis.Redis,
-    key: str,
-    start: int,
-    end: int,
-) -> list[bytes | str]:
-    return await conn.lrange(key, start, end)  # type: ignore
 
 
 logger = logging.getLogger(__name__)
