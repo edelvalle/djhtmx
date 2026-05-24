@@ -88,3 +88,12 @@ SSE_RENDER_ROTATE_EVERY = getattr(settings, "DJHTMX_SSE_RENDER_ROTATE_EVERY", 20
 SSE_HEARTBEAT_TIMEOUT = getattr(settings, "DJHTMX_SSE_HEARTBEAT_TIMEOUT", 30)
 if SSE_HEARTBEAT_TIMEOUT < 1:
     raise ValueError("SSE_HEARTBEAT_TIMEOUT must be >= 1; preferably >= 30")
+
+
+# Max WATCH/EXEC attempts for `register_component`'s optimistic transaction
+# when two callers race on the same consumer's indexes set.  Concurrent
+# register on the same component is unusual (it takes a fast re-mount), so a
+# small budget is plenty; bump it only if you actually observe exhaustion.
+SSE_REGISTER_MAX_ATTEMPTS: int = getattr(settings, "DJHTMX_SSE_REGISTER_MAX_ATTEMPTS", 8)
+if SSE_REGISTER_MAX_ATTEMPTS < 1 or not isinstance(SSE_REGISTER_MAX_ATTEMPTS, int):
+    raise ValueError("DJHTMX_SSE_REGISTER_MAX_ATTEMPTS must be >= 1")
