@@ -1,12 +1,12 @@
-# djhtmx SSE design specification
+# djhtmx SSE specification
 
-## Status
+djhtmx delivers server-pushed updates to a browser page over a single Server-Sent-Events connection.  Application code emits typed events to named topics; components declare subscriptions for those topics; the SSE loop runs their handlers and ships the resulting OOB HTML and browser-command fragments through the page's `EventSource`.
 
-Design specification. No implementation yet.
+This document describes the public Python API and the server/browser architecture that backs it.
 
 ## Public API
 
-This section describes the user-facing API. It intentionally avoids Redis, worker, and event-loop details.
+This section describes the user-facing API.  It deliberately avoids Redis, worker, and event-loop details.
 
 ### `emit_sse_event`
 
@@ -21,7 +21,21 @@ emit_sse_event(
 )
 ```
 
-The function is synchronous and fire-and-forget. It does not wait for any browser to receive the event, does not render components, and does not report how many components were affected.
+```python
+def emit_sse_event(
+    event: BaseModel,
+    *,
+    topics: Iterable[str],
+    source_session_id: str | None = None,
+) -> None:
+    ...
+```
+
+The function is synchronous and fire-and-forget.  It does not wait for any browser to receive the event, does not render components, and does not report how many components were affected.  If no consumer type is registered for `type(event)`, the call returns immediately without touching Redis.
+
+`source_session_id` is normally not passed by callers: when the call runs inside a djhtmx request, the emitting session's id is captured from a context variable and stored on every enqueued envelope.
+
+`SSEHeartbeat` cannot be emitted through `emit_sse_event`; the SSE loop is the only source of those events.  Passing one raises `TypeError`.
 
 Use `djhtmx.utils.run_on_commit` when the event describes database state that must be committed before consumers render:
 
@@ -36,9 +50,9 @@ run_on_commit(
 )
 ```
 
-Do not call Django's `transaction.on_commit` directly for SSE emits that need to preserve djhtmx context. `run_on_commit` captures the current Python context before registering the commit callback, so context-local SSE metadata such as the source djhtmx session remains available when the callback eventually runs.
+Do not call Django's `transaction.on_commit` directly for SSE emits that need to preserve djhtmx context.  `run_on_commit` captures the current Python context before registering the commit callback, so context-local SSE metadata such as the source djhtmx session remains available when the callback eventually runs.
 
-`topics` are application-defined strings. A topic should be stable and specific enough to avoid waking unrelated components.
+`topics` are application-defined strings.  A topic should be stable and specific enough to avoid waking unrelated components.
 
 Examples:
 
@@ -67,7 +81,7 @@ class SSESubscription(NamedTuple):
     topic: str
 ```
 
-The `event_type` is used to deserialize and type-check events delivered to the component. The `topic` is used to match emitted events to interested components.
+`event_type` is used to deserialize and type-check events delivered to the component.  `topic` is used to match emitted events to interested components.
 
 ### `sse_subscriptions`
 
@@ -87,11 +101,11 @@ class NotificationsToastList(HtmxComponent):
 
 Rules:
 
-- `sse_subscriptions` may be a property or cached property.
-- It returns a `set[SSESubscription]`.
-- Returning an empty set means the component has no active SSE subscriptions for its current state.
-- If a component defines `sse_subscriptions` but not `_handle_sse_events`, djhtmx may warn and the component is not SSE-enabled.
-- If a component defines `_handle_sse_events` but not `sse_subscriptions`, djhtmx may warn and the component is not SSE-enabled.
+- `sse_subscriptions` may be a plain property or a cached property.
+- It returns `set[SSESubscription]`.
+- Returning an empty set means the component currently has no active SSE subscriptions.
+- A subscription whose `event_type` is not accepted by `_handle_sse_events` (as derived from its type annotation) is   filtered out with a warning.
+- Defining only one of `sse_subscriptions` / `_handle_sse_events` logs a warning and disables SSE for the component.
 
 ### `SSEEventEnvelope`
 
@@ -105,11 +119,11 @@ class SSEEventEnvelope[E]:
     source_session_id: str | None = None
 ```
 
-`envelope.event` is the typed payload originally passed to `emit_sse_event`. `envelope.topic` is the topic that matched this component's subscription. `envelope.source_session_id` is the djhtmx session that emitted the event, when the event originated from a djhtmx request.
+`envelope.event` is the typed payload originally passed to `emit_sse_event`.  `envelope.topic` is the topic that matched this component's subscription.  `envelope.source_session_id` is the djhtmx session that emitted the event, when the event originated from a djhtmx request.
 
 ### `_handle_sse_events`
 
-`_handle_sse_events` handles SSE events for a component.
+`_handle_sse_events` handles SSE events for a component.  It runs through the same `CommandProcessor` as HTTP event handlers, so its return/yield contract mirrors regular event handlers.
 
 ```python
 from djhtmx.component import Render, SkipRender
@@ -126,41 +140,29 @@ class PDFButton(HtmxComponent):
 
 Return/yield semantics:
 
-- If the handler doesn't yield any command (or returns `None`), the
-  framework enqueues an implicit `Render(self)` — the default render.
-- `yield Render(self)` explicitly renders this component.
-- `yield Render(other_component)` may render another component if available.
-- `yield SkipRender(self)` consumes the event without rendering this component.
+- Returning `None` (or yielding nothing) enqueues an implicit `Render(self)` — the default render.
+- `yield Render(self)` is the explicit form of the default render.
+- `yield Render(other_component)` renders another component if the repository can resolve it.
+- `yield SkipRender(self)` consumes the event without rendering this component (it suppresses the default render for this invocation).
 - `yield Destroy(component_id)` removes a component from the page and from djhtmx state.
 
-Handlers must not `yield None`.  Use a bare `return`/`pass` to skip a
-branch, or `yield SkipRender(self)` to explicitly suppress the default
-render.
+All command types supported by HTTP event handlers also work in SSE handlers, including the browser commands `Focus`, `ScrollIntoView`, `Open`, `DispatchDOMEvent`, and the URL commands `Redirect`, `PushURL`, `ReplaceURL`.  SSE payloads cannot use HTMX response headers, so these commands ride through the session-scoped browser command sink described below.
 
-The first version is focused on commands that can be represented as HTML/OOB updates:
+Exceptions raised inside `_handle_sse_events` are caught, logged, and re-emitted as `Emit(HtmxUnhandledError(...))`.  They do not interrupt the rest of the drain.
 
-- `Render`;
-- default render (no yields);
-- `Destroy`.
+`yield Emit(event)` is allowed for completeness — it fans out to other in-session listeners exactly as it would inside an HTTP handler.  It does **not** become another SSE broadcast.  SSE events and in-process `Emit` are two different mechanisms: `Emit` is session-local; `emit_sse_event` is cross-session.  Cascading SSE emits from inside a handler is strongly discouraged.
 
-`Open` is supported through a strict session-scoped browser command sink in `SSEEventRouter`. Other browser commands such as `Focus`, `ScrollIntoView`, `Redirect`, `PushURL`, and `ReplaceURL` need a later command-carrier design for SSE because SSE payloads cannot use HTMX response headers.
+SSE handlers should let the UI *react* to changes, not *issue* more changes in cascade.  Avoid:
 
-The command `Emit` is ignored, logged as an error, and won't be supported in any future release.  Simply stated, SSE events and internal in-process events (`Emit`) are very different architecturally.
-
-Important: Avoid any side-effect inside the handler or SSE events.  The following a list of bad patterns inside SSE handlers:
-
-- Calling `emit_sse_events`
-- Performing DB updates.  Even if the updates don't trigger SSE events (which they could); this is considered harmful.
-
-SSE handlers should allow the UI to *react* to changes, without *issuing* more changes in cascade.
+- calling `emit_sse_event` from inside a handler;
+- mutating the database from inside a handler.
 
 ### `SSEHeartbeat`, `get_sse_heartbeat_subscription`
 
 `SSEHeartbeat` is a framework event for components that need periodic UI feedback while a page-level SSE connection is alive.
 
 ```python
-@dataclass(slots=True, frozen=True)
-class SSEHeartbeat:
+class SSEHeartbeat(BaseModel):
     pace: int
 ```
 
@@ -170,15 +172,16 @@ Components subscribe to heartbeat events with:
 get_sse_heartbeat_subscription(self, 60)
 ```
 
-Internally, `get_sse_heartbeat_topic(component, pace)` creates a session-local heartbeat topic. The topic is tied to the target component's current djhtmx session, so heartbeat events are generated only for components on the live page connection. Components must be bound to a djhtmx session before requesting heartbeat topics.
+The returned subscription targets a session-local heartbeat topic derived from the component's djhtmx session and the requested pace.  Heartbeat events therefore only reach components on a live page connection.  Components must already be bound to a djhtmx session when this call is made; `pace` must be a positive integer.
 
-Heartbeat events are generated by the SSE loop, not by `emit_sse_event`. They are local to the active SSE connection and should normally have no source session. The loop detects session-local heartbeat subscriptions, schedules each requested pace, and synthesizes `SSEHeartbeat` envelopes for matching consumers when a pace is due.
+Heartbeat events are produced by the SSE loop itself, never by `emit_sse_event`.  The loop scans each session's heartbeat subscriptions, schedules a tick per requested pace, and synthesizes an `SSEEventEnvelope[SSEHeartbeat]` for each matching consumer when its pace is due.  The envelope's `source_session_id` is `None`.
 
 ### `SSEEventRouter`
 
-`SSEEventRouter` is the in-page component that owns the single SSE browser connection.
+`SSEEventRouter` is the in-page component that owns the SSE browser connection for the page.
 
-Applications should render it once in the base template, usually near the end of `<body>`:
+Applications render it once per page, usually near the end of
+`<body>`:
 
 ```django
 {% load htmx %}
@@ -189,17 +192,9 @@ Applications should render it once in the base template, usually near the end of
 </body>
 ```
 
-The component is hidden and uses the HTMX SSE extension. Conceptually its HTML is:
+The router is hidden and uses the HTMX SSE extension.  The page has one `EventSource`, not one per component: component updates arrive as OOB HTML fragments and are routed by HTMX using DOM ids.
 
-```html
-<div hidden hx-ext="sse" sse-connect="/_htmx/_sse/connect?session=...">
-  <div sse-swap="djhtmx"></div>
-</div>
-```
-
-There is one `EventSource` per browser page, not one per component. Component updates are sent as OOB HTML fragments and routed by HTMX using DOM IDs.
-
-The router is infrastructure. Application components do not call it directly.
+The router is infrastructure.  Application components do not call it directly.
 
 ## Server-side SSE loop
 
@@ -225,11 +220,11 @@ urlpatterns = [
 {% htmx "SSEEventRouter" %}
 ```
 
-The endpoint must fail clearly under WSGI. There is no long-polling fallback.
+The endpoint responds with HTTP 501 when invoked under WSGI.  There is no long-polling fallback.
 
 ### Session liveness refresh
 
-Long-lived SSE connections must refresh Redis TTLs for the active djhtmx session. Otherwise, a page that remains open longer than `DJHTMX_SESSION_TTL` could lose its component state or SSE routing indexes while the browser connection is still alive.
+Long-lived SSE connections must refresh Redis TTLs for the active djhtmx session.  Otherwise, a page that remains open longer than `DJHTMX_SESSION_TTL` could lose its component state or SSE routing indexes while the browser connection is still alive.
 
 `DJHTMX_SESSION_REFRESH_RATE` controls the refresh cadence as a fraction of `DJHTMX_SESSION_TTL`:
 
@@ -243,74 +238,68 @@ Semantics:
 - `0 < rate <= 1`: refresh every `DJHTMX_SESSION_TTL * rate` seconds.
 - default: `0.5`, which refreshes every 30 minutes with the default one-hour TTL.
 
-The SSE loop refreshes the session state key, the session's SSE consumer/event keys, each consumer metadata key, each consumer reverse-index key, and each topic/type index key referenced by those consumers.
+On each refresh the loop renews TTLs on the session state key, the session's SSE consumer/event keys, each consumer metadata key, each consumer reverse-index key, and each topic/type index key referenced by those consumers.
 
 ### Database connection lifetime
 
 SSE breaks Django's two normal mechanisms for releasing database connections:
 
 - `StreamingHttpResponse` keeps the request open for the lifetime of the browser tab, so the `request_finished` signal never fires and Django's per-request `close_old_connections()` hook never runs.
-- Render work is dispatched through `sync_to_async(..., thread_sensitive=True)`, which pins the sync block to a sticky per-connection thread. Django's connections are thread-local, so that sticky thread owns one `connections['default']` entry for as long as the SSE stream is alive.
+- Django's connections are thread-local, so any thread that runs render work for an SSE stream owns one `connections['default']` entry for as long as that thread is alive.
 
-Combined, each open SSE stream holds one PostgreSQL connection on its sticky `sync_to_async` thread for as long as the browser is connected, even when the loop is idle between heartbeats. With Granian configured for a single worker and a large backlog (e.g. 1024), a single worker can host hundreds of concurrent SSE streams, and each one parks a PG connection. The pool is exhausted by stream count alone, well before normal HTTP traffic.
+djhtmx dispatches SSE render work to a dedicated `ThreadPoolExecutor` (`djhtmx-sse-render`) instead of letting each SSE stream pin its own thread.  The pool size is bounded:
 
-`close_old_connections()` is not sufficient: it calls `close_if_unusable_or_obsolete()`, which only closes when `CONN_MAX_AGE` has elapsed. Host projects that set `CONN_MAX_AGE > 0` (the common case, since it amortizes connect cost for short HTTP requests) would still see the sticky thread keep the connection warm forever, because every heartbeat or event reuses it before it goes obsolete.
+- `DJHTMX_SSE_RENDER_WORKERS` (default 8) — worker threads in the pool.  Each worker keeps at most one Django DB connection.  PG connection count is then bounded by this setting rather than growing with SSE stream count.
+- `DJHTMX_SSE_RENDER_QUEUE_MAX` (default 0 = unbounded) — when the pending queue reaches this depth, new submissions raise `SSERenderQueueFull` so the SSE loop logs and drops rather than blowing up.
 
-The SSE render path must therefore close connections unconditionally after every event or heartbeat drain, regardless of `CONN_MAX_AGE`:
+Per-worker connection hygiene:
 
-```python
-from django.db import connections
+- `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY` (default 50) — every Nth render the worker calls `is_usable()` on each connection and closes the broken ones.
+- `DJHTMX_SSE_RENDER_ROTATE_EVERY` (default 200) — every Nth render the worker closes its connections so the PG pool can retire aged entries.  This interacts with `psycopg_pool`'s `max_lifetime`: a long-lived worker would otherwise hold a connection checked out indefinitely.
+- Any `OperationalError` or `InterfaceError` raised during a render closes the worker's connections.
 
-for conn in connections.all():
-    conn.close()
-```
+The submitted callable is opaque to the executor; it currently runs `_drain_sse_session`, which builds one `Repository` per session, processes the consumer's `HandleSSEEvents` commands through a single `CommandProcessor`, and serializes the resulting `ProcessedCommand` stream into OOB HTML fragments.
 
-This runs in the `finally` of the sync render helper so it executes even when a handler raises. The cost is one reconnect per drain on the SSE worker thread; this is acceptable because SSE drains are infrequent compared to normal request traffic, and the alternative is pool exhaustion.
+Under `TestCase`-style tests the executor is bypassed and the render runs back on the test thread via `sync_to_async(thread_sensitive=True)` so the uncommitted test transaction is visible through the shared DB connection.
 
 ### Runtime topology
 
-The intended production topology is Granian/ASGI workers.
+The production topology is Granian/ASGI workers.
 
-Per Granian worker:
+Per ASGI worker:
 
 - many browser pages may hold open SSE HTTP connections;
 - each open page connection is represented by an async response task;
-- a single in-process broker task owns one async Redis wake subscription connection;
-- connection tasks are registered in memory by `session_id`;
-- Redis stores durable routing state and pending event payloads.
+- each connection task owns its own Redis pub/sub connection and is subscribed to exactly its session's wake channel;
+- the SSE render pool described above is shared by all connection tasks on the worker.
 
 Across workers:
 
-- each worker has its own broker and Redis wake connection;
-- each worker only wakes connection tasks connected to that worker;
-- wake notifications are sent through session-specific Redis pub/sub channels;
-- a worker subscribes to a session wake channel when it owns that session's SSE connection;
-- a worker unsubscribes from the session wake channel when that SSE connection closes.
+- Redis is the only shared state for SSE: it stores routing indexes, consumer metadata, pending event queues, and wake pub/sub channels;
+- a worker only wakes its own connection tasks, because only the worker hosting a given SSE connection is subscribed to that session's wake channel.
 
 ### Redis routing indexes
 
-The Redis layer must find matching consumers through indexes. It must not scan all consumers.
+The Redis layer must find matching consumers through indexes.  It must not scan all consumers.
 
-When an SSE-enabled component is rendered, djhtmx registers one consumer record for that rendered component instance. The consumer record stores at least:
+When an SSE-enabled component is rendered, djhtmx registers one consumer record for that rendered component instance.  The record stores:
 
 - `session_id`;
 - `component_id`;
 - `component_name`;
-- serialized subscription metadata.
+- serialized subscription metadata (`event_type` FQN + `topic`).
 
-Each consumer is also added to its session membership set. This lets the SSE task discover which consumers belong to the session.
+Each consumer id is also added to its session's membership set, so the SSE task can discover which consumers belong to the session.
 
-For each `SSESubscription(event_type, topic)`, djhtmx adds the consumer ID to an exact-match topic/type index:
+For each `SSESubscription(event_type, topic)`, djhtmx adds the consumer id to an exact-match topic/type index.  The concrete key hashes both components:
 
 ```text
-djhtmx:sse:index:{event_type}:{topic}:consumers
+djhtmx:sse:index:{hash(event_type_fqn)}:{hash(topic)}:consumers
 ```
 
-The concrete key format may hash or escape `event_type` and `topic`, but the semantics are exact match on both event type and topic.
+The consumer also keeps a reverse-index set listing the index keys it belongs to.  On re-render, the reverse index is consulted to remove memberships from indexes that no longer apply before adding current subscriptions.
 
-The consumer also keeps a reverse-index set containing the index keys it belongs to. On re-render, djhtmx uses the reverse index to remove stale subscription memberships before adding the current subscriptions.
-
-All consumer, session, and index metadata is TTL-bound. Stale consumers may be removed lazily when discovered during event emission or session processing.
+All consumer, session, and index metadata is TTL-bound to `DJHTMX_SESSION_TTL` and refreshed by the liveness loop.
 
 ### Matching consumers
 
@@ -318,164 +307,100 @@ When code calls `emit_sse_event(event, topics=...)`, matching consumers are foun
 
 For each emitted topic:
 
-1. compute the event type identity from `type(event)`;
+1. compute the event type identity from `type(event)` (FQN);
 2. build the Redis index key for `(event_type, topic)`;
-3. read the set of consumer IDs from that index;
-4. union consumer IDs across all emitted topics.
+3. read the set of consumer ids from that index;
+4. union consumer ids across all emitted topics.
 
-No subclass matching is required for the first version. A component that wants several event types must declare several `SSESubscription` values.
+A component that wants several event types must declare a separate `SSESubscription` for each one; there is no subclass matching.
 
-After matching consumer IDs, djhtmx loads each consumer record to find its `session_id`. Missing consumer records are stale and should be ignored and cleaned from indexes opportunistically.
+After matching consumer ids, djhtmx loads each consumer record to find its `session_id`.  Consumers whose record has expired are skipped.
 
 ### Event queues and session wake channels
 
-Actual event payloads are stored separately from wake notifications. Pub/sub is only a wake mechanism, not the source of truth.
+Actual event payloads are stored separately from wake notifications.  Pub/Sub is only a wake mechanism, not the source of truth.
 
-For each matched consumer, djhtmx enqueues an event entry that includes at least:
+For each matched consumer, djhtmx pushes a JSON-encoded envelope onto the owning session's event list.  Each envelope carries:
 
 - `consumer_id`;
-- event type;
+- event type FQN;
 - matching topic;
-- serialized event payload.
+- payload data (Pydantic-dumped) and payload FQN;
+- `source_session_id`.
 
-The preferred queue shape is session-oriented, so the SSE task can load all pending work for the session in one operation:
+The list is session-oriented, so the SSE task loads all pending work for the session in one `LRANGE`:
 
 ```text
-djhtmx:sse:session:{session_id}:events
+djhtmx:sse:session:{hash(session_id)}:events
 ```
 
 After enqueuing events, djhtmx publishes to the affected session's wake channel:
 
 ```text
-djhtmx:sse:wake:session:{session_id}
+djhtmx:sse:wake:session:{hash(session_id)}
 ```
 
-Only the worker that currently owns the SSE connection should be subscribed to that session channel.
+Only the worker that currently hosts the SSE connection is subscribed to that session channel.
 
 ### Producer flow
 
 When code calls `emit_sse_event(event, topics=...)`:
 
-1. djhtmx serializes the event.
-2. djhtmx finds active consumers through exact topic/type Redis indexes.
-3. djhtmx loads each matched consumer record to find its `session_id`.
-4. djhtmx enqueues the event for each matching consumer in the owning session's event queue.
-5. djhtmx publishes a wake notification to each affected session wake channel.
-6. The caller returns immediately.
+1. djhtmx looks up the event type in `SSE_LISTENERS` and returns immediately if no component subscribes to that type.
+2. For each `(event_type, topic)` pair, it reads the consumer set from the Redis index and collects `(consumer_id, topic)` pairs.
+3. For each matched consumer, it loads the consumer record to find the owning session and pushes a JSON-encoded `EventEnvelope` onto the session's events list (refreshing that list's TTL).
+4. It publishes a wake notification to each affected session's wake channel.
+5. The caller returns immediately.
 
-The producer does not know which worker owns a browser connection and does not render components.
-
-### Worker broker flow
-
-Each worker broker conceptually runs:
-
-```python
-while True:
-    wake_event = await get_next_redis_sse_event()
-    session_id = wake_event.session_id
-    if sse_task := local_sessions.get(session_id):
-        sse_task.wake()
-```
-
-The Redis wake connection is separate from normal Redis commands. It exists to avoid one blocking Redis wait per browser connection. The broker dynamically subscribes and unsubscribes this one Redis pub/sub connection to session-specific wake channels as SSE connections open and close.
+The producer does not know which worker hosts a browser connection and does not render components.
 
 ### SSE task flow
 
-Each connected SSE task conceptually runs:
+Each connected SSE task runs roughly this loop:
 
 ```python
-while connected:
-    await wait_until_woken_or_heartbeat()
-
-    events_by_consumer = await load_pending_events_for_session(session_id)
-    commands = []
-
-    for consumer_id, events in events_by_consumer.items():
-        component = load_component_for_consumer(consumer_id)
-        component_commands = []
-        needs_default_render = False
-
-        for raw_event in events:
-            sse_event = build_sse_event(raw_event)
-            emitted = component._handle_sse_events(sse_event)
-
-            if emitted is None:
-                needs_default_render = True
-            else:
-                for command in emitted:
-                    if command is None:
-                        needs_default_render = True
-                    else:
-                        component_commands.append(command)
-
-        component_commands = coalesce_for_component(component, component_commands)
-
-        if needs_default_render and not already_rendering_self(component, component_commands):
-            component_commands.append(Render(component, oob="true"))
-
-        commands.extend(component_commands)
-
-    commands = coalesce_for_connection(commands)
-    html = render_commands_as_oob_html(commands)
-    await send_sse_message(event="djhtmx", data=html)
-    await acknowledge_events(events_by_consumer)
+async for tick in stream:
+    refresh_session_liveness_if_due()
+    drain_due_heartbeats()  # builds SSEHeartbeat envelopes for due paces
+    drain_pending_events()  # LRANGE + DEL the session events list
+    sleep_until_woken_or_timeout(max=15s, bounded_by_next_heartbeat_due)
 ```
+
+Both drains funnel into the same render path:
+
+1. Group envelopes by `consumer_id`.
+2. For each consumer, load its metadata to map back to a `component_id`, then build a `HandleSSEEvents` command carrying that component's envelopes.
+3. Submit the list of `HandleSSEEvents` commands to the SSE render pool.  Inside the worker:
+   - Construct one `Repository` for the session.
+   - Run all commands through one `CommandProcessor`.  The processor applies the standard handler contract (default `Render`, `SkipRender` suppression, `Render`/`Destroy` collapsing, `Emit` fan-out to in-session listeners).
+   - Serialize the resulting `ProcessedCommand` stream via `to_sse_fragments`.
+4. Emit one `event: djhtmx` SSE message per produced fragment.
+
+Stale consumer records (component already destroyed in this dispatch) are detected inside `CommandProcessor` and silently skipped.
+
+If the Redis pub/sub connection drops between drains, a wake can be lost.  The loop tolerates this by draining pending events at the top of every iteration; in the worst case the next heartbeat tick (≤15 s by default) brings the loop back around and delivers the queued events.
 
 ### Command conversion
 
-Before sending to the browser:
+`to_sse_fragments` turns a `CommandBatch` into the list of fragments sent to the browser.  The mapping is:
 
-- `Render(component)` becomes rendered component HTML with `hx-swap-oob="true"`.
-- Partial `Render(..., template=...)` becomes OOB HTML for its target ID.
-- `Destroy(component_id)` becomes `<div id="component_id" hx-swap-oob="delete"></div>`.
-- Multiple renders of the same component in one batch collapse to the last render.
-
-Unsupported commands in the MVP should be logged and ignored or converted to a clearly documented error behavior. Later versions may add a command-carrier mechanism.
-
-### Database-level events
-
-The framework may provide `SSEModelEvent` for database changes:
-
-```python
-@dataclass(slots=True, frozen=True)
-class SSEModelEvent:
-    app_label: str
-    model_name: str
-    pk: object
-    action: Literal["created", "updated", "deleted"]
-```
-
-Model topics should mirror existing djhtmx model subscription names where possible:
-
-```text
-<app_label>.<model_name>
-<app_label>.<model_name>.<pk>
-<app_label>.<model_name>.<pk>.updated
-<app_label>.<model_name>.<pk>.deleted
-<app_label>.<model_name>.created
-<app_label>.<model_name>.updated
-<app_label>.<model_name>.deleted
-```
-
-`post_save` and `post_delete` receivers can publish these events after commit. Receivers should check Redis topic indexes and avoid doing expensive work if no active SSE consumer is subscribed.
+- `Render(component)` → rendered component HTML with `hx-swap-oob="true"`.
+- Partial `Render(..., template=...)` → OOB HTML targeting the partial's element id.
+- `Destroy(component_id)` → `<div id="component_id" hx-swap-oob="delete"></div>`.
+- Multiple renders of the same component within one drain collapse to the last render (the default `Render(self)` defers to an explicit one).
+- Browser-effect commands (`Focus`, `ScrollIntoView`, `Open`, `DispatchDOMEvent`) and URL-mutating commands (`Redirect`, `PushURL`, `ReplaceURL`) are encoded as base64url-JSON payloads inside a `<template data-djhtmx-browser-command>` element OOB-swapped into the session-scoped command sink.
 
 ## Browser-side SSE routing
 
 ### HTMX SSE extension
 
-The browser connection uses the HTMX SSE extension downloaded to:
+The browser connection uses the HTMX SSE extension bundled with djhtmx at:
 
 ```text
-src/djhtmx/static/htmx/2.0.4/ext/sse.js
+src/djhtmx/static/htmx/<htmx-version>/ext/sse.js
 ```
 
-The extension provides:
-
-- `hx-ext="sse"`;
-- `sse-connect="..."`;
-- `sse-swap="event-name"`;
-- automatic reconnection;
-- normal HTMX swap processing for received event payloads.
+The extension provides `hx-ext="sse"`, `sse-connect="..."`, `sse-swap="event-name"`, automatic reconnection, and normal HTMX swap processing for received event payloads.
 
 ### Router markup
 
@@ -487,70 +412,66 @@ The extension provides:
      hx-ext="sse"
      sse-connect="/_htmx/_sse/connect?session=...">
   <div sse-swap="djhtmx"></div>
-  <div id="djhtmx-sse-commands-abc123"
-       data-djhtmx-sse-command-sink="abc123"
+  <div id="djhtmx-sse-commands-{session_hash}"
+       data-djhtmx-sse-command-sink="{session_hash}"
        hidden></div>
 </div>
 ```
 
-The inner element listens for `event: djhtmx`. The router is hidden, so the normal swap target is not visible, while HTMX still processes OOB fragments from the SSE payload.
+The inner `sse-swap` element listens for `event: djhtmx`.  The container is hidden, so the swap target is not visible while HTMX still processes OOB fragments from the SSE payload.  The sibling `<div>` is the browser command sink described below.
 
 ### Browser command sink
 
-`SSEEventRouter` includes a hidden, session-scoped command sink. Commands are accepted only when HTMX OOB-swaps them into this sink and their `data-session` value matches the sink's session hash.
-
-`Open` commands are encoded as inert HTML attributes, not JSON:
+The router includes a hidden, session-scoped command sink.  Browser and URL commands sent over SSE are serialized as base64url-encoded JSON inside `<template>` elements OOB-swapped into the sink:
 
 ```html
-<div hx-swap-oob="beforeend: #djhtmx-sse-commands-abc123">
-  <div data-command="open"
-       data-session="abc123"
-       data-url="/files/report.pdf"
-       data-name="report.pdf"
-       data-target="_blank"
-       data-rel="noopener noreferrer"></div>
+<div hx-swap-oob="beforeend: #djhtmx-sse-commands-{session_hash}">
+  <template data-djhtmx-browser-command
+            data-session="{session_hash}"
+            data-payload="{base64url(json(command))}"></template>
 </div>
 ```
 
-The browser processor is intentionally picky: it only processes commands inside the matching sink, only accepts known command names, requires same-origin URLs for `open`, restricts targets to known browser target names, and removes each command element after processing.
+A `MutationObserver` on the sink picks up each appended element, verifies its `data-session` matches the sink's session hash, decodes the payload, and dispatches to the unified `executeBrowserCommand` in `djhtmx`'s JS.  The decoded payload's `command` field is the discriminator; the executor validates per-command (e.g. same-origin URL for `open-tab`, known target names, valid selectors).  Each template element is removed after processing.
+
+The same executor is shared with the HTTP path (via `HX-Trigger-After-Settle` events) and the WebSocket path (via JSON messages), so the supported command set is identical across transports.
 
 ### SSE payload format
 
-The server sends named SSE messages:
+The server sends one named SSE message per OOB fragment:
 
 ```text
 event: djhtmx
-data: <div id="hx-a" hx-swap-oob="true">...</div><div id="hx-b" hx-swap-oob="true">...</div>
+data: <div id="hx-a" hx-swap-oob="true">...</div>
 
+event: djhtmx
+data: <div id="hx-b" hx-swap-oob="true">...</div>
 ```
 
-For deletion:
+Deletion:
 
 ```text
 event: djhtmx
 data: <div id="hx-a" hx-swap-oob="delete"></div>
-
 ```
 
-The browser does not inspect `SSESubscription`. Browser-side routing is DOM/OOB-based:
+The browser does not inspect `SSESubscription`.  Browser-side routing is DOM/OOB-based:
 
 1. The SSE extension receives the `djhtmx` event.
 2. HTMX swaps the payload into the hidden listener.
 3. HTMX applies all OOB fragments.
-4. Each OOB fragment targets the existing element with the same `id`.
+4. Each OOB fragment targets the existing element with the same id.
 
 ### Component consumer metadata
 
-SSE-enabled components may include metadata on their root element:
+SSE-enabled components are rendered with metadata on their root element:
 
 ```html
 <div id="hx-..." data-djhtmx-sse-consumer="..."></div>
 ```
 
-This metadata is useful for debugging and for future browser-side cleanup. The first design does not require the browser to route messages using this value.
+This attribute is for debugging and tooling.  The browser does not need it to route messages — routing is purely by DOM id and OOB behavior.
 
 ### Connection lifetime
 
-The router opens the connection when the page is processed by HTMX. The connection closes when the router element is removed, when the browser leaves the page, or when the server closes the stream.
-
-The first version should keep the router alive for the lifetime of the page. It does not need to open and close dynamically based on whether SSE-enabled components are currently present.
+The router opens the connection when the page is processed by HTMX.  The connection closes when the router element is removed, when the browser leaves the page, or when the server closes the stream.  The router stays alive for the lifetime of the page; it does not open and close dynamically based on whether SSE-enabled components are currently present.

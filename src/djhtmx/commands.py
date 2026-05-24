@@ -16,8 +16,6 @@ unions describe their roles:
 handlers don't yield it and it never appears in `CommandQueue`.  The
 `Render` case in `CommandProcessor._run_command` synthesises it inline
 and yields it out to the transport.
-
-See `docs/plans/sse-generalized-worker.md` for the wider context.
 """
 
 from __future__ import annotations
@@ -65,7 +63,7 @@ class PushURL:
     that's recoverable via the browser back button (filter applied,
     page changed, modal opened-with-URL).  Sets the `HX-Push-Url`
     HTTP response header; over SSE, carried via the browser command
-    sink (after Phase 2.6).
+    sink.
     """
 
     url: str
@@ -130,9 +128,8 @@ class Redirect:
 
     Yield from a handler to trigger a full-page navigation.  HTMX
     processes this via the `HX-Redirect` response header (HTTP) or via
-    the browser command sink (SSE, after Phase 2.6).  Suppresses any
-    `PushURL`/`ReplaceURL` in the same response — a full nav makes them
-    meaningless.
+    the browser command sink (SSE).  Suppresses any `PushURL`/`ReplaceURL`
+    in the same response — a full nav makes them meaningless.
     """
 
     url: str
@@ -399,9 +396,7 @@ class Emit:
 
     `Emit` is **always** session-local.  For cross-session delivery
     use `djhtmx.sse.emit_sse_event`, which publishes to Redis and
-    wakes consumers on other workers / other browser sessions.  The
-    distinction is intentional and load-bearing — see
-    `docs/plans/sse-generalized-worker.md`.
+    wakes consumers on other workers / other browser sessions.
     """
 
     event: Any

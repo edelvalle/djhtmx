@@ -2,16 +2,12 @@
 
 Dedicated thread pool that hosts the sync render path used by the SSE
 endpoint.  Each worker thread keeps its own Django DB connection across
-renders, so PG connection count is bounded by `SSE_RENDER_WORKERS` rather
-than growing with SSE stream count.
+renders, so PG connection count is bounded by `SSE_RENDER_WORKERS`
+rather than growing with SSE stream count.
 
-The submitted callable is opaque to the executor: today it runs
-`_render_consumer_sse_events`; under Phase 2 of the SSE-generalized-worker
-plan it will run `CommandProcessor.process(...)` instead.  Connection
-lifecycle (rotation on age, close on `OperationalError`/`InterfaceError`)
-is managed here, not in the callable.
-
-See `docs/plans/sse-generalized-worker.md` for the rationale.
+The submitted callable is opaque to the executor: connection lifecycle
+(periodic health check, periodic rotation, close on `OperationalError`/
+`InterfaceError`) is managed here, not in the callable.
 """
 
 from __future__ import annotations
@@ -83,8 +79,10 @@ async def submit_sse_render[**P, R](
 
     Propagates the current `contextvars.Context` to the worker thread so
     Sentry scope, tracing spans, and djhtmx context-locals remain
-    available inside the render.  `loop.run_in_executor` with a custom
-    executor does not do this on its own.
+    available inside the render.
+
+    Raises `SSERenderQueueFull` if `SSE_RENDER_QUEUE_MAX` is set and the
+    executor's pending queue is at cap.
     """
     if is_testing():
         # `TestCase`-style transactional tests need the render to land back

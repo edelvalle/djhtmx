@@ -57,8 +57,8 @@ STRICT_PUBLIC_BASE = getattr(settings, "DJHTMX_STRICT_PUBLIC_BASE", False)
 
 
 # SSE render executor: a small pool of long-lived worker threads owns one
-# Django DB connection each.  Sized in coordination with the host project's
-# PG pool budget — see docs/plans/sse-generalized-worker.md.
+# Django DB connection each.  Size this in coordination with the host
+# project's PG pool budget.
 SSE_RENDER_WORKERS = getattr(settings, "DJHTMX_SSE_RENDER_WORKERS", 8)
 if SSE_RENDER_WORKERS < 1:
     raise ValueError("DJHTMX_SSE_RENDER_WORKERS must be >= 1")

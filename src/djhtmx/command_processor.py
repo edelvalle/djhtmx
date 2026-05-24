@@ -9,9 +9,6 @@ This module is the single source of truth for command semantics.
 template rendering, and query parameter patching — i.e. the *state* a
 command consults — but the *decisions* about what each command means live
 here.
-
-See `docs/plans/sse-generalized-worker.md` for the rationale behind the
-HTTP/SSE unification this enables.
 """
 
 from __future__ import annotations
@@ -63,9 +60,9 @@ logger = logging.getLogger(__name__)
 class CommandProcessor:
     """Run djhtmx commands against a `Repository` and yield processed commands.
 
-    Instantiated per command run.  The processor is stateless beyond its
-    repository reference; all session and component state lives on the
-    `Repository`.
+    Instantiated per command run.  The processor is stateless beyond its repository reference; all
+    session and component state lives on the `Repository`.
+
     """
 
     def __init__(self, repo: Repository):
@@ -74,9 +71,9 @@ class CommandProcessor:
     def process(self, commands: Iterable[Command | InternalCommand]) -> Generator[ProcessedCommand]:
         """Drive the command queue until exhausted, yielding processed output.
 
-        Catches `ValidationError`s whose root cause is an invalid `user`
-        and converts them into a redirect to `LOGIN_URL`, matching the
-        previous `Repository.dispatch_event` behavior.
+        Catches `ValidationError`s whose root cause is an invalid `user` and converts them into a
+        redirect to `LOGIN_URL`.
+
         """
         from .sse import sse_source_session
         from .utils import compact_hash
@@ -140,8 +137,7 @@ class CommandProcessor:
                     case Destroy():
                         # Stale consumer record: the component was destroyed
                         # elsewhere in this dispatch (or earlier) but its SSE
-                        # consumer entry in Redis hasn't been cleaned up yet
-                        # — see Phase 2.8 of the SSE-generalized-worker plan.
+                        # consumer entry in Redis hasn't been cleaned up yet.
                         # Silently skip; the browser-side OOB delete has
                         # already been (or will be) emitted by whoever
                         # destroyed it.
@@ -256,29 +252,24 @@ class CommandProcessor:
     ) -> Iterable[ProcessedCommand]:
         """Normalise the commands a handler emitted for `component`.
 
-        Shared post-processing for the three handler entry points
-        (`Execute`, `Emit` fan-out, `HandleSSEEvents`).  Rules:
+        Shared post-processing for the three handler entry points (`Execute`, `Emit` fan-out,
+        `HandleSSEEvents`).  Rules:
 
-        - If the handler returns `None` or yields nothing, enqueue an
-          implicit default `Render(component)`.
-        - If the handler yields `SkipRender(component)` (i.e. of the
-          same component being handled), suppress the implicit default
-          render for this invocation.  Other yielded commands still
+        - If the handler returns `None` or yields nothing, enqueue an implicit default
+          `Render(component)`.
+
+        - If the handler yields `SkipRender(component)` (i.e. of the same component being handled),
+          suppress the implicit default render for this invocation.  Other yielded commands still
           take effect.
-        - An explicit `Render(component)` likewise stands in for the
-          default render.
-        - Under `during_execute=True` (HTTP direct event handler), the
-          default render — and any partial `Render` for the same
-          component with `lazy is None` — is forced non-lazy.  In the
-          `Emit`/`HandleSSEEvents` paths the default render respects
-          `component.lazy`.
-        - Query-patcher parameter changes emit a `ReplaceURL` and a
-          `Signal` for subscribers.
 
-        Handlers must not yield `None`; the `Command` union excludes it
-        and pyright catches it statically.  A `None` that sneaks through
-        at runtime will trip `assert_never` downstream — undefined
-        behaviour, not silently swallowed.
+        - An explicit `Render(component)` likewise stands in for the default render.
+
+        - Under `during_execute=True` (HTTP direct event handler), the default render — and any
+          partial `Render` for the same component with `lazy is None` — is forced non-lazy.  In the
+          `Emit`/`HandleSSEEvents` paths the default render respects `component.lazy`.
+
+        - Query-patcher parameter changes emit a `ReplaceURL` and a `Signal` for subscribers.
+
         """
         repo = self.repo
         component_was_rendered = False

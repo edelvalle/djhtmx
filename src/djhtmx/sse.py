@@ -200,13 +200,12 @@ def register_component(session_id: str, component: HtmxComponent, ttl: int = set
 
 
 def unregister_consumer(session_id: str, component_id: str) -> None:
-    """Remove the SSE consumer record + indexes for a destroyed component.
+    """Remove the SSE consumer record, its topic/type index memberships, and its
+    session-membership entry for a component that no longer exists.
 
-    Symmetric with `register_component`: without this, the consumer record
-    and its topic/type index memberships linger until TTL, and
-    `emit_sse_event` keeps enqueuing events that the drain will silently
-    skip (via the `case Destroy(): return` guard in
-    `CommandProcessor._run_command`'s `HandleSSEEvents` case).
+    Inverse of `register_component`.  Callers are responsible for invoking this
+    on component destruction; otherwise the consumer entry lingers until TTL
+    expiry and `emit_sse_event` keeps enqueuing events for it.
     """
     id_ = consumer_id(session_id, component_id)
     indexes_key = consumer_indexes_key(id_)
@@ -452,10 +451,9 @@ def _drain_sse_session(session_id: str, user, handle_commands: list) -> list[str
     """Sync render path executed on the SSE render worker thread.
 
     Builds one `Repository` for the session, runs all the consumers'
-    `HandleSSEEvents` commands through a single `CommandProcessor` (one
-    `CommandQueue`, one render coalescing pass, one `Emit` fan-out
-    cascade), and serializes the resulting `ProcessedCommand` stream
-    via `to_sse_fragments`.
+    `HandleSSEEvents` commands through a single `CommandProcessor`, and
+    returns the resulting `ProcessedCommand` stream serialized as a list of
+    SSE OOB HTML fragments.
     """
     from django.contrib.auth.models import AnonymousUser
 

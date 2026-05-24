@@ -14,10 +14,7 @@ batch into wire output:
   `executeBrowserCommand` decodes.
 
 This module is the single place that decides how a `ProcessedCommand`
-maps to wire effects.  `urls.endpoint` and `sse.py` consume it without
-duplicating that match.
-
-See `docs/plans/sse-generalized-worker.md` for the rationale.
+maps to wire effects; both `urls.endpoint` and `sse.py` go through it.
 """
 
 from __future__ import annotations
@@ -66,8 +63,7 @@ class CommandBatch:
     HTML-producing commands (`SendHtml`, `Destroy`) land in `html` as
     pre-rendered OOB fragments.  Browser-effect commands collect in
     `browser_commands`.  URL-mutating commands store the last value seen
-    in `redirect`/`push_url`/`replace_url` (last writer wins, matching
-    the previous per-iteration overwrite behavior of `urls.endpoint`).
+    in `redirect`/`push_url`/`replace_url` (last writer wins).
     """
 
     html: list[str | SafeString] = dataclass_field(default_factory=list)
