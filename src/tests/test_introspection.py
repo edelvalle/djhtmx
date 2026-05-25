@@ -233,17 +233,17 @@ class TestOptionalModelInComponent(TestCase):
         from djhtmx.component import HtmxComponent
 
         # Create a test component with optional Item field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class OptionalModelNonexistent(HtmxComponent):
+            _template_name = "OptionalModelNonexistent.html"
             item: Item | None
 
         # Generate a UUID that doesn't exist in the database
         nonexistent_id = uuid4()
 
         # Build the component with the non-existent ID
-        component = TestComponent(
+        component = OptionalModelNonexistent(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="OptionalModelNonexistent",
             user=None,
             item=nonexistent_id,
         )
@@ -261,14 +261,14 @@ class TestOptionalModelInComponent(TestCase):
         item.delete()
 
         # Create a test component with optional Item field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class OptionalModelDeleted(HtmxComponent):
+            _template_name = "OptionalModelDeleted.html"
             item: Item | None
 
         # Build the component with the deleted item's ID
-        component = TestComponent(
+        component = OptionalModelDeleted(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="OptionalModelDeleted",
             user=None,
             item=item_id,
         )
@@ -284,14 +284,14 @@ class TestOptionalModelInComponent(TestCase):
         item = Item.objects.create(text="Test item")
 
         # Create a test component with optional Item field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class OptionalModelExisting(HtmxComponent):
+            _template_name = "OptionalModelExisting.html"
             item: Item | None
 
         # Build the component with the existing item's ID
-        component = TestComponent(
+        component = OptionalModelExisting(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="OptionalModelExisting",
             user=None,
             item=item.id,
         )
@@ -310,8 +310,8 @@ class TestOptionalModelInComponent(TestCase):
         from djhtmx.component import HtmxComponent
 
         # Create a test component with required Item field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class RequiredModelNonexistent(HtmxComponent):
+            _template_name = "RequiredModelNonexistent.html"
             item: Item  # Required, not optional
 
         # Generate a UUID that doesn't exist in the database
@@ -319,9 +319,9 @@ class TestOptionalModelInComponent(TestCase):
 
         # Should raise ValidationError, not DoesNotExist
         with self.assertRaises(ValidationError) as context:
-            TestComponent(
+            RequiredModelNonexistent(
                 id="test-component",
-                hx_name="TestComponent",
+                hx_name="RequiredModelNonexistent",
                 user=None,
                 item=nonexistent_id,
             )
@@ -344,17 +344,17 @@ class TestOptionalLazyModelInComponent(TestCase):
         from djhtmx.introspection import ModelConfig
 
         # Create a test component with optional lazy Item field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class OptionalLazyModelNonexistent(HtmxComponent):
+            _template_name = "OptionalLazyModelNonexistent.html"
             item: Annotated[Item | None, ModelConfig(lazy=True)]
 
         # Generate a UUID that doesn't exist in the database
         nonexistent_id = uuid4()
 
         # Build the component with the non-existent ID
-        component = TestComponent(
+        component = OptionalLazyModelNonexistent(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="OptionalLazyModelNonexistent",
             user=None,
             item=nonexistent_id,
         )
@@ -382,14 +382,14 @@ class TestOptionalLazyModelInComponent(TestCase):
         item.delete()
 
         # Create a test component with optional lazy Item field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class OptionalLazyModelDeleted(HtmxComponent):
+            _template_name = "OptionalLazyModelDeleted.html"
             item: Annotated[Item | None, ModelConfig(lazy=True)]
 
         # Build the component with the deleted item's ID
-        component = TestComponent(
+        component = OptionalLazyModelDeleted(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="OptionalLazyModelDeleted",
             user=None,
             item=item_id,
         )
@@ -411,14 +411,14 @@ class TestOptionalLazyModelInComponent(TestCase):
         item = Item.objects.create(text="Test lazy item")
 
         # Create a test component with optional lazy Item field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class OptionalLazyModelExisting(HtmxComponent):
+            _template_name = "OptionalLazyModelExisting.html"
             item: Annotated[Item | None, ModelConfig(lazy=True)]
 
         # Build the component with the existing item's ID
-        component = TestComponent(
+        component = OptionalLazyModelExisting(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="OptionalLazyModelExisting",
             user=None,
             item=item.id,
         )
@@ -439,17 +439,17 @@ class TestOptionalLazyModelInComponent(TestCase):
         from djhtmx.introspection import ModelConfig
 
         # Create a test component with required lazy Item field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class RequiredLazyModelNonexistent(HtmxComponent):
+            _template_name = "RequiredLazyModelNonexistent.html"
             item: Annotated[Item, ModelConfig(lazy=True)]  # Required, not optional
 
         # Generate a UUID that doesn't exist in the database
         nonexistent_id = uuid4()
 
         # Component creation should succeed (lazy loading)
-        component = TestComponent(
+        component = RequiredLazyModelNonexistent(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="RequiredLazyModelNonexistent",
             user=None,
             item=nonexistent_id,
         )
@@ -479,17 +479,17 @@ class TestQuerySetInComponent(TestCase):
         from djhtmx.component import HtmxComponent
 
         # Create a test component with QuerySet field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class QuerysetNonexistent(HtmxComponent):
+            _template_name = "QuerysetNonexistent.html"
             items: ItemQS
 
         # Generate UUIDs that don't exist in the database
         nonexistent_ids = [uuid4(), uuid4(), uuid4()]
 
         # Build the component with non-existent IDs
-        component = TestComponent(
+        component = QuerysetNonexistent(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="QuerysetNonexistent",
             user=None,
             items=nonexistent_ids,
         )
@@ -512,17 +512,17 @@ class TestQuerySetInComponent(TestCase):
         item2 = Item.objects.create(text="Item 2")
 
         # Create a test component with QuerySet field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class QuerysetMixed(HtmxComponent):
+            _template_name = "QuerysetMixed.html"
             items: ItemQS
 
         # Mix valid and invalid IDs
         mixed_ids = [item1.id, uuid4(), item2.id, uuid4()]
 
         # Build the component with mixed IDs
-        component = TestComponent(
+        component = QuerysetMixed(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="QuerysetMixed",
             user=None,
             items=mixed_ids,
         )
@@ -548,17 +548,17 @@ class TestQuerySetInComponent(TestCase):
         item2.delete()
 
         # Create a test component with QuerySet field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class QuerysetDeleted(HtmxComponent):
+            _template_name = "QuerysetDeleted.html"
             items: ItemQS
 
         # Try to use all IDs including the deleted one
         all_ids = [item1.id, item2_id, item3.id]
 
         # Build the component with IDs including deleted
-        component = TestComponent(
+        component = QuerysetDeleted(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="QuerysetDeleted",
             user=None,
             items=all_ids,
         )
@@ -581,16 +581,16 @@ class TestQuerySetInComponent(TestCase):
         item3 = Item.objects.create(text="Item 3")
 
         # Create a test component with QuerySet field
-        class TestComponent(HtmxComponent):
-            _template_name = "TestComponent.html"
+        class QuerysetExisting(HtmxComponent):
+            _template_name = "QuerysetExisting.html"
             items: ItemQS
 
         # Build the component with all valid IDs
         valid_ids = [item1.id, item2.id, item3.id]
 
-        component = TestComponent(
+        component = QuerysetExisting(
             id="test-component",
-            hx_name="TestComponent",
+            hx_name="QuerysetExisting",
             user=None,
             items=valid_ids,
         )

@@ -130,9 +130,11 @@ class TestSessionRecursiveDestruction(TestCase):
         self.session.register_child(parent_id, child_id)
         self.session.flush()
 
-        # Verify conn.hset was called with children data
-        mock_conn.hset.assert_called()
-        calls = mock_conn.hset.call_args_list
+        # `flush` writes through a MULTI/EXEC pipeline, so the hset calls
+        # land on the pipeline mock rather than directly on conn.
+        pipe = mock_conn.pipeline.return_value.__enter__.return_value
+        pipe.hset.assert_called()
+        calls = pipe.hset.call_args_list
 
         # Find the call that sets __children__
         children_call = None

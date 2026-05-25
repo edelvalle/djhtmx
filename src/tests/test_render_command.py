@@ -7,8 +7,8 @@ from djhtmx.component import HtmxComponent
 from djhtmx.repo import Repository
 
 
-class TestComponent(HtmxComponent):
-    _template_name: str = "TestComponent.html"
+class RenderingComponent(HtmxComponent):
+    _template_name: str = "RenderingComponent.html"
 
     name: str = "test"
     value: int = 42
@@ -16,7 +16,7 @@ class TestComponent(HtmxComponent):
 
 class TestRenderCommand(TestCase):
     def setUp(self):
-        self.component = TestComponent(id="test-id", hx_name="TestComponent", user=None)
+        self.component = RenderingComponent(id="test-id", hx_name="RenderingComponent", user=None)
         self.mock_repo = Mock(spec=Repository)
 
     def test_render_without_context_uses_component_context(self):

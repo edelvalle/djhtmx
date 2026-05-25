@@ -121,7 +121,7 @@ def to_http_response(batch: CommandBatch) -> HttpResponse:
                         "if_not_visible": if_not_visible,
                     },
                 )
-            case Open(url, name, target, rel):
+            case Open(url=url, name=name, rel=rel, target=target):
                 triggers.after_settle(
                     "hxOpenURL",
                     {"url": url, "name": name, "target": target, "rel": rel},
