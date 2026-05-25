@@ -126,19 +126,12 @@ class Repository:
                 subscriptions_to_ids[subscription].add(component_id)
         return subscriptions_to_ids
 
-    def __init__(
-        self,
-        user,
-        session: Session,
-        params: QueryDict,
-    ):
+    def __init__(self, user, session: Session, params: QueryDict):
         self.user = user
         self.session = session
         self.session_signed_id = signer.sign(session.id)
         self.session_hash = compact_hash(session.id)
         self.params = params
-
-    # Component life cycle & management
 
     def unregister_component(self, component_id: str):
         # Delete component state recursively, then clean up the SSE consumer

@@ -44,27 +44,19 @@ class Consumer(AsyncJsonWebsocketConsumer):
         await self.accept()
         self.repo = Repository.from_websocket(self.scope["user"])
 
-    async def disconnect(self, code):
-        await super().disconnect(code)
-
     async def receive_json(self, event_data: dict[str, Any]):
         if headers := event_data.pop("HEADERS", None):
             url = headers["HX-Current-URL"]
             component_id = headers["HX-Component-Id"]
             event_handler = headers["HX-Component-Handler"]
             params = get_params(url)
-            logger.debug(">>>> Call: %s %s", component_id, event_handler)
             self.repo.params.clear()
             self.repo.params.update(params)  # type: ignore
-            # Command dispatching
             async for command in self.repo.adispatch_event(
                 component_id, event_handler, parse_request_data(event_data)
             ):
                 match command:
-                    case SendHtml(html, debug_trace):
-                        logger.debug(
-                            "< Command: %s", f"SendHtml[{debug_trace}](... {len(html)} ...)"
-                        )
+                    case SendHtml(html):
                         await self.send(html)
                     case (
                         Destroy()
@@ -76,7 +68,6 @@ class Consumer(AsyncJsonWebsocketConsumer):
                         | Open()
                         | ReplaceURL()
                     ):
-                        logger.debug("< Command: %s", command)
                         await self.send_json(command)
                     case unreachable:
                         assert_never(unreachable)
