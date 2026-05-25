@@ -8,19 +8,19 @@ from djhtmx.repo import Repository
 from djhtmx.templatetags.htmx import htmx
 
 
-class TestComponent(HtmxComponent):
+class TemplateTagsComponent(HtmxComponent):
     """Test component for testing."""
 
-    _template_name = "TestComponent.html"
+    _template_name = "TemplateTagsComponent.html"
 
     name: str = "test"
     value: int = 42
 
 
-class AnotherComponent(HtmxComponent):
+class AnotherTemplateTagsComponent(HtmxComponent):
     """Another test component."""
 
-    _template_name = "AnotherComponent.html"
+    _template_name = "AnotherTemplateTagsComponent.html"
 
     data: str = "example"
 
@@ -45,12 +45,12 @@ class TestHtmxTemplateTag(TestCase):
 
     def test_htmx_with_string_name(self):
         """Test that htmx tag works with string component name."""
-        result = htmx(self.context, "TestComponent", {"key": "value"})
+        result = htmx(self.context, "TemplateTagsComponent", {"key": "value"})
 
         # Verify build was called with the string name
         self.mock_repo.build.assert_called_once()
         call_args = self.mock_repo.build.call_args
-        self.assertEqual(call_args[0][0], "TestComponent")
+        self.assertEqual(call_args[0][0], "TemplateTagsComponent")
 
         # Verify render_html was called
         self.mock_repo.render_html.assert_called_once()
@@ -58,12 +58,12 @@ class TestHtmxTemplateTag(TestCase):
 
     def test_htmx_with_component_type(self):
         """Test that htmx tag extracts name from component type."""
-        result = htmx(self.context, TestComponent, {"key": "value"})
+        result = htmx(self.context, TemplateTagsComponent, {"key": "value"})
 
         # Verify build was called with the extracted component name
         self.mock_repo.build.assert_called_once()
         call_args = self.mock_repo.build.call_args
-        self.assertEqual(call_args[0][0], "TestComponent")
+        self.assertEqual(call_args[0][0], "TemplateTagsComponent")
 
         # Verify render_html was called
         self.mock_repo.render_html.assert_called_once()
@@ -71,12 +71,12 @@ class TestHtmxTemplateTag(TestCase):
 
     def test_htmx_with_different_component_type(self):
         """Test that htmx tag works with different component types."""
-        result = htmx(self.context, AnotherComponent, {"key": "value"})
+        result = htmx(self.context, AnotherTemplateTagsComponent, {"key": "value"})
 
         # Verify build was called with the correct component name
         self.mock_repo.build.assert_called_once()
         call_args = self.mock_repo.build.call_args
-        self.assertEqual(call_args[0][0], "AnotherComponent")
+        self.assertEqual(call_args[0][0], "AnotherTemplateTagsComponent")
 
         # Verify render_html was called
         self.mock_repo.render_html.assert_called_once()
@@ -84,7 +84,7 @@ class TestHtmxTemplateTag(TestCase):
 
     def test_htmx_with_kwargs_state(self):
         """Test that htmx tag passes state from kwargs."""
-        htmx(self.context, TestComponent, key1="value1", key2="value2")
+        htmx(self.context, TemplateTagsComponent, key1="value1", key2="value2")
 
         # Verify build was called with the state including lazy
         self.mock_repo.build.assert_called_once()
@@ -101,7 +101,7 @@ class TestHtmxTemplateTag(TestCase):
         """Test that htmx tag merges dict and kwargs state."""
         htmx(
             self.context,
-            TestComponent,
+            TemplateTagsComponent,
             {"dict_key": "dict_value"},
             kwarg_key="kwarg_value",
         )
@@ -117,7 +117,7 @@ class TestHtmxTemplateTag(TestCase):
 
     def test_htmx_with_lazy_true(self):
         """Test that htmx tag handles lazy=True parameter."""
-        htmx(self.context, TestComponent, lazy=True)
+        htmx(self.context, TemplateTagsComponent, lazy=True)
 
         # Verify build was called with lazy state
         self.mock_repo.build.assert_called_once()
@@ -139,7 +139,7 @@ class TestHtmxTemplateTag(TestCase):
             "this": parent_component,
         })
 
-        htmx(context_with_parent, TestComponent)
+        htmx(context_with_parent, TemplateTagsComponent)
 
         # Verify build was called with parent_id
         self.mock_repo.build.assert_called_once()

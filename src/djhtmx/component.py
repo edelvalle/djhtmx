@@ -33,7 +33,7 @@ from .introspection import (
 )
 from .query import Query, QueryPatcher
 from .tracing import tracing_span
-from .utils import generate_id
+from .utils import generate_id, get_fqn
 
 __all__ = ("ComponentNotFound", "HtmxComponent", "ModelConfig", "Query", "get_template")
 
@@ -114,6 +114,11 @@ class HtmxComponent(BaseModel):
                 public = True
 
         if public:
+            if existing_component := REGISTRY.get(component_name):
+                raise TypeError(
+                    f"Component {get_fqn(cls)} would shadow existing {get_fqn(existing_component)}"
+                )
+
             REGISTRY[component_name] = cls
 
             # Warn of components that do not have event handlers and are public
