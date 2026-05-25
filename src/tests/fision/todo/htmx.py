@@ -10,7 +10,8 @@ from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from pydantic import BaseModel, Field
 
-from djhtmx.component import BuildAndRender, Destroy, Emit, Focus, HtmxComponent, Query, SkipRender
+from djhtmx.commands import BuildAndRender, Destroy, Emit, Focus, SkipRender
+from djhtmx.component import HtmxComponent, Query
 from djhtmx.sse import SSEEventEnvelope, SSESubscription, emit_sse_event
 from djhtmx.utils import run_on_commit
 
@@ -109,11 +110,22 @@ class TodoList(BaseToggleFilter, BaseQueryFilter):
 
     @property
     def sse_subscriptions(self):
-        return {SSESubscription(TodoItemAdded, TODO_ITEMS_TOPIC)}
+        return {
+            SSESubscription(TodoItemAdded, TODO_ITEMS_TOPIC),
+            SSESubscription(TodoItemRemoved, TODO_ITEMS_TOPIC),
+        }
 
-    def _handle_sse_events(self, envelope: SSEEventEnvelope[TodoItemAdded]):
+    def _handle_sse_events(
+        self,
+        envelope: SSEEventEnvelope[TodoItemAdded | TodoItemRemoved],
+    ):
         match envelope.event:
             case TodoItemAdded(item_id=item_id) if envelope.source_session_id != self.session_id:
+                # Append the new TodoItem in place; don't re-render the
+                # whole TodoList — its full render would replace #todo-list
+                # with all items (including the new one), and the appended
+                # OOB fragment would arrive after that and add a duplicate.
+                yield SkipRender(self)
                 if item := self.items.filter(pk=item_id).first():
                     yield BuildAndRender.append(
                         "#todo-list",
@@ -121,10 +133,14 @@ class TodoList(BaseToggleFilter, BaseQueryFilter):
                         id=f"item-id-{item.id.hex}",
                         item=item,
                     )
-                else:
-                    yield SkipRender(self)
             case TodoItemAdded():
                 yield SkipRender(self)
+            case TodoItemRemoved():
+                # Default render: items-left count and footer visibility
+                # depend on the queryset, so re-render the list.  The
+                # TodoItem(removed) component self-destroys via its own
+                # handler — this just keeps the parent in sync.
+                pass
 
 
 class ListHeader(HtmxComponent):
@@ -158,7 +174,8 @@ class TodoItem(HtmxComponent):
     def _handle_sse_events(self, envelope: SSEEventEnvelope[TodoItemUpdated | TodoItemRemoved]):
         match envelope.event:
             case TodoItemUpdated(item_id=item_id) if self.item and item_id == self.item.pk:
-                yield None
+                # No yields: framework emits the default Render(self).
+                pass
             case TodoItemRemoved(item_id=item_id) if self.item and item_id == self.item.pk:
                 yield Destroy(self.id)
             case TodoItemRemoved() | TodoItemUpdated():
@@ -216,7 +233,8 @@ class TodoCounter(HtmxComponent):
         self,
         envelope: SSEEventEnvelope[TodoItemAdded | TodoItemUpdated | TodoItemRemoved],
     ):
-        yield None
+        # No yields: framework emits the default Render(self).
+        return
 
     @property
     def items(self):

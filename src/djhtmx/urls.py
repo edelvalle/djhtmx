@@ -3,7 +3,7 @@ import logging
 import time
 from functools import partial
 from http import HTTPStatus
-from typing import assert_never, cast
+from typing import cast
 
 from django.apps import apps
 from django.core.handlers.asgi import ASGIRequest
@@ -12,20 +12,10 @@ from django.db import transaction
 from django.http.request import HttpRequest, QueryDict
 from django.http.response import HttpResponse, StreamingHttpResponse
 from django.urls import path, re_path
-from django.utils.html import format_html
 from django.views.decorators.csrf import csrf_exempt
 
-from .commands import PushURL, ReplaceURL, SendHtml
-from .component import (
-    REGISTRY,
-    Destroy,
-    DispatchDOMEvent,
-    Focus,
-    Open,
-    Redirect,
-    ScrollIntoView,
-    Triggers,
-)
+from .command_response import CommandBatch, to_http_response
+from .component import REGISTRY
 from .consumer import Consumer
 from .introspection import parse_request_data
 from .repo import Repository
@@ -43,80 +33,23 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
 
     with sentry_tags(**tags), tracing_span(f"{component_name}.{event_handler}", **tags):
         repo = Repository.from_request(request)
-        content: list[str] = []
-        headers: dict[str, str] = {}
-        triggers = Triggers()
-
-        for command in repo.dispatch_event(
-            component_id,
-            event_handler,
-            parse_request_data(request.POST | request.FILES)  # type: ignore[reportOperatorIssues]
-            | (
-                {"prompt": prompt}
-                if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
-                else {}
-            ),
-        ):
-            # Command loop
-            match command:
-                case Destroy(component_id):
-                    content.append(
-                        format_html(
-                            '<div id="{component_id}" hx-swap-oob="delete"></div>',
-                            component_id=component_id,
-                        )
-                    )
-                case Redirect(url):
-                    headers["HX-Redirect"] = url
-                case Focus(selector):
-                    triggers.after_settle("hxFocus", selector)
-                case ScrollIntoView(selector, behavior, block, if_not_visible):
-                    triggers.after_settle(
-                        "hxScrollIntoView",
-                        {
-                            "selector": selector,
-                            "behavior": behavior,
-                            "block": block,
-                            "if_not_visible": if_not_visible,
-                        },
-                    )
-                case Open(url, name, target, rel):
-                    triggers.after_settle(
-                        "hxOpenURL",
-                        {"url": url, "name": name, "target": target, "rel": rel},
-                    )
-                case DispatchDOMEvent(target, event, detail, bubbles, cancelable, composed):
-                    triggers.after_settle(
-                        "hxDispatchDOMEvent",
-                        {
-                            "event": event,
-                            "target": target,
-                            "detail": detail,
-                            "bubbles": bubbles,
-                            "cancelable": cancelable,
-                            "composed": composed,
-                        },
-                    )
-                case SendHtml(html):
-                    content.append(html)
-                case PushURL(url):
-                    headers["HX-Push-Url"] = url
-                case ReplaceURL(url):
-                    headers["HX-Replace-Url"] = url
-                case _ as unreachable:
-                    assert_never(unreachable)
-
-        # HX-Redirect triggers a full navigation, so URL manipulation headers
-        # are meaningless and can cause HTMX to skip the redirect.
-        if "HX-Redirect" in headers:
-            headers.pop("HX-Replace-Url", None)
-            headers.pop("HX-Push-Url", None)
-
-        return HttpResponse("\n\n".join(content), headers=headers | triggers.headers)
+        batch = CommandBatch.from_processed(
+            repo.dispatch_event(
+                component_id,
+                event_handler,
+                parse_request_data(request.POST | request.FILES)  # type: ignore[reportOperatorIssues]
+                | (
+                    {"prompt": prompt}
+                    if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
+                    else {}
+                ),
+            )
+        )
+        return to_http_response(batch)
 
 
 @transaction.non_atomic_requests
-async def sse_endpoint(request: HttpRequest):
+def sse_endpoint(request: HttpRequest):
     if not isinstance(request, ASGIRequest):
         return HttpResponse("SSE requires ASGI", status=HTTPStatus.NOT_IMPLEMENTED)
 
@@ -131,8 +64,6 @@ async def sse_endpoint(request: HttpRequest):
     except BadSignature:
         return HttpResponse("Invalid SSE session", status=HTTPStatus.BAD_REQUEST)
 
-    await asyncio.sleep(0)
-
     async def stream():
         from . import settings
         from .sse import (
@@ -144,10 +75,13 @@ async def sse_endpoint(request: HttpRequest):
             sse_message,
             wake_channel,
         )
+        from .sse_executor import SSERenderQueueFull
+        from .utils import compact_hash
 
         redis = get_async_conn()
         pubsub = redis.pubsub()
         channel = wake_channel(session_id)
+        session_tag = compact_hash(session_id)
         logger.debug("SSE [%s] stream subscribe channel=%s", session_id, channel)
         await pubsub.subscribe(channel)
 
@@ -158,47 +92,71 @@ async def sse_endpoint(request: HttpRequest):
             logger.debug("SSE [%s] stream connected session", session_id)
             yield b": connected\n\n"
             while True:
-                # Keep the Redis keys alive for as long there is a SSE connection
-                now = time.monotonic()
-                if refresh_interval and now - last_refresh >= refresh_interval:
-                    await refresh_sse_session_liveness(redis, session_id)
-                    last_refresh = now
+                with tracing_span("djhtmx.sse.iteration", session=session_tag):
+                    # Keep the Redis keys alive for as long there is a SSE connection
+                    now = time.monotonic()
+                    if refresh_interval and now - last_refresh >= refresh_interval:
+                        await refresh_sse_session_liveness(redis, session_id)
+                        last_refresh = now
 
-                logger.debug("SSE [%s] draining heartbeat subscriptions", session_id)
-                heartbeat_paces = await get_sse_heartbeat_paces(redis, session_id)
-                for pace in heartbeat_paces - heartbeat_due_at.keys():
-                    heartbeat_due_at[pace] = now + pace
-                for stale_pace in heartbeat_due_at.keys() - heartbeat_paces:
-                    heartbeat_due_at.pop(stale_pace)
-                due_paces = {pace for pace, due_at in heartbeat_due_at.items() if now >= due_at}
-                if due_paces:
-                    for pace in due_paces:
+                    logger.debug("SSE [%s] draining heartbeat subscriptions", session_id)
+                    heartbeat_paces = await get_sse_heartbeat_paces(redis, session_id)
+                    for pace in heartbeat_paces - heartbeat_due_at.keys():
                         heartbeat_due_at[pace] = now + pace
-                    for fragment in await render_sse_heartbeat_fragments(
-                        redis, session_id, user, due_paces
-                    ):
+                    for stale_pace in heartbeat_due_at.keys() - heartbeat_paces:
+                        heartbeat_due_at.pop(stale_pace)
+                    due_paces = {pace for pace, due_at in heartbeat_due_at.items() if now >= due_at}
+                    if due_paces:
+                        for pace in due_paces:
+                            heartbeat_due_at[pace] = now + pace
+                        with tracing_span(
+                            "djhtmx.sse.heartbeat_drain",
+                            session=session_tag,
+                            paces=",".join(str(p) for p in sorted(due_paces)),
+                        ):
+                            try:
+                                heartbeat_fragments = await render_sse_heartbeat_fragments(
+                                    redis, session_id, user, due_paces
+                                )
+                            except SSERenderQueueFull as exc:
+                                logger.warning(
+                                    "SSE [%s] dropping heartbeat drain: %s", session_id, exc
+                                )
+                                heartbeat_fragments = []
+                        for fragment in heartbeat_fragments:
+                            yield sse_message("djhtmx", fragment)
+
+                    logger.debug("SSE [%s] draining session messages", session_id)
+                    # This will drain the channel from messages at both connection time and later
+                    # after a message is received (reentering the loop).
+                    #
+                    # Caveat: if the Redis pub/sub connection disconnects or the worker is
+                    # restarted during that interval, the pub/sub wake can be lost.  That is why
+                    # the loop drains pending events at the top before sleeping.  In that failure
+                    # case, the event remains queued, but without another wake it might wait until
+                    # the next heartbeat timeout or another publish causes the loop to check
+                    # again.  The wait is capped by `SSE_HEARTBEAT_TIMEOUT`, so worst-case delay
+                    # is roughly that value.
+                    with tracing_span("djhtmx.sse.event_drain", session=session_tag):
+                        try:
+                            event_fragments = await render_sse_event_fragments(session_id, user)
+                        except SSERenderQueueFull as exc:
+                            logger.warning("SSE [%s] dropping event drain: %s", session_id, exc)
+                            event_fragments = []
+                    for fragment in event_fragments:
                         yield sse_message("djhtmx", fragment)
 
-                logger.debug("SSE [%s] draining session messages", session_id)
-                # This will drain the channel from messages at both connection time and later after
-                # a message is received (reentering the loop).
-                #
-                # Caveat: if the Redis pub/sub connection disconnects or the worker is restarted
-                # during that interval, the pub/sub wake can be lost.  That is why the loop drains
-                # pending events at the top before sleeping.  In that failure case, the event
-                # remains queued, but without another wake it might wait until the next heartbeat
-                # timeout or another publish causes the loop to check again.  Current timeout is
-                # 15s, so worst-case delay is roughly heartbeat interval.
-                for fragment in await render_sse_event_fragments(session_id, user):
-                    yield sse_message("djhtmx", fragment)
-                logger.debug(
-                    "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
-                )
-                timeout = 15
-                if heartbeat_due_at:
-                    next_heartbeat_tick = min(heartbeat_due_at.values())
-                    timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=timeout)
+                    logger.debug(
+                        "SSE [%s] waiting for wake up call on channel '%s'", session_id, channel
+                    )
+                    timeout = settings.SSE_HEARTBEAT_TIMEOUT
+                    if heartbeat_due_at:
+                        next_heartbeat_tick = min(heartbeat_due_at.values())
+                        timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))
+                with tracing_span("djhtmx.sse.wait", session=session_tag, timeout=f"{timeout:.2f}"):
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=timeout
+                    )
                 if not message:
                     yield b": heartbeat\n\n"
         except asyncio.CancelledError:
@@ -249,3 +207,8 @@ urlpatterns = [
 ws_urlpatterns = [
     re_path("ws", Consumer.as_asgi(), name="djhtmx.ws"),  # type: ignore
 ]
+
+__all__ = (
+    "urlpatterns",
+    "ws_urlpatterns",
+)

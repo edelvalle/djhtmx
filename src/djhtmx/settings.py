@@ -54,3 +54,46 @@ KEY_SIZE_SAMPLE_PROB = getattr(
 )
 
 STRICT_PUBLIC_BASE = getattr(settings, "DJHTMX_STRICT_PUBLIC_BASE", False)
+
+
+# SSE render executor: a small pool of long-lived worker threads owns one
+# Django DB connection each.  Size this in coordination with the host
+# project's PG pool budget.
+SSE_RENDER_WORKERS = getattr(settings, "DJHTMX_SSE_RENDER_WORKERS", 8)
+if SSE_RENDER_WORKERS < 1:
+    raise ValueError("DJHTMX_SSE_RENDER_WORKERS must be >= 1")
+
+# 0 = unbounded queue; otherwise the executor raises when this many jobs are
+# already in flight, so the SSE loop logs and drops rather than blowing up.
+SSE_RENDER_QUEUE_MAX = getattr(settings, "DJHTMX_SSE_RENDER_QUEUE_MAX", 0)
+
+# Render calls per worker between explicit `is_usable()` checks on the DB
+# connection.  Catches half-broken connections without paying the cost on
+# every render.
+SSE_RENDER_HEALTHCHECK_EVERY = getattr(settings, "DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY", 50)
+
+# Render calls per worker before closing and rotating the DB connection.
+# Interacts with psycopg-pool's `max_lifetime`: a persistent worker would
+# otherwise keep its connection checked out indefinitely and defer the pool's
+# scheduled recycle.  Rotation returns the connection so the pool can retire
+# aged-out entries.
+SSE_RENDER_ROTATE_EVERY = getattr(settings, "DJHTMX_SSE_RENDER_ROTATE_EVERY", 200)
+
+
+# Upper bound on the SSE loop's `pubsub.get_message` wait between drains.  When
+# heartbeat subscriptions are active, the next due tick further shortens this;
+# when none are scheduled, this value is the wait.  It also caps the recovery
+# window if a Redis pub/sub wake is lost: pending events are still drained on
+# the next iteration, so worst-case delay is roughly this timeout.
+SSE_HEARTBEAT_TIMEOUT = getattr(settings, "DJHTMX_SSE_HEARTBEAT_TIMEOUT", 30)
+if SSE_HEARTBEAT_TIMEOUT < 1:
+    raise ValueError("SSE_HEARTBEAT_TIMEOUT must be >= 1; preferably >= 30")
+
+
+# Max WATCH/EXEC attempts for `register_component`'s optimistic transaction
+# when two callers race on the same consumer's indexes set.  Concurrent
+# register on the same component is unusual (it takes a fast re-mount), so a
+# small budget is plenty; bump it only if you actually observe exhaustion.
+SSE_REGISTER_MAX_ATTEMPTS: int = getattr(settings, "DJHTMX_SSE_REGISTER_MAX_ATTEMPTS", 8)
+if SSE_REGISTER_MAX_ATTEMPTS < 1 or not isinstance(SSE_REGISTER_MAX_ATTEMPTS, int):
+    raise ValueError("DJHTMX_SSE_REGISTER_MAX_ATTEMPTS must be >= 1")

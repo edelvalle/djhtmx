@@ -220,6 +220,7 @@ show_missing = true
 exclude_also = [
   "pragma: no cover",
   "case _ as unreachable:",
+  "case unreachable:",
   "if .*TYPE_CHECKING:",
   "assert False",
   # "def __repr__",

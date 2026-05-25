@@ -1,11 +1,10 @@
-from typing import assert_never
+from collections.abc import Iterable
+from typing import NamedTuple, assert_never
 
 from django.db import models
 from django.db.models.signals import post_save, pre_delete
 
-from djhtmx.commands import PushURL, ReplaceURL
-
-from .component import (
+from .commands import (
     BuildAndRender,
     Command,
     Destroy,
@@ -13,9 +12,13 @@ from .component import (
     Emit,
     Execute,
     Focus,
+    HandleSSEEvents,
+    InternalCommand,
     Open,
+    PushURL,
     Redirect,
     Render,
+    ReplaceURL,
     ScrollIntoView,
     Signal,
     SkipRender,
@@ -23,9 +26,25 @@ from .component import (
 from .introspection import get_related_fields
 from .utils import get_model_subscriptions
 
+QueuedCommand = Command | InternalCommand
+
+
+class CommandPriority(NamedTuple):
+    """Sort key for `CommandQueue._optimize`.
+
+    `bucket` groups commands by processing order (lower = earlier).
+    `key` disambiguates within a bucket (typically a `component_id`).
+    `timestamp` is the command's monotonic-ns creation time, used as
+    a final tiebreaker so commands settle in FIFO order within a key.
+    """
+
+    bucket: int
+    key: str
+    timestamp: int
+
 
 class CommandQueue:
-    def __init__(self, commands: list[Command]):
+    def __init__(self, commands: list[QueuedCommand]):
         self.processing_component_id: str = ""
         self._commands = commands
         self._destroyed_ids: set[str] = set()
@@ -61,16 +80,17 @@ class CommandQueue:
         if signals:
             self.extend([Signal({(signal, self.processing_component_id) for signal in signals})])
 
-    def extend(self, commands: list[Command]):
+    def extend(self, commands: Iterable[QueuedCommand]):
+        commands = list(commands)
         if commands:
             self._commands.extend(commands)
             self._optimize()
 
-    def append(self, command: Command):
+    def append(self, command: QueuedCommand):
         self._commands.append(command)
         self._optimize()
 
-    def pop(self) -> Command:
+    def pop(self) -> QueuedCommand:
         return self._commands.pop(0)
 
     def __bool__(self):
@@ -84,6 +104,7 @@ class CommandQueue:
                 case (
                     Execute()
                     | Signal()
+                    | HandleSSEEvents()
                     | Emit()
                     | SkipRender()
                     | Focus()
@@ -122,25 +143,23 @@ class CommandQueue:
         self._commands = new_commands
 
     @staticmethod
-    def _priority(command: Command) -> tuple[int, str, int]:
+    def _priority(command: QueuedCommand) -> CommandPriority:
         match command:
-            case Execute():
-                return 0, "", 0
+            case Execute() | HandleSSEEvents():
+                return CommandPriority(bucket=0, key="", timestamp=0)
             case Destroy(component_id):
-                return 1, component_id, 0
+                return CommandPriority(bucket=10, key=component_id, timestamp=0)
             case Signal(_, timestamp):
-                return 2, "", timestamp
+                return CommandPriority(bucket=20, key="", timestamp=timestamp)
             case Emit(_, timestamp):
-                return 3, "", timestamp
+                return CommandPriority(bucket=30, key="", timestamp=timestamp)
             case SkipRender():
-                return 4, "", 0
+                return CommandPriority(bucket=40, key="", timestamp=0)
             case BuildAndRender(_, _, _, _, timestamp):
-                return 5, "", timestamp
+                return CommandPriority(bucket=50, key="", timestamp=timestamp)
             case Render(component, template, _, _, _, timestamp):
-                if template:
-                    return 6, component.id, timestamp
-                else:
-                    return 7, component.id, timestamp
+                bucket = 60 if template else 70
+                return CommandPriority(bucket=bucket, key=component.id, timestamp=timestamp)
             case (
                 Focus()
                 | ScrollIntoView()
@@ -150,6 +169,6 @@ class CommandQueue:
                 | ReplaceURL()
                 | PushURL()
             ):
-                return 8, "", 0
-            case _ as unreachable:
+                return CommandPriority(bucket=80, key="", timestamp=0)
+            case unreachable:
                 assert_never(unreachable)

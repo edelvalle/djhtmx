@@ -9,17 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- SSE: Experimental SSE channel with a single router per page `SSEEventRouter` (https://github.com/edelvalle/djhtmx/pull/54)
+- Experimental SSE channel with a single per-page `SSEEventRouter` and a bounded render thread pool. New settings: `DJHTMX_SSE_RENDER_WORKERS` (default `8`), `DJHTMX_SSE_RENDER_QUEUE_MAX`, `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`, `DJHTMX_SSE_RENDER_ROTATE_EVERY`.
 
-### Fixed
+- SSE render-pool metrics published through Sentry and Logfire under the `djhtmx.sse.render.*` namespace: `queue_depth` (distribution), `queue_wait_ms` (distribution), `duration_ms` (distribution), `drops` (counter), `rotations` (counter), `healthcheck_closes` (counter), and `broken_connection_closes` (counter).  New helpers `metric_incr`,  `metric_distribution` in `djhtmx.tracing` mirror the existing `tracing_span` dual-backend pattern.
 
-- **SSE PostgreSQL connection leak**: SSE render work runs on a sticky
-  `sync_to_async` thread for the lifetime of the browser connection, and
-  `StreamingHttpResponse` never fires `request_finished`, so Django's
-  per-request connection cleanup never runs. Each open SSE tab therefore
-  retained one DB connection per worker, exhausting the pool under load. The
-  SSE render path now closes all DB connections after every event/heartbeat
-  drain regardless of `CONN_MAX_AGE`.
+### Changed
+
+- Command classes (`Destroy`, `Redirect`, `Open`, `Focus`, `ScrollIntoView`, `DispatchDOMEvent`, `Render`, `BuildAndRender`, `Emit`, `Execute`, `SkipRender`, `PushURL`, `ReplaceURL`, `SendHtml`, and the `Command` union) now live in `djhtmx.commands`.  Update imports to `from djhtmx.commands import …`.  The `Command` union is also narrower: `Signal` and `SendHtml` are framework internals and no longer in it.
 
 ## [1.3.12] - 2026-04-24
 

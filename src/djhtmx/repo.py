@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import random
 from collections import defaultdict
-from collections.abc import AsyncIterable, Generator, Iterable
+from collections.abc import AsyncIterable, Iterable
 from dataclasses import dataclass
 from dataclasses import field as Field
 from typing import Any
@@ -12,40 +12,25 @@ from django.core.signing import Signer
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
-from pydantic import ValidationError
 from uuid6 import uuid7
 
-from djhtmx.global_events import HtmxUnhandledError
 from djhtmx.tracing import tracing_span
 
 from . import json
-from .command_queue import CommandQueue
-from .commands import PushURL, ReplaceURL, SendHtml
-from .component import (
-    LISTENERS,
-    REGISTRY,
-    BuildAndRender,
-    Command,
+from .commands import (
     Destroy,
-    DispatchDOMEvent,
-    Emit,
     Execute,
-    Focus,
+    ProcessedCommand,
+)
+from .component import (
+    REGISTRY,
     HtmxComponent,
-    Open,
-    Redirect,
-    Render,
-    ScrollIntoView,
-    Signal,
-    SkipRender,
     _get_query_patchers,
 )
-from .introspection import filter_parameters
 from .settings import (
     KEY_SIZE_ERROR_THRESHOLD,
     KEY_SIZE_SAMPLE_PROB,
     KEY_SIZE_WARN_THRESHOLD,
-    LOGIN_URL,
     SESSION_TTL,
     conn,
 )
@@ -56,17 +41,9 @@ signer = Signer()
 logger = logging.getLogger(__name__)
 
 
-ProcessedCommand = (
-    Destroy
-    | Redirect
-    | Open
-    | Focus
-    | ScrollIntoView
-    | DispatchDOMEvent
-    | SendHtml
-    | PushURL
-    | ReplaceURL
-)
+# `ProcessedCommand` is re-exported from `.commands` so existing imports
+# (`from djhtmx.repo import ProcessedCommand`) keep working.
+__all__ = ("ProcessedCommand", "Repository", "Session", "signer")
 
 
 class Repository:
@@ -149,23 +126,23 @@ class Repository:
                 subscriptions_to_ids[subscription].add(component_id)
         return subscriptions_to_ids
 
-    def __init__(
-        self,
-        user,
-        session: Session,
-        params: QueryDict,
-    ):
+    def __init__(self, user, session: Session, params: QueryDict):
         self.user = user
         self.session = session
         self.session_signed_id = signer.sign(session.id)
         self.session_hash = compact_hash(session.id)
         self.params = params
 
-    # Component life cycle & management
-
     def unregister_component(self, component_id: str):
-        # delete component state
+        # Delete component state recursively, then clean up the SSE consumer
+        # record for every component that was just destroyed (the explicit one
+        # plus any children cascaded by `Session.unregister_component`).
+        from .sse import unregister_consumer
+
+        before = set(self.session.unregistered)
         self.session.unregister_component(component_id)
+        for id_ in self.session.unregistered - before:
+            unregister_consumer(self.session.id, id_)
 
     async def adispatch_event(  # pragma: no cover
         self,
@@ -173,27 +150,12 @@ class Repository:
         event_handler: str,
         event_data: dict[str, Any],
     ) -> AsyncIterable[ProcessedCommand]:
-        commands = CommandQueue([Execute(component_id, event_handler, event_data)])
-        from .sse import sse_source_session
+        from .command_processor import CommandProcessor
 
-        # Command loop
-        try:
-            with sse_source_session(self.session.id):
-                while commands:
-                    processed_commands = self._run_command(commands)
-                    while command := await db(next)(processed_commands, None):
-                        yield command
-        except ValidationError as e:
-            # This is here to detect validation errors derived from an invalid User
-            # Meaning that the user type is not the right one so a login redirect has to happen
-            if any(
-                e
-                for error in e.errors()
-                if error["type"] == "is_instance_of" and error["loc"] == ("user",)
-            ):
-                yield Redirect(LOGIN_URL)
-            else:
-                raise
+        processor = CommandProcessor(self)
+        processed_commands = processor.process([Execute(component_id, event_handler, event_data)])
+        while command := await db(next)(processed_commands, None):
+            yield command
 
     def dispatch_event(
         self,
@@ -201,170 +163,11 @@ class Repository:
         event_handler: str,
         event_data: dict[str, Any],
     ) -> Iterable[ProcessedCommand]:
-        commands = CommandQueue([Execute(component_id, event_handler, event_data)])
-        from .sse import sse_source_session
+        from .command_processor import CommandProcessor
 
-        # Command loop
-        try:
-            with sse_source_session(self.session.id):
-                while commands:
-                    yield from self._run_command(commands)
-        except ValidationError as e:
-            # This is here to detect validation errors derived from an invalid User
-            # Meaning that the user type is not the right one so a login redirect has to happen
-            if any(
-                e
-                for error in e.errors()
-                if error["type"] == "is_instance_of" and error["loc"] == ("user",)
-            ):
-                yield Redirect(LOGIN_URL)
-            else:
-                raise
-
-    def _run_command(self, commands: CommandQueue) -> Generator[ProcessedCommand]:
-        command = commands.pop()
-        logger.debug("COMMAND: %s", command)
-        commands_to_append: list[Command] = []
-        match command:
-            case Execute(component_id, event_handler, event_data):
-                commands.processing_component_id = component_id
-                match self.get_component_by_id(component_id):
-                    case Destroy() as command:
-                        yield command
-                    case HtmxComponent() as component:
-                        handler = getattr(component, event_handler)
-                        handler_kwargs = filter_parameters(handler, event_data)
-                        try:
-                            emited_commands = handler(**handler_kwargs)
-                        except Exception as error:
-                            annotations = getattr(handler, "_htmx_annotations_", None)
-                            logger.exception(
-                                "HTMX unhandled exception in component %s",
-                                component.__class__.__name__,
-                            )
-                            emited_commands = [
-                                Emit(HtmxUnhandledError(error, handler_annotations=annotations))
-                            ]
-                        yield from self._process_emited_commands(
-                            component,
-                            emited_commands,
-                            commands,
-                            during_execute=True,
-                            method_name=event_handler,
-                        )
-
-            case SkipRender(component):
-                commands.processing_component_id = component.id
-                self.session.store(component)
-
-            case BuildAndRender(component_type, state, oob, parent_id):
-                commands.processing_component_id = state.get("id", "")
-                component = self.build(component_type.__name__, state)
-
-                # Automatically track parent-child relationship if parent_id is specified
-                child_id = component.id
-                self.session.register_child(parent_id, child_id)
-
-                commands_to_append.append(Render(component, oob=oob))
-
-            case Render(component, template, oob, lazy, context):
-                commands.processing_component_id = component.id
-                html = self.render_html(
-                    component, oob=oob, template=template, lazy=lazy, context=context
-                )
-                yield SendHtml(html, debug_trace=f"{component.hx_name}({component.id})")
-
-            case Destroy(component_id) as command:
-                commands.processing_component_id = component_id
-                self.unregister_component(component_id)
-                yield command
-
-            case Emit(event):
-                for component in self.get_components_by_names(*LISTENERS[type(event)]):
-                    commands.processing_component_id = component.id
-                    logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
-                    try:
-                        emited_commands = component._handle_event(event)  # type: ignore
-                    except Exception as error:
-                        logger.exception(
-                            "HTMX unhandled error in the event handler of %s",
-                            component.__class__.__name__,
-                        )
-                        # Don't enter a spiral of death with HtmxUnhandledError
-                        if not isinstance(event, HtmxUnhandledError):
-                            emited_commands = [Emit(HtmxUnhandledError(error))]
-                        else:
-                            raise
-                    yield from self._process_emited_commands(
-                        component,
-                        emited_commands,
-                        commands,
-                        during_execute=False,
-                        method_name="_handle_event",
-                    )
-
-            case Signal(signals):
-                commands.processing_component_id = ""
-                for component_or_destroy in self.get_components_subscribed_to(signals):
-                    match component_or_destroy:
-                        case Destroy() as command:
-                            yield command
-                        case component:
-                            logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
-                            commands_to_append.append(Render(component))
-
-            case (
-                Open()
-                | ReplaceURL()
-                | PushURL()
-                | Redirect()
-                | Focus()
-                | ScrollIntoView()
-                | DispatchDOMEvent() as command
-            ):
-                commands.processing_component_id = ""
-                yield command
-
-        commands.extend(commands_to_append)
-        self.session.flush()
-
-    def _process_emited_commands(
-        self,
-        component: HtmxComponent,
-        emmited_commands: Iterable[Command] | None,
-        commands: CommandQueue,
-        during_execute: bool,
-        method_name: str | None = None,
-    ) -> Iterable[ProcessedCommand]:
-        component_was_rendered = False
-        commands_to_add: list[Command] = []
-        for command in emmited_commands or []:
-            if method_name:
-                logger.debug("< YIELD: %s.%s -> %s", component.hx_name, method_name, command)
-            component_was_rendered = component_was_rendered or (
-                isinstance(command, SkipRender | Render) and command.component.id == component.id
-            )
-            if (
-                component_was_rendered
-                and during_execute
-                and isinstance(command, Render)
-                and command.lazy is None
-            ):
-                # make partial updates not lazy during_execute
-                command.lazy = False
-            commands_to_add.append(command)
-
-        if not component_was_rendered:
-            commands_to_add.append(
-                Render(component, lazy=False if during_execute else component.lazy)
-            )
-
-        if signals := self.update_params_from(component):
-            yield ReplaceURL.from_params(self.params)
-            commands_to_add.append(Signal({(signal, component.id) for signal in signals}))
-
-        commands.extend(commands_to_add)
-        self.session.store(component)
+        yield from CommandProcessor(self).process([
+            Execute(component_id, event_handler, event_data)
+        ])
 
     def get_components_subscribed_to(
         self, signals: set[tuple[str, str]]
@@ -587,14 +390,20 @@ class Session:
     def flush(self, ttl: int = SESSION_TTL):
         if self.is_dirty:
             key = f"{self.id}:states"
-            if self.unregistered:
-                conn.hdel(key, *self.unregistered)
-                self.unregistered.clear()
-            if self.states:
-                conn.hset(key, mapping=self.states)
-            conn.hset(key, "__subs__", json.dumps(self.subscriptions))
-            conn.hset(key, "__children__", json.dumps(self.children))
-            conn.expire(key, ttl)
+            # Apply the dirty hash and refresh its TTL in a single MULTI/EXEC so
+            # a concurrent reader (`_ensure_read`) can never observe partial
+            # state — e.g. updated `states` but a `__subs__`/`__children__` from
+            # the previous flush.
+            with conn.pipeline(transaction=True) as pipe:
+                if self.unregistered:
+                    pipe.hdel(key, *self.unregistered)
+                if self.states:
+                    pipe.hset(key, mapping=self.states)
+                pipe.hset(key, "__subs__", json.dumps(self.subscriptions))
+                pipe.hset(key, "__children__", json.dumps(self.children))
+                pipe.expire(key, ttl)
+                pipe.execute()
+            self.unregistered.clear()
             # The command MEMORY USAGE is considered slow:
             # https://redis.io/docs/latest/commands/memory-usage/
             #
