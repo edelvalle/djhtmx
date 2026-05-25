@@ -49,7 +49,7 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
 
 
 @transaction.non_atomic_requests
-async def sse_endpoint(request: HttpRequest):
+def sse_endpoint(request: HttpRequest):
     if not isinstance(request, ASGIRequest):
         return HttpResponse("SSE requires ASGI", status=HTTPStatus.NOT_IMPLEMENTED)
 
@@ -63,8 +63,6 @@ async def sse_endpoint(request: HttpRequest):
         session_id = signer.unsign(session)
     except BadSignature:
         return HttpResponse("Invalid SSE session", status=HTTPStatus.BAD_REQUEST)
-
-    await asyncio.sleep(0)
 
     async def stream():
         from . import settings
