@@ -63,20 +63,16 @@ def _get_querystring_subscriptions(component_name: str) -> frozenset[str]:
     })
 
 
-RENDER_FUNC: dict[str, RenderFunction] = {}
-
-
 def get_template(template: str) -> RenderFunction:  # pragma: no cover
     if settings.DEBUG:
         return cast(RenderFunction, _compose(loader.get_template(template).render, mark_safe))
     else:
-        if (render := RENDER_FUNC.get(template)) is None:
-            render = cast(
-                RenderFunction,
-                _compose(loader.get_template(template).render, mark_safe),
-            )
-            RENDER_FUNC[template] = render
-        return render
+        return _get_template(template)
+
+
+@cache
+def _get_template(template: str) -> RenderFunction:
+    return cast(RenderFunction, _compose(loader.get_template(template).render, mark_safe))
 
 
 class HtmxComponent(BaseModel):
