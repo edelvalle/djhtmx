@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 from django.http import QueryDict
 from pydantic import BaseModel, TypeAdapter
@@ -108,8 +108,20 @@ class QueryPatcher:
                 if not query.shared:
                     param_name = f"{param_name}-{compact_hash(component.__name__)}"
 
-                # Use the full annotation from __annotations__ to preserve serializers
-                full_annotation = component.__annotations__.get(field_name, field.annotation)
+                # Use the full annotation (with the validator/serializer that `annotate_model`
+                # attaches for Model and QuerySet types) so the adapter knows how to convert between
+                # the model instance and its PK in the URL.
+                #
+                # We reconstruct it from `field.annotation` + `field.metadata` rather than reading
+                # `component.__annotations__[field_name]`, because `cls.__annotations__` is the
+                # class's own dict and is *not* walked along the MRO.  A field declared on an
+                # abstract base and inherited by a concrete component would otherwise fall through
+                # to the bare `field.annotation` and drop the PlainSerializer — `dump_python` then
+                # fails to serialise the model instance.
+                if field.metadata:
+                    full_annotation = Annotated[field.annotation, *field.metadata]
+                else:
+                    full_annotation = field.annotation
                 adapter = get_annotation_adapter(full_annotation)
                 yield cls(
                     field_name=field_name,

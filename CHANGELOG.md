@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Command classes (`Destroy`, `Redirect`, `Open`, `Focus`, `ScrollIntoView`, `DispatchDOMEvent`, `Render`, `BuildAndRender`, `Emit`, `Execute`, `SkipRender`, `PushURL`, `ReplaceURL`, `SendHtml`, and the `Command` union) now live in `djhtmx.commands`.  Update imports to `from djhtmx.commands import …`.  The `Command` union is also narrower: `Signal` and `SendHtml` are framework internals and no longer in it.
 
+### Fixed
+
+- **Inherited `Query` fields of Django Model type**: `QueryPatcher.for_component` now reconstructs the full annotation from `field.annotation` + `field.metadata` instead of reading `component.__annotations__[field_name]`.  The previous lookup only inspected the class's own annotations (no MRO walk) and silently fell through to the bare annotation for inherited fields, dropping the `PlainSerializer` that `annotate_model` attaches for Model and QuerySet types.  Components that inherited a field like `Annotated[MyModel | None, Query(...), Field(default=None)]` from an abstract base would raise `PydanticSerializationError: Unable to serialize unknown type` the moment the URL had to be updated.
+
 ## [1.3.12] - 2026-04-24
 
 ### Added
