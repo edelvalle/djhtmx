@@ -295,9 +295,19 @@ class EventEnvelope[P: BaseModel](BaseModel):
         return self.model_dump_json()
 
     @classmethod
-    def envelope_validate_json(cls, data):
+    def envelope_validate_json(cls, data) -> EventEnvelope | None:
         extracted = cls.model_validate_json(data)
-        payload_type: BaseModel = import_object(extracted.payload_fqn)
+        try:
+            payload_type: BaseModel = import_object(extracted.payload_fqn)
+        except (ImportError, AttributeError):
+            # The payload class was removed or renamed since this envelope was
+            # enqueued (e.g. a consumer still watching an event type dropped in a
+            # deploy).  Skip it instead of crashing the whole SSE stream.
+            logger.warning(
+                "Dropping SSE envelope with unimportable payload type %r",
+                extracted.payload_fqn,
+            )
+            return None
         extracted.payload = payload_type.model_validate(extracted.payload_data)  # type: ignore
         return extracted
 
@@ -444,8 +454,8 @@ async def render_sse_event_fragments(
 
     envelopes_by_consumer: dict[str, list[EventEnvelope]] = defaultdict(list)
     for raw_event in raw_events:
-        envelope = EventEnvelope.envelope_validate_json(raw_event)
-        envelopes_by_consumer[envelope.consumer_id].append(envelope)
+        if envelope := EventEnvelope.envelope_validate_json(raw_event):
+            envelopes_by_consumer[envelope.consumer_id].append(envelope)
 
     handle_commands: list[HandleSSEEvents] = []
     for consumer_id, envelopes in envelopes_by_consumer.items():
