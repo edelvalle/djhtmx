@@ -20,7 +20,7 @@ from typing import (
 
 import redis
 import redis.asyncio as async_redis
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import WatchError
 from xotl.tools.objects import import_object
 
@@ -295,10 +295,21 @@ class EventEnvelope[P: BaseModel](BaseModel):
         return self.model_dump_json()
 
     @classmethod
-    def envelope_validate_json(cls, data):
+    def envelope_validate_json(cls, data) -> EventEnvelope | None:
         extracted = cls.model_validate_json(data)
-        payload_type: BaseModel = import_object(extracted.payload_fqn)
-        extracted.payload = payload_type.model_validate(extracted.payload_data)  # type: ignore
+        try:
+            payload_type: BaseModel = import_object(extracted.payload_fqn)
+            extracted.payload = payload_type.model_validate(extracted.payload_data)  # type: ignore
+        except (ImportError, AttributeError, ValidationError):
+            # The payload class was removed or renamed, or its schema changed
+            # incompatibly, since this envelope was enqueued (e.g. a consumer
+            # still watching an event type altered in a deploy).  Skip it instead
+            # of crashing the whole SSE stream.
+            logger.warning(
+                "Dropping SSE envelope with stale payload type %r",
+                extracted.payload_fqn,
+            )
+            return None
         return extracted
 
 
@@ -444,8 +455,8 @@ async def render_sse_event_fragments(
 
     envelopes_by_consumer: dict[str, list[EventEnvelope]] = defaultdict(list)
     for raw_event in raw_events:
-        envelope = EventEnvelope.envelope_validate_json(raw_event)
-        envelopes_by_consumer[envelope.consumer_id].append(envelope)
+        if envelope := EventEnvelope.envelope_validate_json(raw_event):
+            envelopes_by_consumer[envelope.consumer_id].append(envelope)
 
     handle_commands: list[HandleSSEEvents] = []
     for consumer_id, envelopes in envelopes_by_consumer.items():
