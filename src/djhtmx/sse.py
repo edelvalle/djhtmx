@@ -20,7 +20,7 @@ from typing import (
 
 import redis
 import redis.asyncio as async_redis
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from redis.exceptions import WatchError
 from xotl.tools.objects import import_object
 
@@ -299,16 +299,17 @@ class EventEnvelope[P: BaseModel](BaseModel):
         extracted = cls.model_validate_json(data)
         try:
             payload_type: BaseModel = import_object(extracted.payload_fqn)
-        except (ImportError, AttributeError):
-            # The payload class was removed or renamed since this envelope was
-            # enqueued (e.g. a consumer still watching an event type dropped in a
-            # deploy).  Skip it instead of crashing the whole SSE stream.
+            extracted.payload = payload_type.model_validate(extracted.payload_data)  # type: ignore
+        except (ImportError, AttributeError, ValidationError):
+            # The payload class was removed or renamed, or its schema changed
+            # incompatibly, since this envelope was enqueued (e.g. a consumer
+            # still watching an event type altered in a deploy).  Skip it instead
+            # of crashing the whole SSE stream.
             logger.warning(
-                "Dropping SSE envelope with unimportable payload type %r",
+                "Dropping SSE envelope with stale payload type %r",
                 extracted.payload_fqn,
             )
             return None
-        extracted.payload = payload_type.model_validate(extracted.payload_data)  # type: ignore
         return extracted
 
 
