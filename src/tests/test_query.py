@@ -56,3 +56,40 @@ class TestQueryPatcherInheritedModelField(TestCase):
         params = QueryDict("", mutable=True)
         patcher.get_updates_for_params(self.item, params)
         self.assertEqual(params[patcher.param_name], str(self.item.pk))
+
+
+class TestQueryPatcherInvalidValue(TestCase):
+    """Regression: a malformed value in the URL for a model-typed `Query` field
+    must fall back to the default instead of raising.
+
+    Resolving a model from its PK runs the field's adapter, and a value the PK
+    field can't parse (here a non-numeric id) raises Django's `ValidationError`,
+    which is *not* a `ValueError`.  Both query entry points have to swallow it.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.item = Item.objects.create(text="hello")
+
+    def _patcher(self):
+        class _Concrete(HtmxComponent, public=False):
+            _template_name = "_Concrete.html"
+            editing: Annotated[Item | None, Query("editing"), Field(default=None)]
+
+        [patcher] = list(QueryPatcher.for_component(_Concrete))
+        return patcher
+
+    def test_get_update_for_state_falls_back_on_malformed_value(self):
+        patcher = self._patcher()
+        params = QueryDict(f"{patcher.param_name}=not-an-id", mutable=True)
+        # Must not raise; the malformed value is ignored so the default applies.
+        self.assertEqual(patcher.get_update_for_state(params), {})
+
+    def test_get_updates_for_params_falls_back_on_malformed_existing_value(self):
+        patcher = self._patcher()
+        # The URL already holds a malformed value; writing a fresh value must
+        # not choke on parsing the stale one back for comparison.
+        params = QueryDict(f"{patcher.param_name}=not-an-id", mutable=True)
+        signals = patcher.get_updates_for_params(self.item, params)
+        self.assertEqual(params[patcher.param_name], str(self.item.pk))
+        self.assertEqual(signals, [patcher.signal_name])
