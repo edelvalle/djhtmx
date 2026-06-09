@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Annotated, Any
 
+from django.core.exceptions import ValidationError
 from django.http import QueryDict
 from pydantic import BaseModel, TypeAdapter
 from pydantic.fields import FieldInfo
@@ -136,16 +137,18 @@ class QueryPatcher:
     def get_update_for_state(self, params: QueryDict):
         if (raw_param := params.get(self.param_name)) is not None:
             # We need to perform the validation during patching, otherwise
-            # ill-formed values in the query will cause a Pydantic
-            # ValidationError, but we should just simply ignore invalid
-            # values.
+            # ill-formed values in the query will raise, but we should just
+            # simply ignore invalid values.  Pydantic raises a ValueError
+            # subclass; model-resolving adapters (a PK in the URL that fails to
+            # parse or match a row) raise Django's ValidationError, which is
+            # *not* a ValueError -- catch both.
             try:
                 return {
                     self.field_name: self.adapter.validate_json(raw_param)
                     if self.use_json
                     else self.adapter.validate_python(raw_param)
                 }
-            except ValueError:
+            except (ValueError, ValidationError):
                 # Preserve the last good known state in the component
                 return {}
         else:
@@ -179,7 +182,10 @@ class QueryPatcher:
                     self.adapter.validate_python(param),
                     mode="json",
                 )
-        except ValueError:
+        except (ValueError, ValidationError):
+            # A malformed value already sitting in the URL can't be parsed back;
+            # treat it as the default so the fresh value overwrites it.  Django's
+            # ValidationError (from model-resolving adapters) is not a ValueError.
             previous_value = self.default_value
 
         if serialized_value == previous_value:
