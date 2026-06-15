@@ -52,7 +52,7 @@ dependencies = [
 
 
 [project.optional-dependencies]
-sentry = ["sentry_sdk>=2.19"]
+sentry = ["sentry_sdk>=2.62.0,<2.63"]
 logfire = ["logfire[django]>=3.8.0"]
 
 

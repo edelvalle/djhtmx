@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Command classes (`Destroy`, `Redirect`, `Open`, `Focus`, `ScrollIntoView`, `DispatchDOMEvent`, `Render`, `BuildAndRender`, `Emit`, `Execute`, `SkipRender`, `PushURL`, `ReplaceURL`, `SendHtml`, and the `Command` union) now live in `djhtmx.commands`.  Update imports to `from djhtmx.commands import …`.  The `Command` union is also narrower: `Signal` and `SendHtml` are framework internals and no longer in it.
 
+- The optional `sentry` extra now requires `sentry-sdk>=2.62` (was `>=2.19`).  Sentry removed the experimental DDM metrics API (`sentry_sdk.metrics.incr`) in 2.41 and replaced it with the Trace Metrics API, so the SSE render-pool counters now publish through `sentry_sdk.metrics.count` / `distribution`.  Calling the removed `incr` raised `AttributeError` and broke the SSE render path on any consumer that had upgraded `sentry-sdk`.
+
 ### Fixed
 
 - **Malformed query values for Model-typed `Query` fields**: `QueryPatcher` now also catches Django's `ValidationError` (not only `ValueError`) when validating a value from the query string, falling back to the field default instead of failing the request.  Resolving a Model `Query` field from its PK runs `Model.objects.filter(pk=value)`, and a value the PK field cannot parse (e.g. a non-UUID string for a `UUIDField`) raises `django.core.exceptions.ValidationError`, which is *not* a subclass of `ValueError`.  A stray `?param=garbage` in the URL therefore raised during component build and returned an HTTP 500.  Both `get_update_for_state` and `get_updates_for_params` are fixed.
