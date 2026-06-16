@@ -14,6 +14,7 @@ from typing import (
     Any,
     Generic,
     Literal,
+    TypeAliasType,
     TypedDict,
     TypeVar,
     Union,
@@ -499,11 +500,22 @@ def is_literal_annotation(ann):
 
 
 def _unwrap_annotated(ann):
-    while get_origin(ann) is Annotated:
-        args = get_args(ann)
-        if not args:
-            break
-        ann = args[0]
+    """Peel transparent wrappers down to the underlying type.
+
+    Both `Annotated[T, ...]` and PEP 695 type aliases (`type Alias = T`) are
+    wrappers that carry the real type as a payload, and they can be nested
+    (an alias of an `Annotated`, an alias of another alias, and so on).  Keep
+    unwrapping until we reach something that is neither.
+
+    """
+    unwrapped = True
+    while unwrapped:
+        if isinstance(ann, TypeAliasType):
+            ann = ann.__value__
+        elif get_origin(ann) is Annotated and (args := get_args(ann)):
+            ann = args[0]
+        else:
+            unwrapped = False
     return ann
 
 

@@ -1,6 +1,6 @@
 """Tests for `djhtmx.query.QueryPatcher`."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from django.http import QueryDict
 from django.test import TestCase
@@ -9,6 +9,9 @@ from pydantic import Field
 
 from djhtmx.component import HtmxComponent, Query
 from djhtmx.query import QueryPatcher
+
+# A PEP 695 type alias used as the type of a `Query` field.
+type Category = Literal["area", "rank", "chapter"]
 
 
 class TestQueryPatcherInheritedModelField(TestCase):
@@ -56,6 +59,32 @@ class TestQueryPatcherInheritedModelField(TestCase):
         params = QueryDict("", mutable=True)
         patcher.get_updates_for_params(self.item, params)
         self.assertEqual(params[patcher.param_name], str(self.item.pk))
+
+
+class TestQueryPatcherTypeAlias(TestCase):
+    """Regression: a `Query` field typed with a PEP 695 type alias must work.
+
+    `type Category = Literal[...]` is a `TypeAliasType` wrapper, not the bare
+    `Literal`.  The patcher's simple-type gate has to unwrap it; otherwise it
+    rejects the field with ``Invalid type annotation ... for a query string``.
+    """
+
+    def test_patcher_round_trips_literal_alias(self):
+        class _Concrete(HtmxComponent, public=False):
+            _template_name = "_Concrete.html"
+            category: Annotated[Category, Query("c"), Field(default="area")]
+
+        [patcher] = list(QueryPatcher.for_component(_Concrete))
+        self.assertEqual(patcher.field_name, "category")
+        self.assertEqual(patcher.default_value, "area")
+
+        # A non-default value is written to the URL and resurrected from it.
+        params = QueryDict("", mutable=True)
+        patcher.get_updates_for_params("rank", params)
+        self.assertEqual(params[patcher.param_name], "rank")
+
+        update = patcher.get_update_for_state(params)
+        self.assertEqual(update[patcher.field_name], "rank")
 
 
 class TestQueryPatcherInvalidValue(TestCase):

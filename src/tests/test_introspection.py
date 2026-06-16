@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from django.http import QueryDict
@@ -12,10 +13,19 @@ from djhtmx.introspection import (
     filter_parameters,
     get_related_fields,
     guess_pk_type,
+    is_collection_annotation,
+    is_simple_annotation,
     isinstance_safe,
     issubclass_safe,
     parse_request_data,
 )
+
+# PEP 695 type aliases (the `type` statement) wrap the real type in a
+# ``TypeAliasType``; ``_unwrap_annotated`` must peel them, including when nested.
+type _CategoryAlias = Literal["area", "rank", "chapter"]
+type _NestedAlias = _CategoryAlias
+type _UnionAlias = int | None
+type _CollectionAlias = list[str]
 
 
 class TestParseRequestData(TestCase):
@@ -62,6 +72,28 @@ class TestParseRequestData(TestCase):
         # Empty list becomes None, not absent
         self.assertIsNone(result["empty_list"])
         self.assertIsNone(result["none_value"])
+
+
+class TestSimpleAnnotationWithTypeAlias(TestCase):
+    """Regression: PEP 695 type aliases must be unwrapped to their value.
+
+    A ``type Alias = Literal[...]`` statement yields a ``TypeAliasType`` whose
+    real type lives in ``__value__``.  ``_unwrap_annotated`` has to peel it (and
+    nested aliases) so the simple/collection checks see the underlying type.
+    """
+
+    def test_literal_alias_is_simple(self):
+        self.assertTrue(is_simple_annotation(_CategoryAlias))
+
+    def test_nested_alias_is_simple(self):
+        self.assertTrue(is_simple_annotation(_NestedAlias))
+
+    def test_union_alias_is_simple(self):
+        self.assertTrue(is_simple_annotation(_UnionAlias))
+
+    def test_collection_alias_is_simple_and_collection(self):
+        self.assertTrue(is_simple_annotation(_CollectionAlias))
+        self.assertTrue(is_collection_annotation(_CollectionAlias))
 
 
 class TestModelConfig(TestCase):
