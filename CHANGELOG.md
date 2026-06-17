@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.13] - 2026-06-17
+
 ### Added
 
 - Experimental SSE channel with a single per-page `SSEEventRouter` and a bounded render thread pool. New settings: `DJHTMX_SSE_RENDER_WORKERS` (default `8`), `DJHTMX_SSE_RENDER_QUEUE_MAX`, `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`, `DJHTMX_SSE_RENDER_ROTATE_EVERY`.
@@ -24,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Malformed query values for Model-typed `Query` fields**: `QueryPatcher` now also catches Django's `ValidationError` (not only `ValueError`) when validating a value from the query string, falling back to the field default instead of failing the request.  Resolving a Model `Query` field from its PK runs `Model.objects.filter(pk=value)`, and a value the PK field cannot parse (e.g. a non-UUID string for a `UUIDField`) raises `django.core.exceptions.ValidationError`, which is *not* a subclass of `ValueError`.  A stray `?param=garbage` in the URL therefore raised during component build and returned an HTTP 500.  Both `get_update_for_state` and `get_updates_for_params` are fixed.
 
 - **Inherited `Query` fields of Django Model type**: `QueryPatcher.for_component` now reconstructs the full annotation from `field.annotation` + `field.metadata` instead of reading `component.__annotations__[field_name]`.  The previous lookup only inspected the class's own annotations (no MRO walk) and silently fell through to the bare annotation for inherited fields, dropping the `PlainSerializer` that `annotate_model` attaches for Model and QuerySet types.  Components that inherited a field like `Annotated[MyModel | None, Query(...), Field(default=None)]` from an abstract base would raise `PydanticSerializationError: Unable to serialize unknown type` the moment the URL had to be updated.
+
+- Python 3.14 `DeprecationWarning` by using `asgiref.sync.iscoroutinefunction` for async middleware detection.  `asyncio.iscoroutinefunction` is deprecated in 3.14 (removal in 3.16); asgiref's variant is what Django itself uses to detect async middleware/views, so it also honours callables marked with `markcoroutinefunction`.
 
 ## [1.3.12] - 2026-04-24
 

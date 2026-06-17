@@ -1,7 +1,6 @@
-import asyncio
 from collections.abc import Awaitable, Callable
 
-from asgiref.sync import sync_to_async
+from asgiref.sync import iscoroutinefunction, sync_to_async
 from django.http import HttpRequest, HttpResponse
 
 
@@ -15,7 +14,7 @@ def middleware(
     both sync and async get_response automatically.
     """
 
-    if asyncio.iscoroutinefunction(get_response):
+    if iscoroutinefunction(get_response):
         # Async version
         async def middleware(request: HttpRequest) -> HttpResponse:  # type: ignore
             response = await get_response(request)

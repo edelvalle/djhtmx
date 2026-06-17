@@ -1,6 +1,6 @@
-import asyncio
 from unittest.mock import Mock
 
+from asgiref.sync import iscoroutinefunction
 from django.http import HttpRequest, HttpResponse
 from django.test import TestCase
 
@@ -17,7 +17,7 @@ class TestMiddleware(TestCase):
         middleware_func = middleware(sync_get_response)
 
         self.assertIsNotNone(middleware_func)
-        self.assertFalse(asyncio.iscoroutinefunction(middleware_func))
+        self.assertFalse(iscoroutinefunction(middleware_func))
 
     def test_async_middleware_creation(self):
         """Test middleware creation with async get_response."""
@@ -28,7 +28,7 @@ class TestMiddleware(TestCase):
         middleware_func = middleware(async_get_response)
 
         self.assertIsNotNone(middleware_func)
-        self.assertTrue(asyncio.iscoroutinefunction(middleware_func))
+        self.assertTrue(iscoroutinefunction(middleware_func))
 
     def test_sync_middleware_without_repo(self):
         """Test sync middleware when request has no htmx_repo."""
@@ -198,5 +198,5 @@ class TestMiddleware(TestCase):
         sync_middleware = middleware(sync_func)
         async_middleware = middleware(async_func)  # type: ignore[misc]
 
-        self.assertFalse(asyncio.iscoroutinefunction(sync_middleware))
-        self.assertTrue(asyncio.iscoroutinefunction(async_middleware))
+        self.assertFalse(iscoroutinefunction(sync_middleware))
+        self.assertTrue(iscoroutinefunction(async_middleware))
