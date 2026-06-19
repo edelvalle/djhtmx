@@ -116,6 +116,7 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/djhtmx"]
+force-include = { "src/djhtmx/py.typed" = "djhtmx/py.typed" }
 
 [tool.ruff]
 line-length = 100
