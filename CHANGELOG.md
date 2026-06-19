@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Inline type information (PEP 561)**: djhtmx now ships a `py.typed` marker, so type checkers consume the package's own annotations instead of inferring types from source.  This also makes them honor the package's re-export rules: names merely re-imported into a module (e.g. `Iterable` in `djhtmx.sse`) and not listed in `__all__` are no longer offered as importable symbols, so editor auto-import stops suggesting `from djhtmx.sse import Iterable` and similar indirect imports.  Import public names from their documented modules.
+
 ## [1.3.13] - 2026-06-17
 
 ### Added
@@ -14,8 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Experimental SSE channel with a single per-page `SSEEventRouter` and a bounded render thread pool. New settings: `DJHTMX_SSE_RENDER_WORKERS` (default `8`), `DJHTMX_SSE_RENDER_QUEUE_MAX`, `DJHTMX_SSE_RENDER_HEALTHCHECK_EVERY`, `DJHTMX_SSE_RENDER_ROTATE_EVERY`.
 
 - SSE render-pool metrics published through Sentry and Logfire under the `djhtmx.sse.render.*` namespace: `queue_depth` (distribution), `queue_wait_ms` (distribution), `duration_ms` (distribution), `drops` (counter), `rotations` (counter), `healthcheck_closes` (counter), and `broken_connection_closes` (counter).  New helpers `metric_incr`,  `metric_distribution` in `djhtmx.tracing` mirror the existing `tracing_span` dual-backend pattern.
-
-- **Inline type information (PEP 561)**: djhtmx now ships a `py.typed` marker, so type checkers consume the package's own annotations instead of inferring types from source.  This also makes them honor the package's re-export rules: names merely re-imported into a module (e.g. `Iterable` in `djhtmx.sse`) and not listed in `__all__` are no longer offered as importable symbols, so editor auto-import stops suggesting `from djhtmx.sse import Iterable` and similar indirect imports.  Import public names from their documented modules.
 
 ### Changed
 
