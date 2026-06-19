@@ -37,6 +37,24 @@ The function is synchronous and fire-and-forget.  It does not wait for any brows
 
 `SSEHeartbeat` cannot be emitted through `emit_sse_event`; the SSE loop is the only source of those events.  Passing one raises `TypeError`.
 
+#### `aemit_sse_event` (async contexts)
+
+`aemit_sse_event` is the `redis.asyncio` counterpart with the same signature and semantics.  Use it from any code already running on the event loop — most importantly **`async def` event handlers** — so the publish does not block the loop on the synchronous Redis client:
+
+```python
+from djhtmx.sse import aemit_sse_event
+
+class Report(HtmxComponent):
+    async def refresh(self):
+        ...
+        await aemit_sse_event(ReportPDFEvent(...), topics={f"pdf-task:{task_id}"})
+```
+
+Pick by execution context, not preference:
+
+- **Synchronous** code — sync event handlers (which the dispatcher runs on the sync-work pool), Django signal receivers, `run_on_commit` callbacks, management commands — uses `emit_sse_event`.
+- **Asynchronous** code — `async def` handlers and any coroutine on the loop — uses `await aemit_sse_event(...)`.
+
 Use `djhtmx.utils.run_on_commit` when the event describes database state that must be committed before consumers render:
 
 ```python
