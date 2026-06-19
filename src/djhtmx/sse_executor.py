@@ -112,8 +112,14 @@ async def submit_sse_render[**P, R](
     return await loop.run_in_executor(executor, _run_with_lifecycle, ctx, bound, submitted_at)
 
 
+# Canonical name: this pool hosts ALL synchronous, ORM-touching work (sync
+# event handlers auto-wrapped on the async HTTP path, component rendering, and
+# SSE renders), not just SSE.  `submit_sse_render` remains as an alias.
+submit_sync_work = submit_sse_render
+
+
 class SSERenderQueueFull(RuntimeError):
-    """Raised when the SSE render executor's pending queue is at cap."""
+    """Raised when the sync-work executor's pending queue is at cap."""
 
 
 def _approx_pending(executor: ThreadPoolExecutor) -> int:
@@ -168,7 +174,7 @@ def _health_check_connections() -> None:
         if conn.connection is None:
             continue
         try:
-            usable = conn.is_usable()  # type: ignore
+            usable = conn.is_usable()  # type: ignore[func-returns-value]
         except Exception:
             logger.warning("djhtmx SSE render: health check failed; closing", exc_info=True)
             metric_incr("djhtmx.sse.render.healthcheck_closes", 1)
@@ -205,4 +211,5 @@ __all__ = [
     "get_sse_render_executor",
     "reset_for_tests",
     "submit_sse_render",
+    "submit_sync_work",
 ]

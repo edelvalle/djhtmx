@@ -98,7 +98,7 @@ class CommandQueue:
 
     def _optimize(self):
         self._commands.sort(key=self._priority)
-        new_commands = []
+        new_commands: list[QueuedCommand] = []
         for i, command in enumerate(self._commands):
             match command:
                 case (

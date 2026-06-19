@@ -9,8 +9,8 @@ from django.contrib.auth.models import AnonymousUser
 from django.test import Client
 from lxml import html
 from pygments import highlight
-from pygments.formatters import TerminalTrueColorFormatter
-from pygments.lexers import HtmlLexer
+from pygments.formatters import TerminalTrueColorFormatter  # type: ignore[attr-defined]
+from pygments.lexers import HtmlLexer  # type: ignore[attr-defined]
 
 from . import json
 from .commands import (

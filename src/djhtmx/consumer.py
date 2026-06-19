@@ -19,6 +19,7 @@ from .commands import (
 )
 from .introspection import parse_request_data
 from .repo import Repository
+from .sse_executor import submit_sync_work
 from .utils import get_params
 
 __all__ = ("ComponentsAdded", "ComponentsRemoved", "Consumer")
@@ -52,9 +53,12 @@ class Consumer(AsyncJsonWebsocketConsumer):
             params = get_params(url)
             self.repo.params.clear()
             self.repo.params.update(params)  # type: ignore
-            async for command in self.repo.adispatch_event(
-                component_id, event_handler, parse_request_data(event_data)
-            ):
+            # Dispatch synchronously on the bounded sync-work pool (one DB
+            # connection per dispatch), then stream the resulting commands.
+            commands = await submit_sync_work(
+                self._dispatch, component_id, event_handler, parse_request_data(event_data)
+            )
+            for command in commands:
                 match command:
                     case SendHtml(html):
                         await self.send(html)
@@ -71,6 +75,9 @@ class Consumer(AsyncJsonWebsocketConsumer):
                         await self.send_json(command)
                     case unreachable:
                         assert_never(unreachable)
+
+    def _dispatch(self, component_id: str, event_handler: str, event_data: dict[str, Any]) -> list:
+        return list(self.repo.dispatch_event(component_id, event_handler, event_data))
 
     async def send_commands(self, commands: list[Command]):
         for command in commands:
