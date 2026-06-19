@@ -31,7 +31,51 @@ def process_report(data: bytes) -> str:
 
 The exception to this rule is when the function is actually used during module initialization in later declarations.  For example, as the input of some field definition in a model.
 
+**Locality:** when a function is only used by (called from) a single class and is not reused anywhere else, define it *inside* that class — as a method, or a `@staticmethod` if it needs no instance state — rather than as a module-level private function. Keeping it next to its only caller improves locality and makes the class self-contained.
+
+```python
+# Good - the only caller is CommandProcessor, so the helper lives in it
+class CommandProcessor:
+    async def _arun_command(self, ...):
+        ...
+        emitted = await self._acollect(handler, **kwargs)
+        ...
+
+    @staticmethod
+    async def _acollect(handler, /, *args, **kwargs) -> list:
+        ...
+
+# Bad - a module-level private helper used by exactly one class
+async def _acollect(handler, /, *args, **kwargs) -> list:
+    ...
+
+class CommandProcessor:
+    ...
+```
+
 ### Python Style
+
+**Branching:**
+
+When a function dispatches on several mutually-exclusive conditions and returns from each, prefer a single `if / elif / … / else` chain over a sequence of standalone `if …: return` statements. The chain reads as one decision and makes the branches' mutual exclusivity explicit. (Ruff's `RET` rules are intentionally not enabled, so `elif`/`else` after a `return` is fine.)
+
+```python
+# Good - one decision, branches are obviously mutually exclusive
+if isasyncgenfunction(handler):
+    return async_to_sync(_drain_async_handler)(handler, args, kwargs)
+elif iscoroutinefunction(handler):
+    return async_to_sync(_await_handler)(handler, args, kwargs)
+else:
+    return _drain_sync_handler(handler, args, kwargs)
+
+# Bad - reads as three independent checks
+if isasyncgenfunction(handler):
+    return async_to_sync(_drain_async_handler)(handler, args, kwargs)
+if iscoroutinefunction(handler):
+    return async_to_sync(_await_handler)(handler, args, kwargs)
+return _drain_sync_handler(handler, args, kwargs)
+```
+
 
 **Pattern Matching:**
 
