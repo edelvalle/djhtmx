@@ -44,9 +44,10 @@ class TestQueryPatcherInheritedModelField(TestCase):
         patcher.get_updates_for_params(self.item, params)
         self.assertEqual(params[patcher.param_name], str(self.item.pk))
 
-        # Round-trip the other way: a PK in the URL must resurrect the instance.
+        # Round-trip the other way: a PK in the URL is parsed to the pk; the
+        # instance itself is resolved later during build (the validator is pure).
         update = patcher.get_update_for_state(params)
-        self.assertEqual(update[patcher.field_name], self.item)
+        self.assertEqual(update[patcher.field_name], self.item.pk)
 
     def test_patcher_serializes_model_pk_for_own_field(self):
         # Sanity check: the same scenario works when the field is declared
