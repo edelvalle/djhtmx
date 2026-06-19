@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
+from asgiref.sync import async_to_sync
 from django.test import RequestFactory, TestCase
 from django.utils.safestring import mark_safe
 from fision.todo.htmx import TodoItem  # type: ignore[import-untyped]
@@ -18,6 +19,11 @@ from djhtmx.commands import (
 from djhtmx.urls import APP_CONFIGS, app_name_of_component, endpoint
 
 
+def call_endpoint(*args, **kwargs):
+    """Drive the async `endpoint` view from a synchronous test."""
+    return async_to_sync(endpoint)(*args, **kwargs)
+
+
 class TestEndpoint(TestCase):
     def setUp(self):
         self.factory = RequestFactory()
@@ -26,7 +32,7 @@ class TestEndpoint(TestCase):
         """Test endpoint returns 400 when HX-Session header is missing."""
         request = self.factory.post("/test")
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
         self.assertEqual(response.content.decode(), "Missing header HX-Session")
@@ -47,7 +53,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         mock_repo.dispatch_event.assert_called_once_with(
@@ -72,7 +78,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        endpoint(request, "TestComponent", "test-id", "test_handler")
+        call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         expected_data = {"parsed": "data", "prompt": "user prompt text"}
         mock_repo.dispatch_event.assert_called_once_with("test-id", "test_handler", expected_data)
@@ -118,7 +124,7 @@ class TestEndpoint(TestCase):
         mock_sentry_tags.return_value.__enter__ = Mock()
         mock_sentry_tags.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         mock_sentry_tags.assert_called_once_with(**expected_tags)
@@ -141,7 +147,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('hx-swap-oob="delete"', response.content.decode())
@@ -164,7 +170,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Redirect"], "/redirect-url")
@@ -186,7 +192,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         # Focus command should set HX-Trigger-After-Settle header
@@ -209,7 +215,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         # Open command should set HX-Trigger-After-Settle header
@@ -234,7 +240,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         # DispatchDOMEvent command should set HX-Trigger-After-Settle header
@@ -257,7 +263,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("<div>Custom HTML</div>", response.content.decode())
@@ -279,7 +285,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Push-Url"], "/new-url")
@@ -301,7 +307,7 @@ class TestEndpoint(TestCase):
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Replace-Url"], "/replace-url")
@@ -322,12 +328,12 @@ class TestEndpoint(TestCase):
             SendHtml(mark_safe("<div>Second</div>")),
             Redirect("/redirect"),
         ]
-        mock_repo.dispatch_event.return_value = commands
+        mock_repo.dispatch_event.return_value = list(commands)
         mock_repo_class.from_request.return_value = mock_repo
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
@@ -349,12 +355,12 @@ class TestEndpoint(TestCase):
             ReplaceURL("/some-other-url/"),
             Redirect("/new-page/"),
         ]
-        mock_repo.dispatch_event.return_value = commands
+        mock_repo.dispatch_event.return_value = list(commands)
         mock_repo_class.from_request.return_value = mock_repo
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response["HX-Redirect"], "/new-page/")
         self.assertFalse(response.has_header("HX-Replace-Url"))
@@ -373,12 +379,12 @@ class TestEndpoint(TestCase):
             PushURL("/pushed-url/"),
             Redirect("/new-page/"),
         ]
-        mock_repo.dispatch_event.return_value = commands
+        mock_repo.dispatch_event.return_value = list(commands)
         mock_repo_class.from_request.return_value = mock_repo
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response["HX-Redirect"], "/new-page/")
         self.assertFalse(response.has_header("HX-Push-Url"))
