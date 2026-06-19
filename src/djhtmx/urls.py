@@ -1,14 +1,13 @@
 import asyncio
 import logging
 import time
-from functools import partial
 from http import HTTPStatus
 from typing import cast
 
 from django.apps import apps
 from django.core.handlers.asgi import ASGIRequest
 from django.core.signing import BadSignature, Signer
-from django.db import transaction
+from django.db import connections
 from django.http.request import HttpRequest, QueryDict
 from django.http.response import HttpResponse, StreamingHttpResponse
 from django.urls import path, re_path
@@ -19,41 +18,77 @@ from .component import REGISTRY
 from .consumer import Consumer
 from .introspection import parse_request_data
 from .repo import Repository
+from .sse_executor import submit_sync_work
 from .tracing import htmx_headers_as_tags, sentry_tags, tracing_span
 
 logger = logging.getLogger(__name__)
 signer = Signer()
 
 
-def endpoint(request: HttpRequest, component_name: str, component_id: str, event_handler: str):
+def _non_atomic_for_all_dbs[V](view: V) -> V:
+    """Opt an async view out of `ATOMIC_REQUESTS` for *every* configured database.
+
+    Django's `make_view_atomic` raises `RuntimeError("You cannot use
+    ATOMIC_REQUESTS with async views.")` for an async view as soon as any
+    database has `ATOMIC_REQUESTS` set and the view isn't opted out for that
+    alias.  `@transaction.non_atomic_requests` (no args) opts out only the
+    default alias, so a non-default `ATOMIC_REQUESTS` DB would still trip it.
+    djhtmx applies atomicity per synchronous handler in `_drain_sync_handler`
+    (for every atomic alias), so the async views declare themselves non-atomic
+    for all databases and leave transaction handling to the dispatcher.
+    """
+    view._non_atomic_requests = set(connections)  # type: ignore[attr-defined]
+    return view
+
+
+async def endpoint(
+    request: HttpRequest, component_name: str, component_id: str, event_handler: str
+):
     if "HTTP_HX_SESSION" not in request.META:
         return HttpResponse("Missing header HX-Session", status=HTTPStatus.BAD_REQUEST)
 
     tags = htmx_headers_as_tags(request.META)
 
     with sentry_tags(**tags), tracing_span(f"{component_name}.{event_handler}", **tags):
-        repo = Repository.from_request(request)
-        batch = CommandBatch.from_processed(
-            repo.dispatch_event(
-                component_id,
-                event_handler,
-                parse_request_data(request.POST | request.FILES)  # type: ignore
-                | (
-                    {"prompt": prompt}
-                    if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
-                    else {}
-                ),
-            )
-        )
-        return to_http_response(batch)
+        # Run the whole dispatch as one job on the bounded sync-work pool: it
+        # executes on a pool thread that owns a single DB connection, so the
+        # process-wide Postgres connection count stays bounded by
+        # `DJHTMX_SYNC_WORKERS` rather than scaling with request concurrency.
+        return await submit_sync_work(_dispatch_request, request, component_id, event_handler)
 
 
-@transaction.non_atomic_requests
-def sse_endpoint(request: HttpRequest):
+def _dispatch_request(request: HttpRequest, component_id: str, event_handler: str) -> HttpResponse:
+    """Synchronous HTTP dispatch; runs on a sync-work pool thread.
+
+    `from_request` keeps `request.user` lazy; the pipeline resolves it — and all
+    Model fields — here on the pool thread that owns the connection, and the
+    template render runs here too.  Nothing in the request path touches the ORM
+    on the event loop.
+    """
+    repo = Repository.from_request(request)
+    event_data = parse_request_data(request.POST | request.FILES) | (  # type: ignore[operator]
+        {"prompt": prompt}
+        if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
+        else {}
+    )
+    batch = CommandBatch.from_processed(
+        repo.dispatch_event(component_id, event_handler, event_data)
+    )
+    return to_http_response(batch)
+
+
+def _resolve_user(request: HttpRequest):
+    """Resolve the request user synchronously (on a sync-work pool thread)."""
+    from django.contrib.auth import get_user
+
+    return get_user(request)
+
+
+@_non_atomic_for_all_dbs
+async def sse_endpoint(request: HttpRequest):
     if not isinstance(request, ASGIRequest):
         return HttpResponse("SSE requires ASGI", status=HTTPStatus.NOT_IMPLEMENTED)
 
-    user = getattr(request, "user", None)
     query = cast(QueryDict, request.GET)
     session = query.get("session")
     if not session:
@@ -63,6 +98,13 @@ def sse_endpoint(request: HttpRequest):
         session_id = signer.unsign(session)
     except BadSignature:
         return HttpResponse("Invalid SSE session", status=HTTPStatus.BAD_REQUEST)
+
+    # Resolve the user on the sync-work pool, not on the event loop: a plain
+    # `await request.auser()` would acquire a per-async-task DB connection that
+    # Django holds for the whole stream lifetime (idle SSE streams would each
+    # pin a connection).  Resolving on a pool thread borrows a pooled connection
+    # only for the lookup and releases it immediately.
+    user = await submit_sync_work(_resolve_user, request)
 
     async def stream():
         from . import settings
@@ -191,12 +233,36 @@ def app_name_of_component(cls: type):
     return cls_module
 
 
+def _make_endpoint_view(component_name: str):
+    """Build the per-component HTTP event view, opted out of ATOMIC_REQUESTS.
+
+    Django's `make_view_atomic` raises `RuntimeError("You cannot use
+    ATOMIC_REQUESTS with async views.")` for any async view while a database has
+    `ATOMIC_REQUESTS` set, so it would reject this endpoint before it ever runs.
+    djhtmx instead applies atomicity per synchronous handler in
+    `_drain_sync_handler`; the endpoint therefore declares itself non-atomic so
+    Django leaves the transaction handling to the dispatcher.
+    """
+
+    @csrf_exempt
+    @_non_atomic_for_all_dbs
+    async def view(request: HttpRequest, component_id: str, event_handler: str):
+        return await endpoint(
+            request,
+            component_name=component_name,
+            component_id=component_id,
+            event_handler=event_handler,
+        )
+
+    return view
+
+
 urlpatterns = [
     path("_sse/connect", sse_endpoint, name="djhtmx.sse"),
     *[
         path(
             f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
-            csrf_exempt(partial(endpoint, component_name=component_name)),
+            _make_endpoint_view(component_name),
             name=f"djhtmx.{component_name}",
         )
         for component_name, component in REGISTRY.items()

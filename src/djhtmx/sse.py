@@ -27,7 +27,6 @@ from xotl.tools.objects import import_object
 from . import json, settings
 from .component import HtmxComponent
 from .introspection import _extract_event_types, _resolve_typevars, _substitute_typevars
-from .sse_executor import submit_sse_render
 from .tracing import tracing_span
 from .utils import compact_hash, get_fqn
 
@@ -232,52 +231,6 @@ def register_component(session_id: str, component: HtmxComponent, ttl: int = set
             )
 
 
-def unregister_consumer(session_id: str, component_id: str) -> None:
-    """Remove the SSE consumer record, its topic/type index memberships, and its
-    session-membership entry for a component that no longer exists.
-
-    Inverse of `register_component`.  Callers are responsible for invoking this
-    on component destruction; otherwise the consumer entry lingers until TTL
-    expiry and `emit_sse_event` keeps enqueuing events for it.
-
-    Uses the same `WATCH indexes_key` + `MULTI/EXEC` protocol as
-    `register_component` so concurrent register/unregister calls for the *same*
-    consumer arbitrate via `WatchError` instead of interleaving and leaving
-    orphan id_ entries in the shared event/topic index sets.
-    """
-    with tracing_span(
-        "djhtmx.sse.unregister_consumer",
-        session=compact_hash(session_id),
-        component=compact_hash(component_id),
-    ):
-        id_ = consumer_id(session_id, component_id)
-        indexes_key = consumer_indexes_key(id_)
-        sync_redis_connection = get_sync_conn()
-        done = False
-        attempt = 0
-        with sync_redis_connection.pipeline(transaction=True) as pipe:
-            while not done and attempt < settings.SSE_REGISTER_MAX_ATTEMPTS:
-                attempt += 1
-                try:
-                    pipe.watch(indexes_key)
-                    shared_indexes = {_decode(member) for member in pipe.smembers(indexes_key)}  # type: ignore
-                    pipe.multi()
-                    for key in shared_indexes:
-                        pipe.srem(key, id_)
-                    pipe.delete(consumer_key(id_))
-                    pipe.delete(indexes_key)
-                    pipe.srem(session_consumers_key(session_id), id_)
-                    pipe.execute()
-                    done = True
-                except WatchError:
-                    pipe.reset()
-        if not done:
-            raise RuntimeError(
-                f"unregister_consumer: contention on {indexes_key} exceeded "
-                f"{settings.SSE_REGISTER_MAX_ATTEMPTS} WATCH attempts"
-            )
-
-
 class EventEnvelope[P: BaseModel](BaseModel):
     consumer_id: str
     event_type: str
@@ -372,6 +325,103 @@ def emit_sse_event(
         sync_redis_connection.publish(wake_channel(session_id), "1")
 
 
+def unregister_consumer(session_id: str, component_id: str) -> None:
+    """Remove the SSE consumer record, its topic/type index memberships, and its
+    session-membership entry for a component that no longer exists.
+
+    Inverse of `register_component`.  Callers are responsible for invoking this
+    on component destruction; otherwise the consumer entry lingers until TTL
+    expiry and `emit_sse_event` keeps enqueuing events for it.
+
+    Runs on the sync-work pool thread (the dispatch's `Destroy` handling), over
+    the synchronous Redis client.  Uses the same `WATCH indexes_key` +
+    `MULTI/EXEC` protocol as `register_component` so concurrent
+    register/unregister calls for the *same* consumer arbitrate via `WatchError`
+    instead of interleaving and leaving orphan id_ entries in the shared
+    event/topic index sets.
+    """
+    with tracing_span(
+        "djhtmx.sse.unregister_consumer",
+        session=compact_hash(session_id),
+        component=compact_hash(component_id),
+    ):
+        id_ = consumer_id(session_id, component_id)
+        indexes_key = consumer_indexes_key(id_)
+        conn = get_sync_conn()
+        done = False
+        attempt = 0
+        with conn.pipeline(transaction=True) as pipe:
+            while not done and attempt < settings.SSE_REGISTER_MAX_ATTEMPTS:
+                attempt += 1
+                try:
+                    pipe.watch(indexes_key)
+                    shared_indexes = {_decode(member) for member in pipe.smembers(indexes_key)}  # type: ignore
+                    pipe.multi()
+                    for key in shared_indexes:
+                        pipe.srem(key, id_)
+                    pipe.delete(consumer_key(id_))
+                    pipe.delete(indexes_key)
+                    pipe.srem(session_consumers_key(session_id), id_)
+                    pipe.execute()
+                    done = True
+                except WatchError:
+                    pipe.reset()
+        if not done:
+            raise RuntimeError(
+                f"unregister_consumer: contention on {indexes_key} exceeded "
+                f"{settings.SSE_REGISTER_MAX_ATTEMPTS} WATCH attempts"
+            )
+
+
+async def aemit_sse_event(
+    event: BaseModel,
+    *,
+    topics: Iterable[str],
+    source_session_id: str | None = None,
+):
+    """Async `redis.asyncio` port of `emit_sse_event`.
+
+    Lets async event handlers publish SSE events without blocking the loop on
+    the synchronous Redis client.  Sync handlers (which run on the sync-work
+    pool) keep using `emit_sse_event`.
+    """
+    if isinstance(event, SSEHeartbeat):
+        raise TypeError("SSEHeartbeat is generated by the SSE loop and cannot be emitted")
+    if type(event) not in SSE_LISTENERS:
+        return
+
+    source_session_id = source_session_id or current_source_session_id()
+    conn = get_async_conn()
+
+    event_type = event_type_name(type(event))
+    consumer_topics: set[tuple[str, str]] = set()
+    for topic in topics:
+        key = index_key(event_type, topic)
+        consumer_topics.update(
+            (consumer, topic) for consumer in await async_smembers_text(conn, key)
+        )
+
+    sessions: set[str] = set()
+    for id_, topic in consumer_topics:
+        raw_metadata = await async_get(conn, consumer_key(id_))
+        if raw_metadata:
+            metadata = json.loads(raw_metadata)
+            session_id = metadata["session_id"]
+            envelope = EventEnvelope(
+                consumer_id=id_,
+                event_type=event_type,
+                topic=topic,
+                payload=event,
+                source_session_id=source_session_id,
+            )
+            await conn.rpush(session_events_key(session_id), envelope.envelope_dump_json())  # type: ignore
+            await conn.expire(session_events_key(session_id), settings.SESSION_TTL)  # type: ignore
+            sessions.add(session_id)
+
+    for session_id in sessions:
+        await conn.publish(wake_channel(session_id), "1")  # type: ignore
+
+
 _async_conns: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, async_redis.Redis] = (
     weakref.WeakKeyDictionary()
 )
@@ -403,16 +453,16 @@ async def refresh_sse_session_liveness(conn: async_redis.Redis, session_id: str)
 
     ttl = settings.SESSION_TTL
     session_consumers = session_consumers_key(session_id)
-    await async_expire(conn, f"{session_id}:states", ttl)
-    await async_expire(conn, session_consumers, ttl)
-    await async_expire(conn, session_events_key(session_id), ttl)
+    await expire(conn, f"{session_id}:states", ttl)
+    await expire(conn, session_consumers, ttl)
+    await expire(conn, session_events_key(session_id), ttl)
 
     for consumer in await async_smembers_text(conn, session_consumers):
         consumer_indexes = consumer_indexes_key(consumer)
-        await async_expire(conn, consumer_key(consumer), ttl)
-        await async_expire(conn, consumer_indexes, ttl)
+        await expire(conn, consumer_key(consumer), ttl)
+        await expire(conn, consumer_indexes, ttl)
         for index in await async_smembers_text(conn, consumer_indexes):
-            await async_expire(conn, index, ttl)
+            await expire(conn, index, ttl)
 
 
 async def load_consumer_metadata(
@@ -474,7 +524,7 @@ async def render_sse_event_fragments(
     if not handle_commands:
         return []
 
-    return await submit_sse_render(_drain_sse_session, session_id, user, handle_commands)
+    return await _drain_sse_session(session_id, user, handle_commands)
 
 
 async def get_sse_heartbeat_paces(conn: async_redis.Redis, session_id: str) -> set[int]:
@@ -523,15 +573,32 @@ async def render_sse_heartbeat_fragments(
     if not handle_commands:
         return []
 
-    return await submit_sse_render(_drain_sse_session, session_id, user, handle_commands)
+    return await _drain_sse_session(session_id, user, handle_commands)
 
 
-def _drain_sse_session(session_id: str, user, handle_commands: list) -> list[str]:
-    """Sync render path executed on the SSE render worker thread.
+async def _drain_sse_session(session_id: str, user, handle_commands: list) -> list[str]:
+    """Render an SSE drain on the bounded sync-work pool.
 
-    Builds one `Repository` for the session, runs all the consumers'
-    `HandleSSEEvents` commands through a single `CommandProcessor`, and
-    returns the resulting `ProcessedCommand` stream serialized as a list of
+    The envelope gather (in the callers above) runs on the event loop over async
+    Redis; the actual dispatch — building components, running their
+    `HandleSSEEvents` handlers, and rendering — is submitted to the sync-work
+    pool as a single synchronous job, so it executes on a pool thread that owns
+    one DB connection.  An idle SSE stream therefore holds no Postgres
+    connection: it borrows one only for the duration of a drain, and the
+    process-wide connection count stays bounded by `DJHTMX_SYNC_WORKERS`
+    regardless of how many streams are open.
+    """
+    from .sse_executor import submit_sync_work
+
+    return await submit_sync_work(_drain_sse_session_sync, session_id, user, handle_commands)
+
+
+def _drain_sse_session_sync(session_id: str, user, handle_commands: list) -> list[str]:
+    """Synchronous SSE drain; runs on a sync-work pool thread.
+
+    Builds one `Repository` for the session and runs all the consumers'
+    `HandleSSEEvents` commands through a single `CommandProcessor.process`,
+    returning the resulting `ProcessedCommand` stream serialized as a list of
     SSE OOB HTML fragments.
     """
     from django.contrib.auth.models import AnonymousUser
@@ -544,8 +611,7 @@ def _drain_sse_session(session_id: str, user, handle_commands: list) -> list[str
     repo = Repository(
         user=user or AnonymousUser(), session=Session(session_id), params=get_params(None)
     )
-    processor = CommandProcessor(repo)
-    batch = CommandBatch.from_processed(processor.process(handle_commands))
+    batch = CommandBatch.from_processed(CommandProcessor(repo).process(handle_commands))
     return to_sse_fragments(batch, session_id)
 
 
@@ -589,7 +655,7 @@ async def async_smembers_text(conn: async_redis.Redis, key: str) -> set[str]:
     return {_decode(member) for member in await conn.smembers(key)}  # type: ignore
 
 
-async def async_expire(conn: async_redis.Redis, key: str, ttl: int):
+async def expire(conn: async_redis.Redis, key: str, ttl: int):
     await conn.expire(key, ttl)  # type: ignore
 
 
