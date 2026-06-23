@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Model-typed `Query` fields carry the pk in the URL via a pk adapter, with the instance resolved during build by the field validator like any other Model field.
 
+- The minimum `orjson` is now `>=3.11.0` (was `>=3.10.7`).  3.11 is the current release line: it ships prebuilt cp314 wheels and newer serialization fixes, whereas the old floor only provided wheels through cp313 and forced a source build on Python 3.14.
+
 ### Fixed
 
 - **`ModelConfig`'s `select_related`/`prefetch_related` were ignored on lazy fields**: the config never reached the proxy that makes the query, so the optimization was accepted, stored on the annotation and then silently dropped -- a lazy field with `select_related` paid a second query for the related object, exactly what the argument was there to avoid.  Lazy fields now build their query with the configured related fields, so the JOIN happens in the same query that loads the row and a prefetch is populated before the collection is read.
