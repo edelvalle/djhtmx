@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Model-typed `Query` fields carry the pk in the URL via a pk adapter, with the instance resolved during build by the field validator like any other Model field.
 
+- The minimum `orjson` is now `>=3.11.0` (was `>=3.10.7`).  3.11 is the current release line: it ships prebuilt cp314 wheels and newer serialization fixes, whereas the old floor only provided wheels through cp313 and forced a source build on Python 3.14.
+
 ### Fixed
 
 - **Postgres connections no longer scale with concurrency.**  Earlier async iterations of this work resolved the user and Model fields with Django async ORM on the event loop; because `django.db.connections` is per-async-task, each in-flight request/stream acquired its own connection (held for the whole stream lifetime for SSE), exhausting `max_connections` under load.  Routing the entire dispatch through the bounded sync-work pool confines every ORM touch to a pooled, thread-affine connection.
