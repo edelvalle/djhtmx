@@ -6,9 +6,9 @@ from djhtmx import settings
 # pragma: no cover
 
 try:
-    import sentry_sdk  # pyright: ignore[reportMissingImports]
+    import sentry_sdk
 except ImportError:
-    sentry_sdk = None
+    sentry_sdk = None  # type: ignore
 
 
 @contextlib.contextmanager
@@ -27,7 +27,7 @@ if settings.ENABLE_SENTRY_TRACING and sentry_sdk is not None:
     sentry_start_span = sentry_sdk.start_span
 
     @contextlib.contextmanager
-    def _sentry_span(name: str, **tags: str):  # pyright: ignore[reportRedeclaration]
+    def _sentry_span(name: str, **tags: str):
         with sentry_start_span(op="djhtmx", name=name) as span:
             for tag, value in tags.items():
                 span.set_tag(tag, value)
@@ -41,15 +41,15 @@ else:
 
 
 try:
-    import logfire  # pyright: ignore[reportMissingImports]
+    import logfire
 except ImportError:
-    logfire = None
+    logfire = None  # type: ignore
 
 
 if settings.ENABLE_LOGFIRE_TRACING and logfire is not None:
     logfire_span = logfire.span
 
-    def _logfire_span(name: str, **tags):  # pyright: ignore[reportRedeclaration]
+    def _logfire_span(name: str, **tags):
         return logfire_span(name, op="djhtmx", **tags)
 
 else:

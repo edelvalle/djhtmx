@@ -264,10 +264,12 @@ dev = [
     { name = "granian", extra = ["reload"] },
     { name = "ipdb" },
     { name = "ipython" },
+    { name = "logfire", extra = ["django"] },
     { name = "lxml", version = "5.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
     { name = "lxml", version = "6.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "pygments" },
     { name = "ruff" },
+    { name = "sentry-sdk" },
     { name = "types-lxml" },
     { name = "whitenoise" },
     { name = "zuban" },
@@ -292,6 +294,8 @@ test = [
 ]
 typing = [
     { name = "django-types" },
+    { name = "logfire", extra = ["django"] },
+    { name = "sentry-sdk" },
     { name = "types-lxml" },
     { name = "zuban" },
 ]
@@ -329,10 +333,12 @@ dev = [
     { name = "granian", extras = ["reload"], specifier = ">=2.7.4" },
     { name = "ipdb", specifier = "~=0.13.13" },
     { name = "ipython", specifier = "~=8.26.0" },
+    { name = "logfire", extras = ["django"], specifier = ">=3.8.0" },
     { name = "lxml", marker = "python_full_version < '3.14'", specifier = ">=5.3.0" },
     { name = "lxml", marker = "python_full_version >= '3.14'", specifier = ">=6.0" },
     { name = "pygments", specifier = ">=2.18.0" },
     { name = "ruff", specifier = "==0.11.*" },
+    { name = "sentry-sdk", specifier = ">=2.62.0,<2.63" },
     { name = "types-lxml", specifier = ">=2024.11.8" },
     { name = "whitenoise", specifier = "~=6.7.0" },
     { name = "zuban", specifier = "==0.8.2" },
@@ -357,6 +363,8 @@ test = [
 ]
 typing = [
     { name = "django-types", specifier = "==0.24.0" },
+    { name = "logfire", extras = ["django"], specifier = ">=3.8.0" },
+    { name = "sentry-sdk", specifier = ">=2.62.0,<2.63" },
     { name = "types-lxml", specifier = ">=2024.11.8" },
     { name = "zuban", specifier = "==0.8.2" },
 ]

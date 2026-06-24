@@ -168,7 +168,7 @@ def _health_check_connections() -> None:
         if conn.connection is None:
             continue
         try:
-            usable = conn.is_usable()
+            usable = conn.is_usable()  # type: ignore
         except Exception:
             logger.warning("djhtmx SSE render: health check failed; closing", exc_info=True)
             metric_incr("djhtmx.sse.render.healthcheck_closes", 1)

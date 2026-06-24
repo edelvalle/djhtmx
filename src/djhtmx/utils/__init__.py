@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from channels.db import database_sync_to_async as db  # type: ignore
+from channels.db import database_sync_to_async as db
 
 from .autodiscover import autodiscover_htmx_modules
 from .hashing import compact_hash, generate_id
@@ -11,7 +11,7 @@ from .transaction import run_on_commit
 
 if TYPE_CHECKING:
 
-    def db[**P, T](f: Callable[P, T]) -> Callable[P, Awaitable[T]]: ...
+    def db[**P, T](f: Callable[P, T]) -> Callable[P, Awaitable[T]]: ...  # type: ignore
 
 
 __all__ = (

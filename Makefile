@@ -96,12 +96,12 @@ lint:
 ZUBAN_EXTRA_ARGS ?=
 # RAYON_NUM_THREADS=1: zuban 0.8.2's parallel name resolution is racy and can
 # produce nondeterministic results.
-# --mode default: pin the pyright-like mode explicitly (zuban otherwise guesses
-# from the config files present, and a [tool.mypy] section can imply the
-# mypy-compatible mode).
+
+ZUBAN_MODE ?= mypy
+
 .PHONY: typecheck
 typecheck:
-	@RAYON_NUM_THREADS=1 $(RUN) zuban check --mode default $(ZUBAN_EXTRA_ARGS)
+	@RAYON_NUM_THREADS=1 $(RUN) zuban check --mode $(ZUBAN_MODE) $(ZUBAN_EXTRA_ARGS)
 
 
 SERVER_CMD ?= granian --reload --reload-paths fision --reload-paths ../djhtmx --port 8000 --access-log --workers 1 --workers-kill-timeout 1s --interface asginl fision.asgi:application

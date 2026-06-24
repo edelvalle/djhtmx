@@ -119,10 +119,12 @@ class QueryPatcher:
                 # abstract base and inherited by a concrete component would otherwise fall through
                 # to the bare `field.annotation` and drop the PlainSerializer — `dump_python` then
                 # fails to serialise the model instance.
-                if field.metadata:
-                    full_annotation = Annotated[field.annotation, *field.metadata]
-                else:
-                    full_annotation = field.annotation
+
+                full_annotation = (
+                    Annotated[field.annotation, *field.metadata]
+                    if field.metadata
+                    else field.annotation
+                )
                 adapter = get_annotation_adapter(full_annotation)
                 yield cls(
                     field_name=field_name,

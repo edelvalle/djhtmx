@@ -423,6 +423,8 @@ async def load_consumer_metadata(
     raw_metadata = await async_get(conn, consumer_key(id_))
     if raw_metadata:
         return json.loads(raw_metadata)
+    else:
+        return None
 
 
 def sse_message(event: str, data: str) -> bytes:

@@ -91,6 +91,10 @@ class HtmxComponent(BaseModel):
         arbitrary_types_allowed=True,
     )
 
+    if TYPE_CHECKING:
+
+        def __init__(self, /, **data: Any) -> None: ...
+
     def __init_subclass__(cls, public=None):
         FQN[cls] = f"{cls.__module__}.{cls.__name__}"
 
@@ -134,7 +138,7 @@ class HtmxComponent(BaseModel):
                     FQN[cls],
                 )
 
-        assert isinstance(cls._template_name, ModelPrivateAttr)
+        assert isinstance(cls._template_name, ModelPrivateAttr)  # type: ignore
         if isinstance(cls._template_name.default, str) and (
             basename(cls._template_name.default)
             not in (f"{klass.__name__}.html" for klass in cls.__mro__)
@@ -241,7 +245,7 @@ class HtmxComponent(BaseModel):
     if TYPE_CHECKING:
         from django.contrib.auth.models import AbstractBaseUser
 
-        user: Annotated[AbstractBaseUser | None, Field(exclude=True)]
+        user: Annotated[AbstractBaseUser | None, Field(exclude=True)]  # type: ignore
 
     hx_name: str
     lazy: bool = False

@@ -148,7 +148,7 @@ class CommandProcessor:
                             # Component dropped its SSE subscription between
                             # enqueue and dispatch; nothing to do.
                             return
-                        emitted_commands: list[Command] = []
+                        emitted_commands = []
                         for envelope in envelopes:
                             try:
                                 yielded = handler(envelope)

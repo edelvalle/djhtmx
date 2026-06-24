@@ -75,6 +75,10 @@ typing = [
   # does not fully implement.  0.24.0 also types CheckConstraint(condition=).
   "django-types==0.24.0",
   "types-lxml>=2024.11.8",
+
+  # Include the optional sentry-sdk, and logfire so that we can typecheck
+  "sentry_sdk>=2.62.0,<2.63",
+  "logfire[django]>=3.8.0",
 ]
 lint = [
     "ruff==0.11.*",
@@ -201,9 +205,9 @@ select = [
 preview = true
 
 [tool.mypy]
-# This is zuban's configuration: zuban reads the standard mypy configuration and
-# `zuban check --mode default` runs its pyright-style mode on top of it.  This
-# replaces the former basedpyright setup.
+# This is zuban's configuration: zuban reads the standard mypy configuration.
+# The Makefile runs `zuban check --mode mypy` (see ZUBAN_MODE) on top of it,
+# replacing the former basedpyright setup.
 mypy_path = "src"
 files = ["src/djhtmx"]
 disallow_untyped_decorators = false
@@ -214,31 +218,16 @@ exclude = [
   '/__pycache__/',
 ]
 disable_error_code = [
-  # Parity with the previous basedpyright config, which disabled
-  # reportIncompatibleMethodOverride / reportIncompatibleVariableOverride
-  # (Django save()/QuerySet method overrides trip them constantly).  `misc` also
-  # carries zuban's base-class attribute-compatibility errors.
-  "override",
-  "misc",
-  # mypy-style strictness that basedpyright did not enforce.
+  # Prefer inference over forced annotations.  `var-annotated` fires when the
+  # checker wants an explicit annotation for a binding it could infer from later
+  # use (e.g. `xs = []` populated below); we let it infer instead.
   "var-annotated",
-  # zuban 0.8.2 mis-narrows after `assert` and reports correct code as
-  # unreachable; re-enable once fixed upstream.
-  "unreachable",
-  "empty-body",
-  # Intentional re-annotation patterns: the `if TYPE_CHECKING:` field redeclare
-  # on components and the `database_sync_to_async as db` re-export.
-  "no-redef",
-  # djhtmx builds types at runtime (annotate_model, Query patchers); zuban can't
-  # see those dynamic aliases as valid types.
-  "valid-type",
-  # sentry_sdk and logfire are optional runtime backends (the `sentry` / `logfire`
-  # extras), absent in the typing environment; tracing.py guards their imports
-  # with try/except.  zuban 0.8.2 does not honour `[[tool.mypy.overrides]]`
-  # ignore_missing_imports, so the code is disabled globally — acceptable because
-  # every first-party module lives under the single `src/djhtmx` package.
-  "import-not-found",
+  # Informational note, not an error: the checker reminds that untyped function
+  # bodies are skipped.  We intentionally don't enable check_untyped_defs, so the
+  # reminder is just noise.
+  "annotation-unchecked",
 ]
+
 
 [tool.djlint]
 # Here we ignore

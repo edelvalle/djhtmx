@@ -359,6 +359,8 @@ class Session:
         self._ensure_read()
         if state := self.states.get(component_id):
             return json.loads(state)
+        else:
+            return None
 
     def get_component_ids_subscribed_to(self, signals: set[tuple[str, str]]) -> Iterable[str]:
         self._ensure_read()
