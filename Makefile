@@ -93,10 +93,15 @@ lint:
 .PHONY: lint
 
 
-PYRIGHT_FILES ?= src/$(PROJECT_NAME)
-pyright:
-	@$(RUN) basedpyright $(PYRIGHT_FILES)
-.PHONY: pyright
+ZUBAN_EXTRA_ARGS ?=
+# RAYON_NUM_THREADS=1: zuban 0.8.2's parallel name resolution is racy and can
+# produce nondeterministic results.
+
+ZUBAN_MODE ?= mypy
+
+.PHONY: typecheck
+typecheck:
+	@RAYON_NUM_THREADS=1 $(RUN) zuban check --mode $(ZUBAN_MODE) $(ZUBAN_EXTRA_ARGS)
 
 
 SERVER_CMD ?= granian --reload --reload-paths fision --reload-paths ../djhtmx --port 8000 --access-log --workers 1 --workers-kill-timeout 1s --interface asginl fision.asgi:application

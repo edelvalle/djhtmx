@@ -36,7 +36,7 @@ class ComponentsAdded(BaseModel):
 
 
 Event = ComponentsRemoved | ComponentsAdded
-EventAdapter = TypeAdapter(Event)
+EventAdapter: TypeAdapter[Event] = TypeAdapter(Event)
 
 
 class Consumer(AsyncJsonWebsocketConsumer):

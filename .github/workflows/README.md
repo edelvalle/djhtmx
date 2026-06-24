@@ -9,19 +9,10 @@ This directory contains GitHub Actions workflows for automated code quality chec
 
 **Jobs**:
 - **Lint & Format Check**: Verifies code formatting and linting rules using `make lint`
-- **Type Check**: Runs type checking with `make pyright` (non-blocking, continues on error)
-- **Tests & Coverage**: Runs the test suite and generates coverage reports using `make coverage`
+- **Type Check**: Runs type checking with `make typecheck` (zuban); advisory (non-blocking) until zuban is green on the async refactor
+- **Tests & Coverage**: Runs the test suite (against a Redis service) on a Python **3.13 + 3.14** matrix and generates a coverage report using `make coverage-xml`
 
 **Requirements**: Tests will only run if linting passes.
-
-### `code-quality.yml` - Comprehensive Code Quality Check
-**Triggers**: Manual dispatch, Weekly on Sundays
-
-**Features**:
-- Complete code quality assessment
-- Detailed test coverage reporting
-- HTML coverage report generation and artifact upload
-- All checks with detailed output grouping
 
 ## Makefile Targets Used
 
@@ -29,15 +20,15 @@ The workflows leverage the following Makefile targets:
 
 - `make install` - Install dependencies using uv
 - `make lint` - Check formatting and linting (ruff)
-- `make pyright` - Run type checking (basedpyright)
+- `make typecheck` - Run type checking (zuban)
 - `make test` - Run Django tests
 - `make coverage` - Run tests with coverage reporting
 - `make coverage-html` - Generate HTML coverage report
 
 ## Setup Requirements
 
-1. **Python 3.13**: Workflows use Python 3.13 as specified in the Makefile
-2. **uv Package Manager**: Uses uv 0.7.3 for fast dependency management
+1. **Python 3.13 / 3.14**: lint and type-check run on 3.14; tests run on a 3.13 + 3.14 matrix (the matrix version is threaded into `make install` via `PYTHON_VERSION`)
+2. **uv Package Manager**: Uses uv 0.10.10 (matching `REQUIRED_UV_VERSION` in the Makefile)
 
 ## Coverage Reports
 
@@ -51,6 +42,6 @@ You can run the same checks locally using:
 ```bash
 make install    # Install dependencies
 make lint       # Check formatting/linting
-make pyright    # Type checking
+make typecheck  # Type checking
 make coverage   # Tests with coverage
 ```

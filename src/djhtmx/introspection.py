@@ -202,8 +202,8 @@ class _ModelPlainSerializer(Generic[M]):  # noqa
         return cls(model, allow_none=allow_none)
 
 
-def _Model(
-    model: type[models.Model],
+def _Model[M: models.Model](
+    model: type[M],
     model_config: ModelConfig | None = None,
     allow_none: bool = False,
 ):
@@ -211,7 +211,7 @@ def _Model(
     model_config = model_config or _DEFAULT_MODEL_CONFIG
 
     # Determine the base type
-    base_type = model if not model_config.lazy else _LazyModelProxy[model]
+    base_type = model if not model_config.lazy else _LazyModelProxy[M]
     # If allow_none, make it optional
     annotated_type = base_type | None if allow_none else base_type
 
@@ -226,7 +226,7 @@ def _Model(
 
 
 def _QuerySet(qs: type[models.QuerySet]):
-    [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]
+    [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]  # type: ignore
     return Annotated[
         qs,
         PlainValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
@@ -387,7 +387,7 @@ def parse_request_data(data: MultiValueDict[str, Any] | dict[str, Any]):
 def _extract_data(data: MultiValueDict[str, Any]):
     for key in set(data):
         if key.endswith("[]"):
-            value = data.getlist(key)
+            value: Any = data.getlist(key)
             key = key.removesuffix("[]")
         else:
             value = data.get(key)
@@ -442,7 +442,7 @@ def _substitute_typevars(annotation, typevar_map: dict[TypeVar, type]):
     new_args = tuple(_substitute_typevars(a, typevar_map) for a in args)
     if new_args == args:
         return annotation
-    return origin[new_args] if len(new_args) > 1 else origin[new_args[0]]
+    return origin[new_args] if len(new_args) > 1 else origin[new_args[0]]  # type: ignore
 
 
 def _extract_event_types(annotation) -> set[type]:

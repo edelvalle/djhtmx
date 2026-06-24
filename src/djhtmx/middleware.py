@@ -16,7 +16,7 @@ def middleware(
 
     if iscoroutinefunction(get_response):
         # Async version
-        async def middleware(request: HttpRequest) -> HttpResponse:  # type: ignore
+        async def middleware(request: HttpRequest) -> HttpResponse:
             response = await get_response(request)
             if repo := getattr(request, "htmx_repo", None):
                 await sync_to_async(repo.session.flush)()
@@ -25,7 +25,7 @@ def middleware(
 
     else:
         # Sync version
-        def middleware(request: HttpRequest) -> HttpResponse:
+        def middleware(request: HttpRequest) -> HttpResponse:  # type: ignore
             response = get_response(request)
             if repo := getattr(request, "htmx_repo", None):
                 repo.session.flush()
