@@ -23,16 +23,14 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 4.1",
-    "Framework :: Django :: 4.2",
-    "Framework :: Django :: 5.0",
-    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
@@ -40,10 +38,12 @@ classifiers = [
 ]
 
 dependencies = [
-   "django>=4.1",
-   "pydantic>=2,<3",
+   "django>=5.2",
+   "pydantic>=2,<3; python_version < '3.14'",
+   "pydantic>=2.13,<3; python_version >= '3.14'",
    "xotl.tools>=3.1.1",
-   "orjson>=3.10.7",
+   "orjson>=3.10.7; python_version < '3.14'",
+   "orjson>=3.11.0; python_version >= '3.14'",
    "channels>=4.1.0",
    "uuid6>=2024.7.10",
    "redis[hiredis]>=7.4.0",
@@ -62,13 +62,18 @@ cli = [
    "django-click>=2.3.0,<3",
 ]
 test = [
-   "lxml>=5.3.0",
+   "lxml>=5.3.0; python_version < '3.14'",
+   "lxml>=6.0; python_version >= '3.14'",
    "cssselect>=1.2.0",
    "coverage[toml]>=7.6.9",
 ]
 typing = [
-  "basedpyright==1.28.1",
-  "django-types>=0.22.0",
+  # zuban reads mypy-format config and runs its pyright-style "default" mode.
+  "zuban==0.8.2",
+  # Keep django-types (plugin-free, pyright-style) so it shadows zuban's bundled
+  # django-stubs, which assume the settings-aware mypy_django_plugin that zuban
+  # does not fully implement.  0.24.0 also types CheckConstraint(condition=).
+  "django-types==0.24.0",
   "types-lxml>=2024.11.8",
 ]
 lint = [
@@ -90,6 +95,13 @@ dev = [
   { include-group = "lint" },
   { include-group = "devtools" },
 ]
+
+[tool.uv]
+# The library supports Django >= 5.2 (see [project.dependencies]); older Django
+# is EOL upstream.  The lock / CI is a dev artifact not seen by consumers, so it
+# is pinned to the 5.2 LTS line (the version the downstream app ships) rather
+# than allowed to drift onto Django 6.x.
+constraint-dependencies = ["django>=5.2,<6"]
 
 [project.urls]
 Homepage = "https://github.com/edelvalle/djhtmx"
@@ -188,16 +200,44 @@ select = [
 [tool.ruff.format]
 preview = true
 
-[tool.basedpyright]
-typeCheckingMode="standard"
-reportIncompatibleMethodOverride = false
-reportIncompatibleVariableOverride = false
-strictParameterNoneValue = false
-reportMatchNotExhaustive = "error"
+[tool.mypy]
+# This is zuban's configuration: zuban reads the standard mypy configuration and
+# `zuban check --mode default` runs its pyright-style mode on top of it.  This
+# replaces the former basedpyright setup.
+mypy_path = "src"
+files = ["src/djhtmx"]
+disallow_untyped_decorators = false
+warn_unused_ignores = true
 exclude = [
-  "**/static",
-  "**/migrations",
-  "**/__pycache__",
+  '/migrations/',
+  '/static/',
+  '/__pycache__/',
+]
+disable_error_code = [
+  # Parity with the previous basedpyright config, which disabled
+  # reportIncompatibleMethodOverride / reportIncompatibleVariableOverride
+  # (Django save()/QuerySet method overrides trip them constantly).  `misc` also
+  # carries zuban's base-class attribute-compatibility errors.
+  "override",
+  "misc",
+  # mypy-style strictness that basedpyright did not enforce.
+  "var-annotated",
+  # zuban 0.8.2 mis-narrows after `assert` and reports correct code as
+  # unreachable; re-enable once fixed upstream.
+  "unreachable",
+  "empty-body",
+  # Intentional re-annotation patterns: the `if TYPE_CHECKING:` field redeclare
+  # on components and the `database_sync_to_async as db` re-export.
+  "no-redef",
+  # djhtmx builds types at runtime (annotate_model, Query patchers); zuban can't
+  # see those dynamic aliases as valid types.
+  "valid-type",
+  # sentry_sdk and logfire are optional runtime backends (the `sentry` / `logfire`
+  # extras), absent in the typing environment; tracing.py guards their imports
+  # with try/except.  zuban 0.8.2 does not honour `[[tool.mypy.overrides]]`
+  # ignore_missing_imports, so the code is disabled globally — acceptable because
+  # every first-party module lives under the single `src/djhtmx` package.
+  "import-not-found",
 ]
 
 [tool.djlint]

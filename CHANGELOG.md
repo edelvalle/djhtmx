@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Inline type information (PEP 561)**: djhtmx now ships a `py.typed` marker, so type checkers consume the package's own annotations instead of inferring types from source.  This also makes them honor the package's re-export rules: names merely re-imported into a module (e.g. `Iterable` in `djhtmx.sse`) and not listed in `__all__` are no longer offered as importable symbols, so editor auto-import stops suggesting `from djhtmx.sse import Iterable` and similar indirect imports.  Import public names from their documented modules.
 
+- **Python 3.14 support**: djhtmx is now tested on a Python 3.13 + 3.14 matrix.  On 3.14 the dependency floors rise to the first releases shipping 3.14 wheels (`pydantic>=2.13`, `orjson>=3.11`, `lxml>=6`); 3.13 installs are unaffected.
+
+### Changed
+
+- **Minimum Django is now 5.2**: djhtmx requires `django>=5.2` (was `>=4.1`).  Django releases before 5.2 are end-of-life upstream and were neither tested nor supported; 5.2 is the LTS line djhtmx is developed against and the first to support Python 3.14.
+
 ## [1.3.13] - 2026-06-17
 
 ### Added
