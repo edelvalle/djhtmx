@@ -1,4 +1,3 @@
-import datetime
 import enum
 import inspect
 import operator
@@ -6,7 +5,7 @@ import types
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from functools import cache
 from inspect import Parameter, _ParameterKind
 from typing import (

@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Minimum Django is now 5.2**: djhtmx requires `django>=5.2` (was `>=4.1`).  Django releases before 5.2 are end-of-life upstream and were neither tested nor supported; 5.2 is the LTS line djhtmx is developed against and the first to support Python 3.14.
 
+### Fixed
+
+- **`datetime`-typed `Query` fields rejected**: a component may now declare a `Query` field annotated with `datetime`.  Previously this raised `TypeError: Invalid type annotation ... for a query string` during component build.
+
 ## [1.3.13] - 2026-06-17
 
 ### Added
