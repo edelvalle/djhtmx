@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import types
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,21 +13,25 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Union,
     cast,
+    get_args,
+    get_origin,
     get_type_hints,
 )
 
 from django.core.exceptions import ImproperlyConfigured
 from django.template import Context, loader
 from django.utils.safestring import SafeString, mark_safe
-from pydantic import BaseModel, ConfigDict, Field, validate_call
+from pydantic import BaseModel, ConfigDict, Field, model_validator, validate_call
 from pydantic.fields import ModelPrivateAttr
 
 from . import json, settings
-from .exceptions import ComponentNotFound
+from .exceptions import ComponentNotFound, LoginRequired
 from .introspection import (
     ModelConfig,
     Unset,
+    _LazyModelProxy,
     annotate_model,
     get_event_handler_event_types,
     get_function_parameters,
@@ -35,7 +40,15 @@ from .query import Query, QueryPatcher
 from .tracing import tracing_span
 from .utils import generate_id, get_fqn
 
-__all__ = ("ComponentNotFound", "HtmxComponent", "ModelConfig", "Query", "get_template")
+__all__ = (
+    "ComponentNotFound",
+    "HtmxComponent",
+    "LoginRequired",
+    "ModelConfig",
+    "Query",
+    "get_template",
+    "requires_logged_user",
+)
 
 
 RenderFunction = Callable[[Context | dict[str, Any] | None], SafeString]
@@ -250,6 +263,27 @@ class HtmxComponent(BaseModel):
     hx_name: str
     lazy: bool = False
 
+    @model_validator(mode="after")
+    def _require_logged_user(self):
+        """Refuse to exist without a logged-in user when `user` is annotated non-optionally.
+
+        See `requires_logged_user` for the rule and how to opt out of it.
+
+        """
+        user = self.user
+        if requires_logged_user(type(self)) and (
+            user is None
+            or user.pk is None
+            # A `ModelConfig(lazy=True)` user answers `pk` from the stored state, but any other
+            # attribute -- `is_anonymous` included -- fetches the row: the guard must not defeat the
+            # laziness it guards.  Nothing anonymous reaches here as a proxy anyway, because the
+            # repository turns an `AnonymousUser` into `None` before validation.
+            or (not isinstance(user, _LazyModelProxy) and user.is_anonymous)
+        ):
+            raise LoginRequired(get_fqn(type(self)))
+        else:
+            return self
+
     def __repr__(self) -> str:
         return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
 
@@ -341,6 +375,39 @@ def annotated_handler[F](**annotations) -> Callable[[F], F]:
         return fn
 
     return decorator
+
+
+@cache
+def requires_logged_user(component: type[HtmxComponent]) -> bool:
+    """Whether `component` declares a `user` that cannot be `None`.
+
+    A component inherits `user: Any | None` from `HtmxComponent` and renders fine for an anonymous
+    visitor.  Annotating the field with a user model instead (the `user: Annotated[User,
+    Field(exclude=True)]` base-component idiom) declares that the component is meaningless without
+    a logged-in user, and djhtmx enforces it: building it without one raises `LoginRequired`, which
+    the request paths turn into a trip to the login page.  Nothing else needs to be written; the
+    annotation *is* the guard.
+
+    The annotation alone cannot enforce it, which is why the check exists: Django model fields are
+    validated with a `PlainValidator` that returns `None` unchanged, so a `user: User` component
+    built for an anonymous request used to run its handlers with `self.user` set to `None` and fail
+    deep in whatever it wrote (a NOT NULL violation on a `created_by` column, say), losing the
+    user's work with no feedback on screen.
+
+    Opt out by keeping the field optional -- `user: User | None` or the inherited annotation -- for
+    components that read no user at all, or that still make sense to a viewer whose session died.
+    A user without a primary key does not count as logged in: `AnonymousUser` and an unsaved
+    instance are both rejected.  A `ModelConfig(lazy=True)` user is judged by its primary key alone,
+    so the check costs no query and a deleted row still fails later, on first access.
+
+    """
+    annotation = component.model_fields["user"].annotation
+    if annotation is None or annotation is Any:
+        return False
+    elif get_origin(annotation) in (Union, types.UnionType):
+        return types.NoneType not in get_args(annotation)
+    else:
+        return True
 
 
 def _compose[**P, A, B](f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B]:

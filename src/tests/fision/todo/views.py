@@ -16,5 +16,15 @@ def todo(request):
     )
 
 
+def logged_user_counter(request):
+    """A page mounting a component that requires a logged-in user, and requiring nothing itself.
+
+    The view is deliberately unprotected: what answers an anonymous visitor is the component's own
+    `user` annotation, through the djhtmx middleware.
+
+    """
+    return render(request, "logged_user_counter.html", context={"title": "logged user counter"})
+
+
 def redirect_to_index(request):
     return redirect("/?frombackend=1")

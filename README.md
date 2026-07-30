@@ -204,7 +204,7 @@ Counters: <br />
 
 ### Authentication
 
-All components have a `self.user` representing the current logged in user or `None` in case the user is anonymous. If you wanna make sure your user is properly validated and enforced. You need to create a base component and annotate the right user:
+All components have a `self.user` representing the current logged in user or `None` in case the user is anonymous. If you wanna make sure your user is properly validated and enforced, annotate the field with your user model -- usually once, in a base component:
 
 ```python
 from typing import Annotated
@@ -222,6 +222,15 @@ class Counter(BaseComponent):
     def inc(self, amount: int = 1):
         self.counter += amount
 ```
+
+That annotation *is* the login requirement, and djhtmx enforces it: building the component without a logged-in user raises `djhtmx.exceptions.LoginRequired` before any handler or render runs, and each of the two paths that build components turns it into a trip to the login page instead of an HTTP 500:
+
+- a request to the `/_htmx/` endpoints is answered with the `HX-Redirect` header htmx acts on, pointing at `settings.LOGIN_URL`. This is the case that happens in production: the page stays open while the session expires, the user logs out in another tab, or the POST arrives without cookies (the endpoints are `csrf_exempt`);
+- a full page render is answered with a redirect to `settings.LOGIN_URL`, carrying the requested page as `next`. This one needs `djhtmx.middleware` installed, which is where the hook lives. Careful with a login page that itself mounts a component requiring a logged user: it redirects to itself forever.
+
+`AnonymousUser`, an unsaved instance, and a lazy proxy of a deleted row all count as *not* logged in.
+
+Components that read no user at all, or that still make sense to a viewer whose session died, opt out by keeping the field optional -- either `user: Annotated[User | None, Field(exclude=True)]` or the annotation inherited from `HtmxComponent`. Use `djhtmx.component.requires_logged_user(SomeComponent)` to assert in your own tests which components require a login and which deliberately don't.
 
 ### Non-public components
 

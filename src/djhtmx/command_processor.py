@@ -48,6 +48,7 @@ from .component import (
     LISTENERS,
     HtmxComponent,
 )
+from .exceptions import LoginRequired
 from .introspection import filter_parameters
 from .settings import LOGIN_URL
 
@@ -71,8 +72,10 @@ class CommandProcessor:
     def process(self, commands: Iterable[Command | InternalCommand]) -> Generator[ProcessedCommand]:
         """Drive the command queue until exhausted, yielding processed output.
 
-        Catches `ValidationError`s whose root cause is an invalid `user` and converts them into a
-        redirect to `LOGIN_URL`.
+        Converts a component that requires a logged-in user and got none into a redirect to
+        `LOGIN_URL`, so a request arriving on a dead session lands on the login page instead of
+        answering with a 500.  `ValidationError`s whose root cause is an invalid `user` get the same
+        treatment, for applications that raise that shape themselves.
 
         """
         from .sse import sse_source_session
@@ -88,6 +91,9 @@ class CommandProcessor:
                 with sse_source_session(self.repo.session.id):
                     while queue:
                         yield from self._run_command(queue)
+            except LoginRequired as e:
+                logger.info("HTMX component %s requires a logged user", e.component_name)
+                yield Redirect(LOGIN_URL)
             except ValidationError as e:
                 if any(
                     e

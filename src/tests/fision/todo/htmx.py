@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Annotated, assert_never
 from uuid import UUID
 
+from django.contrib.auth.models import User
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from pydantic import BaseModel, Field
@@ -248,6 +249,23 @@ class TodoFilter(HtmxComponent):
     def set_query(self, query: str = ""):
         self.query = query.strip()
         yield Emit(FilterChanged(self.query))
+
+
+class LoggedUserCounter(HtmxComponent):
+    """A component that cannot exist without a logged-in user.
+
+    The non-optional `user` annotation is the whole declaration: djhtmx refuses to build it for an
+    anonymous request and sends the visitor to the login page instead.
+
+    """
+
+    _template_name = "todo/LoggedUserCounter.html"
+
+    user: Annotated[User, Field(exclude=True)]
+    counter: int = 0
+
+    def inc(self, amount: int = 1):
+        self.counter += amount
 
 
 def todo_item_topic(item_id: UUID):

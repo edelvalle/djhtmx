@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+
+{% load htmx %}
+
+{% block body %}
+  {% htmx 'LoggedUserCounter' %}
+{% endblock body %}
