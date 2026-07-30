@@ -17,8 +17,6 @@ import logging
 from collections.abc import Generator, Iterable
 from typing import TYPE_CHECKING
 
-from pydantic import ValidationError
-
 from djhtmx.global_events import HtmxUnhandledError
 from djhtmx.tracing import tracing_span
 
@@ -74,8 +72,8 @@ class CommandProcessor:
 
         Converts a component that requires a logged-in user and got none into a redirect to
         `LOGIN_URL`, so a request arriving on a dead session lands on the login page instead of
-        answering with a 500.  `ValidationError`s whose root cause is an invalid `user` get the same
-        treatment, for applications that raise that shape themselves.
+        answering with a 500.  `Repository.build` is what decides that, raising `LoginRequired` no
+        matter which layer rejected the user.
 
         """
         from .sse import sse_source_session
@@ -94,15 +92,6 @@ class CommandProcessor:
             except LoginRequired as e:
                 logger.info("HTMX component %s requires a logged user", e.component_name)
                 yield Redirect(LOGIN_URL)
-            except ValidationError as e:
-                if any(
-                    e
-                    for error in e.errors()
-                    if error["type"] == "is_instance_of" and error["loc"] == ("user",)
-                ):
-                    yield Redirect(LOGIN_URL)
-                else:
-                    raise
 
     def _run_command(self, commands: CommandQueue) -> Generator[ProcessedCommand]:
         repo = self.repo

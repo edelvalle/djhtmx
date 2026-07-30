@@ -388,11 +388,11 @@ def requires_logged_user(component: type[HtmxComponent]) -> bool:
     the request paths turn into a trip to the login page.  Nothing else needs to be written; the
     annotation *is* the guard.
 
-    The annotation alone cannot enforce it, which is why the check exists: Django model fields are
-    validated with a `PlainValidator` that returns `None` unchanged, so a `user: User` component
-    built for an anonymous request used to run its handlers with `self.user` set to `None` and fail
-    deep in whatever it wrote (a NOT NULL violation on a `created_by` column, say), losing the
-    user's work with no feedback on screen.
+    Pydantic's own type check rejects the plain `None` case, so this covers what that check cannot
+    see: an `AnonymousUser` or unsaved instance (no primary key), and a `ModelConfig(lazy=True)`
+    user whose proxy carries no primary key -- the type check is satisfied by the proxy itself, not
+    by what it wraps.  `Repository.build` reports both as `LoginRequired`, so which layer rejected a
+    given request never matters to a caller.
 
     Opt out by keeping the field optional -- `user: User | None` or the inherited annotation -- for
     components that read no user at all, or that still make sense to a viewer whose session died.

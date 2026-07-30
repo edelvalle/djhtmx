@@ -216,7 +216,12 @@ def _Model[M: models.Model](
 
     return Annotated[
         annotated_type,
-        PlainValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
+        # `BeforeValidator`, not `PlainValidator`: a plain validator *replaces* the core schema, so
+        # pydantic's own `is_instance_of(annotated_type)` check never runs and the annotation stops
+        # meaning anything at runtime -- a non-optional field would happily hold the `None` this
+        # validator returns unchanged.  Running before the core schema keeps both: the pk (or the
+        # instance, or the proxy) is resolved here, and pydantic then enforces the declared type.
+        BeforeValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
         PlainSerializer(
             func=_ModelPlainSerializer.from_modelclass(model, allow_none=allow_none),
             return_type=guess_pk_type(model) | None if allow_none else guess_pk_type(model),

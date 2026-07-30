@@ -289,6 +289,8 @@ class MyComponent(HtmxComponent):
 - **Optional lazy models**: Checking truthiness returns `False`, field accesses return `None`
 - **Both**: Accessing `.pk` always works without triggering database queries
 
+**The annotation is enforced:** a non-optional model field rejects `None` with a `ValidationError` located at the field, so the declared type means at runtime what it says.  Annotate the field as `Item | None` wherever `None` is a legitimate value; see [Authentication](#authentication) for what this means for `user`.
+
 ## Component nesting
 
 Components can contain components inside to decompose the behavior in more granular and specialized parts, for this you don't have to do anything but to a component inside the template of other component....

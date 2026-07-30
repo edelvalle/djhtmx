@@ -12,6 +12,7 @@ from django.core.signing import Signer
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
+from pydantic import ValidationError
 from uuid6 import uuid7
 
 from djhtmx.tracing import tracing_span
@@ -27,6 +28,7 @@ from .component import (
     HtmxComponent,
     _get_query_patchers,
 )
+from .exceptions import LoginRequired
 from .settings import (
     KEY_SIZE_ERROR_THRESHOLD,
     KEY_SIZE_SAMPLE_PROB,
@@ -34,7 +36,7 @@ from .settings import (
     SESSION_TTL,
     conn,
 )
-from .utils import compact_hash, db, get_params
+from .utils import compact_hash, db, get_fqn, get_params
 
 signer = Signer()
 
@@ -237,7 +239,24 @@ class Repository:
                 "session_id": self.session.id,
                 "user": None if isinstance(self.user, AnonymousUser) else self.user,
             }
-            component = REGISTRY[component_name](**kwargs)
+            component_class = REGISTRY[component_name]
+            try:
+                component = component_class(**kwargs)
+            except ValidationError as error:
+                # A component annotating `user` non-optionally is rejected by pydantic's own type
+                # check (an `is_instance_of` error located at `user`) when there is no logged-in
+                # user.  That means the same thing as the `LoginRequired` the component validator
+                # raises for what the type check cannot see -- an anonymous or unsaved instance, a
+                # lazy proxy without a primary key -- and applications raise the same error shape
+                # from their own validators, so all of them leave here as one exception for the
+                # transports to turn into a trip to the login page.
+                if any(
+                    detail["type"] == "is_instance_of" and detail["loc"] == ("user",)
+                    for detail in error.errors()
+                ):
+                    raise LoginRequired(get_fqn(component_class)) from error
+                else:
+                    raise
 
             # Automatically track parent-child relationship if parent_id is specified
             self.session.register_child(parent_id, component.id)

@@ -363,6 +363,55 @@ class TestOptionalModelInComponent(TestCase):
         self.assertIn("Item", error_str)
         self.assertIn("does not exist", error_str)
 
+    def test_component_with_required_model_rejects_none(self):
+        """Test that a required Model field rejects None instead of holding it.
+
+        The field validator runs *before* the core schema precisely so the declared type keeps
+        meaning something at runtime: a plain validator would replace that schema, and the field
+        would hold the None it returned unchanged -- a component reading `self.item` in a handler
+        then fails far from the cause.
+        """
+        from pydantic import ValidationError
+
+        from djhtmx.component import HtmxComponent
+
+        class RequiredModelNone(HtmxComponent):
+            _template_name = "RequiredModelNone.html"
+            item: Item  # Required, not optional
+
+        with self.assertRaises(ValidationError) as context:
+            RequiredModelNone(
+                id="test-component",
+                hx_name="RequiredModelNone",
+                user=None,
+                item=None,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(
+            [(error["type"], error["loc"]) for error in context.exception.errors()],
+            [("is_instance_of", ("item",))],
+        )
+
+    def test_component_with_required_model_accepts_a_pk_and_an_instance(self):
+        """The control: enforcing the annotation must not reject what a component legitimately gets."""
+        from djhtmx.component import HtmxComponent
+
+        item = Item.objects.create(text="Test item")
+
+        class RequiredModelAccepts(HtmxComponent):
+            _template_name = "RequiredModelAccepts.html"
+            item: Item
+
+        from_pk = RequiredModelAccepts(
+            id="from-pk", hx_name="RequiredModelAccepts", user=None, item=item.pk
+        )
+        from_instance = RequiredModelAccepts(
+            id="from-instance", hx_name="RequiredModelAccepts", user=None, item=item
+        )
+
+        self.assertEqual(from_pk.item, item)
+        self.assertEqual(from_instance.item, item)
+
 
 class TestOptionalLazyModelInComponent(TestCase):
     """Test that HtmxComponent with lazy Model | None handles non-existent objects correctly."""
