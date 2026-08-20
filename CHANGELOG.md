@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ModelConfig`'s `select_related`/`prefetch_related` were ignored on lazy fields**: the config never reached the proxy that makes the query, so the optimization was accepted, stored on the annotation and then silently dropped -- a lazy field with `select_related` paid a second query for the related object, exactly what the argument was there to avoid.  Lazy fields now build their query with the configured related fields, so the JOIN happens in the same query that loads the row and a prefetch is populated before the collection is read.
+
+- **`ModelConfig(select_related=["x"])` crashed at import time**: the config is a cache key (`_ModelBeforeValidator.from_modelclass` is cached on it), so the list form -- the one the README documents -- raised `TypeError: unhashable type: 'list'` while the annotation was being built, which happens at class-definition time and therefore brought down the whole module on import.  `select_related` and `prefetch_related` now accept any `Sequence` and store it as a tuple.  A bare string is refused with a `TypeError` naming the argument: it satisfies `Sequence[str]`, so no type checker objects to `select_related="owner"`, and iterating it would silently ask for one related field per character.  The predicate behind that check, `is_field_name_sequence`, is a `TypeGuard` and is importable from `djhtmx.introspection`.
+
+- **A lazy model field was truthy even when its row was gone**: `_LazyModelProxy` had no `__bool__`, so `if component.item:` answered "yes" for a deleted or never-existing row -- the one question the check is asked.  It now resolves the row (caching it, like any other access): an optional field is `False` when the row is missing, and a required field raises the same `ValueError` that any other access raises, rather than quietly passing the check and failing on the next line.
+
 - **`datetime`-typed `Query` fields rejected**: a component may now declare a `Query` field annotated with `datetime`.  Previously this raised `TypeError: Invalid type annotation ... for a query string` during component build.
 
 ## [1.3.13] - 2026-06-17

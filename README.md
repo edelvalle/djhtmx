@@ -272,6 +272,8 @@ class TodoComponent(HtmxComponent):
     ]
 ```
 
+Both related-field arguments accept any sequence of field names, and are applied to the query that loads the object -- for a lazy field, that is the query made on first access, not at build time.  Pass a sequence, never a single name: `select_related=("owner",)` rather than `select_related="owner"`, which asks for one related field per character and is refused.
+
 **Handling Deleted Objects:**
 
 Lazy models handle deleted database objects gracefully:
@@ -285,9 +287,9 @@ class MyComponent(HtmxComponent):
     archived_item: Annotated[Item | None, ModelConfig(lazy=True)]
 ```
 
-- **Required lazy models**: Checking truthiness (`if component.item:`) raises `ObjectDoesNotExist` with a clear message
-- **Optional lazy models**: Checking truthiness returns `False`, field accesses return `None`
-- **Both**: Accessing `.pk` always works without triggering database queries
+- **Required lazy models**: Checking truthiness (`if component.item:`) raises `ValueError` with a clear message, the same error any other access raises
+- **Optional lazy models**: Checking truthiness returns `False`; field accesses raise `AttributeError` on the missing instance, so read the field only after checking
+- **Both**: Accessing `.pk` always works without triggering database queries; every other access (truthiness included) resolves the row on first use and caches it
 
 **The annotation is enforced:** a non-optional model field rejects `None` with a `ValidationError` located at the field, so the declared type means at runtime what it says.  Annotate the field as `Item | None` wherever `None` is a legitimate value; see [Authentication](#authentication) for what this means for `user`.
 
