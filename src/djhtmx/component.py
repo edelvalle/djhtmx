@@ -31,7 +31,6 @@ from .exceptions import ComponentNotFound, LoginRequired
 from .introspection import (
     ModelConfig,
     Unset,
-    _LazyModelProxy,
     annotate_model,
     get_event_handler_event_types,
     get_function_parameters,
@@ -47,6 +46,7 @@ __all__ = (
     "ModelConfig",
     "Query",
     "get_template",
+    "is_usable_user",
     "requires_logged_user",
 )
 
@@ -264,24 +264,20 @@ class HtmxComponent(BaseModel):
     lazy: bool = False
 
     @model_validator(mode="after")
-    def _require_logged_user(self):
-        """Refuse to exist without a logged-in user when `user` is annotated non-optionally.
+    def _apply_user_protocol(self):
+        """Apply the `user` protocol: a user who cannot act is no user at all.
 
-        See `requires_logged_user` for the rule and how to opt out of it.
+        A component whose `user` cannot be `None` refuses to exist -- see `requires_logged_user`.
+        One that admits `None` gets `None`, so it renders for a visitor with no usable session
+        instead of holding a user it must not act as.
 
         """
-        user = self.user
-        if requires_logged_user(type(self)) and (
-            user is None
-            or user.pk is None
-            # A `ModelConfig(lazy=True)` user answers `pk` from the stored state, but any other
-            # attribute -- `is_anonymous` included -- fetches the row: the guard must not defeat the
-            # laziness it guards.  Nothing anonymous reaches here as a proxy anyway, because the
-            # repository turns an `AnonymousUser` into `None` before validation.
-            or (not isinstance(user, _LazyModelProxy) and user.is_anonymous)
-        ):
+        if is_usable_user(self.user):
+            return self
+        elif requires_logged_user(type(self)):
             raise LoginRequired(get_fqn(type(self)))
         else:
+            self.user = None
             return self
 
     def __repr__(self) -> str:
@@ -377,28 +373,36 @@ def annotated_handler[F](**annotations) -> Callable[[F], F]:
     return decorator
 
 
+def is_usable_user(user: Any) -> bool:
+    """Whether `user` is someone the request can act as.
+
+    A user must be saved (they own rows), not anonymous, and active.
+
+    """
+    if user is None:
+        return False
+    else:
+        try:
+            return (
+                # `pk` is read first because a `ModelConfig(lazy=True)` user answers it without
+                # fetching the row.  Reading anything else off such a proxy resolves it, and a proxy
+                # whose row is gone raises rather than answers: that is not a usable user either.
+                user.pk is not None
+                and not user.is_anonymous
+                and bool(getattr(user, "is_active", True))
+            )
+        except (ValueError, AttributeError):
+            return False
+
+
 @cache
 def requires_logged_user(component: type[HtmxComponent]) -> bool:
     """Whether `component` declares a `user` that cannot be `None`.
 
-    A component inherits `user: Any | None` from `HtmxComponent` and renders fine for an anonymous
-    visitor.  Annotating the field with a user model instead (the `user: Annotated[User,
-    Field(exclude=True)]` base-component idiom) declares that the component is meaningless without
-    a logged-in user, and djhtmx enforces it: building it without one raises `LoginRequired`, which
-    the request paths turn into a trip to the login page.  Nothing else needs to be written; the
-    annotation *is* the guard.
-
-    Pydantic's own type check rejects the plain `None` case, so this covers what that check cannot
-    see: an `AnonymousUser` or unsaved instance (no primary key), and a `ModelConfig(lazy=True)`
-    user whose proxy carries no primary key -- the type check is satisfied by the proxy itself, not
-    by what it wraps.  `Repository.build` reports both as `LoginRequired`, so which layer rejected a
-    given request never matters to a caller.
-
-    Opt out by keeping the field optional -- `user: User | None` or the inherited annotation -- for
-    components that read no user at all, or that still make sense to a viewer whose session died.
-    A user without a primary key does not count as logged in: `AnonymousUser` and an unsaved
-    instance are both rejected.  A `ModelConfig(lazy=True)` user is judged by its primary key alone,
-    so the check costs no query and a deleted row still fails later, on first access.
+    Annotating the field with a user model instead (the `user: Annotated[User, Field(exclude=True)]`
+    base-component idiom) declares that the component is meaningless without a logged-in user, and
+    djhtmx enforces it: building it without one raises `LoginRequired`, which the request paths turn
+    into a trip to the login page.  Nothing else needs to be written; the annotation *is* the guard.
 
     """
     annotation = component.model_fields["user"].annotation

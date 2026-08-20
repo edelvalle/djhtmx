@@ -243,15 +243,15 @@ class Repository:
             try:
                 component = component_class(**kwargs)
             except ValidationError as error:
-                # A component annotating `user` non-optionally is rejected by pydantic's own type
-                # check (an `is_instance_of` error located at `user`) when there is no logged-in
-                # user.  That means the same thing as the `LoginRequired` the component validator
-                # raises for what the type check cannot see -- an anonymous or unsaved instance, a
-                # lazy proxy without a primary key -- and applications raise the same error shape
-                # from their own validators, so all of them leave here as one exception for the
-                # transports to turn into a trip to the login page.
+                # Every way of rejecting the user leaves here as one exception, so a caller never
+                # has to tell them apart.  Pydantic's own type check reports `is_instance_of` for a
+                # `None` user; resolving the row reports `value_error` when the primary key matches
+                # nothing (a deleted account, or a state that outlived it); and applications raise
+                # either shape from their own validators.  All of them mean the request has no user
+                # to act as, which is what the transports turn into a trip to the login page.
                 if any(
-                    detail["type"] == "is_instance_of" and detail["loc"] == ("user",)
+                    detail["type"] in ("is_instance_of", "value_error")
+                    and detail["loc"] == ("user",)
                     for detail in error.errors()
                 ):
                     raise LoginRequired(get_fqn(component_class)) from error

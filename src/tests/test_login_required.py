@@ -66,6 +66,19 @@ class LazyGuardedCounter(HtmxComponent):
         yield SkipRender(self)
 
 
+class OptionalLazyUserCounter(HtmxComponent):
+    """The optional case, deferred: an unusable user must collapse to `None` here too."""
+
+    _template_name = "OptionalLazyUserCounter.html"
+
+    user: Annotated[User | None, ModelConfig(lazy=True), Field(exclude=True)]
+    counter: int = 0
+
+    def inc(self):
+        self.counter += 1
+        yield SkipRender(self)
+
+
 class OptionalUserCounter(HtmxComponent):
     """The opt-out: an explicitly optional user renders for an anonymous visitor."""
 
@@ -134,27 +147,62 @@ class TestBuild(TestCase):
         )
 
 
-class TestLazyUser(TestCase):
-    """A `ModelConfig(lazy=True)` user is judged by its primary key, and only by that."""
+class TestUserProtocol(TestCase):
+    """The `user` protocol: a user who cannot act is no user at all.
+
+    Three inputs mean "nobody is logged in": no user, a primary key that matches no row, and a user
+    whose account is not active.  A component that requires a user refuses all three; one that
+    admits `None` sees `None` for all three, rather than holding a user it must not act as.
+
+    """
 
     @classmethod
     def setUpTestData(cls):
         cls.user = User.objects.create_user(username="skipper")
+        cls.inactive = User.objects.create_user(username="retired", is_active=False)
 
-    def test_the_check_costs_no_query(self):
+    def test_a_required_user_refuses_an_inactive_account(self):
+        """`is_active` is the same question Django's own backend asks before authenticating.
+
+        A session cookie never gets this far -- `ModelBackend.get_user` already returns `None` for an
+        inactive account -- but a request authenticated by other means (a token middleware that loads
+        the row itself) hands over a real, unusable user.
+        """
+        for component in (GuardedCounter, LazyGuardedCounter):
+            with self.subTest(component=component.__name__), self.assertRaises(LoginRequired):
+                component(hx_name=component.__name__, user=self.inactive)
+
+    def test_an_optional_user_becomes_none_when_it_cannot_act(self):
+        """Every unusable value collapses to `None`, so the component renders as anonymous."""
+        missing_pk = self.user.pk + 10_000
+        for value, label in ((self.inactive, "inactive"), (None, "none"), (missing_pk, "missing")):
+            for component in (OptionalUserCounter, OptionalLazyUserCounter):
+                with self.subTest(component=component.__name__, value=label):
+                    built = component(hx_name=component.__name__, user=value)
+                    self.assertIsNone(built.user)
+
+    def test_a_required_lazy_user_refuses_a_primary_key_with_no_row(self):
+        """The account was deleted while a state that names it is still in play."""
+        with self.assertRaises(LoginRequired):
+            LazyGuardedCounter(hx_name="LazyGuardedCounter", user=self.user.pk + 10_000)
+
+    def test_a_live_user_is_left_alone(self):
+        """The control: the protocol must not reject the case it exists to allow."""
+        for component in (GuardedCounter, LazyGuardedCounter):
+            with self.subTest(component=component.__name__):
+                built = component(hx_name=component.__name__, user=self.user)
+                self.assertEqual(built.user.pk, self.user.pk)
+
+    def test_the_check_reads_no_row_for_a_lazy_user_the_request_supplied(self):
         """The guard must not defeat the laziness it guards.
 
-        Reading `is_anonymous` off the proxy would fetch the row at build time, undoing what the
-        lazy annotation asked for -- and for a component built from a primary key rather than an
-        instance, that is a query per build.
+        A request always hands over the user *instance*, so the proxy already holds it and the
+        protocol reads `is_active` off it for free.  Only a component built from a bare primary key
+        pays a query, and `user` is excluded from component state, so no request rebuilds one.
         """
         with self.assertNumQueries(0):
-            component = LazyGuardedCounter(hx_name="LazyGuardedCounter", user=self.user.pk)
+            component = LazyGuardedCounter(hx_name="LazyGuardedCounter", user=self.user)
             self.assertEqual(component.user.pk, self.user.pk)
-
-    def test_a_missing_user_still_raises(self):
-        with self.assertRaises(LoginRequired):
-            LazyGuardedCounter(hx_name="LazyGuardedCounter", user=None)
 
 
 class TestDispatch(TestCase):

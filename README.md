@@ -10,7 +10,7 @@ Interactive UI Components for Django using [htmx](https://htmx.org)
 uv add djhtmx
 ```
 
-or 
+or
 
 ```bash
 pip install djhtmx
@@ -20,7 +20,7 @@ pip install djhtmx
 
 ## Requirements
 
-djhtmx requires **Redis** to be running for session storage and component state management. 
+djhtmx requires **Redis** to be running for session storage and component state management.
 
 **Important**: Redis is not included with djhtmx and must be installed separately on your system. Make sure Redis is installed and accessible before using djhtmx.
 
@@ -42,7 +42,7 @@ INSTALLED_APPS = [
 ]
 ```
 
-Install the Middleware as the last one  of the list 
+Install the Middleware as the last one of the list
 
 ```python
 MIDDLEWARE = [
@@ -228,7 +228,14 @@ That annotation *is* the login requirement, and djhtmx enforces it: building the
 - a request to the `/_htmx/` endpoints is answered with the `HX-Redirect` header htmx acts on, pointing at `settings.LOGIN_URL`. This is the case that happens in production: the page stays open while the session expires, the user logs out in another tab, or the POST arrives without cookies (the endpoints are `csrf_exempt`);
 - a full page render is answered with a redirect to `settings.LOGIN_URL`, carrying the requested page as `next`. This one needs `djhtmx.middleware` installed, which is where the hook lives. Careful with a login page that itself mounts a component requiring a logged user: it redirects to itself forever.
 
-`AnonymousUser`, an unsaved instance, and a lazy proxy of a deleted row all count as *not* logged in.
+The protocol is the same for every component, and asks one question: can this user act?  Three answers mean nobody is logged in -- there is no user, the primary key matches no row (a deleted account), or the account is not active.
+
+The annotation decides what happens then:
+
+- `user: Annotated[User, Field(exclude=True)]` -- the component refuses to exist, and the visitor lands on the login page.
+- `user: Annotated[User | None, Field(exclude=True)]` -- the component is built with `user` set to `None`, so it renders for a visitor with no usable session instead of holding a user it must not act as.
+
+`djhtmx.component.is_usable_user` is that question as a function, if your application needs to ask it too.
 
 Components that read no user at all, or that still make sense to a viewer whose session died, opt out by keeping the field optional -- either `user: Annotated[User | None, Field(exclude=True)]` or the annotation inherited from `HtmxComponent`. Use `djhtmx.component.requires_logged_user(SomeComponent)` to assert in your own tests which components require a login and which deliberately don't.
 
@@ -539,14 +546,14 @@ from djhtmx.component import HtmxComponent, Render
 
 class DataVisualization(HtmxComponent):
     _template_name = "DataVisualization.html"
-    
+
     def show_filtered_data(self, filter_type: str):
         # Get some custom data that's not part of component state
         custom_data = self.get_filtered_data(filter_type)
-        
+
         # Render with custom context
         yield Render(
-            self, 
+            self,
             template="DataVisualization_filtered.html",
             context={
                 "filtered_data": custom_data,
@@ -779,8 +786,8 @@ class TodoListComponent(HtmxComponent):
         item = self.todo_list.items.create(name=name)
         # Child component that will be automatically destroyed when parent is destroyed
         yield BuildAndRender.append(
-            "#todo-items", 
-            ItemComponent, 
+            "#todo-items",
+            ItemComponent,
             parent_id=self.id,  # Establishes parent-child relationship
             id=f"item-{item.id}",
             item=item
