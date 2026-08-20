@@ -10,7 +10,7 @@ Interactive UI Components for Django using [htmx](https://htmx.org)
 uv add djhtmx
 ```
 
-or 
+or
 
 ```bash
 pip install djhtmx
@@ -20,7 +20,7 @@ pip install djhtmx
 
 ## Requirements
 
-djhtmx requires **Redis** to be running for session storage and component state management. 
+djhtmx requires **Redis** to be running for session storage and component state management.
 
 **Important**: Redis is not included with djhtmx and must be installed separately on your system. Make sure Redis is installed and accessible before using djhtmx.
 
@@ -42,7 +42,7 @@ INSTALLED_APPS = [
 ]
 ```
 
-Install the Middleware as the last one  of the list 
+Install the Middleware as the last one of the list
 
 ```python
 MIDDLEWARE = [
@@ -204,7 +204,7 @@ Counters: <br />
 
 ### Authentication
 
-All components have a `self.user` representing the current logged in user or `None` in case the user is anonymous. If you wanna make sure your user is properly validated and enforced. You need to create a base component and annotate the right user:
+All components have a `self.user` representing the current logged in user or `None` in case the user is anonymous. If you wanna make sure your user is properly validated and enforced, annotate the field with your user model -- usually once, in a base component:
 
 ```python
 from typing import Annotated
@@ -222,6 +222,22 @@ class Counter(BaseComponent):
     def inc(self, amount: int = 1):
         self.counter += amount
 ```
+
+That annotation *is* the login requirement, and djhtmx enforces it: building the component without a logged-in user raises `djhtmx.exceptions.LoginRequired` before any handler or render runs, and each of the two paths that build components turns it into a trip to the login page instead of an HTTP 500:
+
+- a request to the `/_htmx/` endpoints is answered with the `HX-Redirect` header htmx acts on, pointing at `settings.LOGIN_URL`. This is the case that happens in production: the page stays open while the session expires, the user logs out in another tab, or the POST arrives without cookies (the endpoints are `csrf_exempt`);
+- a full page render is answered with a redirect to `settings.LOGIN_URL`, carrying the requested page as `next`. This one needs `djhtmx.middleware` installed, which is where the hook lives. Careful with a login page that itself mounts a component requiring a logged user: it redirects to itself forever.
+
+The protocol is the same for every component, and asks one question: can this user act?  Three answers mean nobody is logged in -- there is no user, the primary key matches no row (a deleted account), or the account is not active.
+
+The annotation decides what happens then:
+
+- `user: Annotated[User, Field(exclude=True)]` -- the component refuses to exist, and the visitor lands on the login page.
+- `user: Annotated[User | None, Field(exclude=True)]` -- the component is built with `user` set to `None`, so it renders for a visitor with no usable session instead of holding a user it must not act as.
+
+`djhtmx.component.is_usable_user` is that question as a function, if your application needs to ask it too.
+
+Components that read no user at all, or that still make sense to a viewer whose session died, opt out by keeping the field optional -- either `user: Annotated[User | None, Field(exclude=True)]` or the annotation inherited from `HtmxComponent`. Use `djhtmx.component.requires_logged_user(SomeComponent)` to assert in your own tests which components require a login and which deliberately don't.
 
 ### Non-public components
 
@@ -263,6 +279,8 @@ class TodoComponent(HtmxComponent):
     ]
 ```
 
+Both related-field arguments accept any sequence of field names, and are applied to the query that loads the object -- for a lazy field, that is the query made on first access, not at build time.  Pass a sequence, never a single name: `select_related=("owner",)` rather than `select_related="owner"`, which asks for one related field per character and is refused.
+
 **Handling Deleted Objects:**
 
 Lazy models handle deleted database objects gracefully:
@@ -276,9 +294,11 @@ class MyComponent(HtmxComponent):
     archived_item: Annotated[Item | None, ModelConfig(lazy=True)]
 ```
 
-- **Required lazy models**: Checking truthiness (`if component.item:`) raises `ObjectDoesNotExist` with a clear message
-- **Optional lazy models**: Checking truthiness returns `False`, field accesses return `None`
-- **Both**: Accessing `.pk` always works without triggering database queries
+- **Required lazy models**: Checking truthiness (`if component.item:`) raises `ValueError` with a clear message, the same error any other access raises
+- **Optional lazy models**: Checking truthiness returns `False`; field accesses raise `AttributeError` on the missing instance, so read the field only after checking
+- **Both**: Accessing `.pk` always works without triggering database queries; every other access (truthiness included) resolves the row on first use and caches it
+
+**The annotation is enforced:** a non-optional model field rejects `None` with a `ValidationError` located at the field, so the declared type means at runtime what it says.  Annotate the field as `Item | None` wherever `None` is a legitimate value; see [Authentication](#authentication) for what this means for `user`.
 
 ## Component nesting
 
@@ -526,14 +546,14 @@ from djhtmx.component import HtmxComponent, Render
 
 class DataVisualization(HtmxComponent):
     _template_name = "DataVisualization.html"
-    
+
     def show_filtered_data(self, filter_type: str):
         # Get some custom data that's not part of component state
         custom_data = self.get_filtered_data(filter_type)
-        
+
         # Render with custom context
         yield Render(
-            self, 
+            self,
             template="DataVisualization_filtered.html",
             context={
                 "filtered_data": custom_data,
@@ -766,8 +786,8 @@ class TodoListComponent(HtmxComponent):
         item = self.todo_list.items.create(name=name)
         # Child component that will be automatically destroyed when parent is destroyed
         yield BuildAndRender.append(
-            "#todo-items", 
-            ItemComponent, 
+            "#todo-items",
+            ItemComponent,
             parent_id=self.id,  # Establishes parent-child relationship
             id=f"item-{item.id}",
             item=item

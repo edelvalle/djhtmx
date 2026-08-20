@@ -1,0 +1,7 @@
+{% load htmx %}
+
+<div {% hx-tag %}>
+  <span class="logged-user">{{ this.user.username }}</span>
+  <span class="counter">{{ this.counter }}</span>
+  <button {% on 'click' 'inc' %}>+1</button>
+</div>

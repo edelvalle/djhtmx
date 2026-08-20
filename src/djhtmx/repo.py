@@ -12,6 +12,7 @@ from django.core.signing import Signer
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
+from pydantic import ValidationError
 from uuid6 import uuid7
 
 from djhtmx.tracing import tracing_span
@@ -27,6 +28,7 @@ from .component import (
     HtmxComponent,
     _get_query_patchers,
 )
+from .exceptions import LoginRequired
 from .settings import (
     KEY_SIZE_ERROR_THRESHOLD,
     KEY_SIZE_SAMPLE_PROB,
@@ -34,7 +36,7 @@ from .settings import (
     SESSION_TTL,
     conn,
 )
-from .utils import compact_hash, db, get_params
+from .utils import compact_hash, db, get_fqn, get_params
 
 signer = Signer()
 
@@ -237,7 +239,24 @@ class Repository:
                 "session_id": self.session.id,
                 "user": None if isinstance(self.user, AnonymousUser) else self.user,
             }
-            component = REGISTRY[component_name](**kwargs)
+            component_class = REGISTRY[component_name]
+            try:
+                component = component_class(**kwargs)
+            except ValidationError as error:
+                # Every way of rejecting the user leaves here as one exception, so a caller never
+                # has to tell them apart.  Pydantic's own type check reports `is_instance_of` for a
+                # `None` user; resolving the row reports `value_error` when the primary key matches
+                # nothing (a deleted account, or a state that outlived it); and applications raise
+                # either shape from their own validators.  All of them mean the request has no user
+                # to act as, which is what the transports turn into a trip to the login page.
+                if any(
+                    detail["type"] in ("is_instance_of", "value_error")
+                    and detail["loc"] == ("user",)
+                    for detail in error.errors()
+                ):
+                    raise LoginRequired(get_fqn(component_class)) from error
+                else:
+                    raise
 
             # Automatically track parent-child relationship if parent_id is specified
             self.session.register_child(parent_id, component.id)

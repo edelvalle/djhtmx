@@ -15,6 +15,7 @@ from typing import (
     Literal,
     TypeAliasType,
     TypedDict,
+    TypeGuard,
     TypeVar,
     Union,
     get_args,
@@ -58,11 +59,60 @@ class ModelConfig:
 
     """
 
-    select_related: list[str] | tuple[str, ...] | None = None
-    """The arguments to `model.objects.select_related(*select_related)`."""
+    select_related: Sequence[str] | None = None
+    """The arguments to `model.objects.select_related(*select_related)`.
 
-    prefetch_related: list[str | Prefetch] | tuple[str | Prefetch, ...] | None = None
-    """The arguments to `model.objects.prefetch_related(*prefetch_related)`."""
+    Any sequence is accepted, and stored as a tuple; see `__post_init__`.
+
+    """
+
+    prefetch_related: Sequence[str | Prefetch] | None = None
+    """The arguments to `model.objects.prefetch_related(*prefetch_related)`.
+
+    Any sequence is accepted, and stored as a tuple; see `__post_init__`.
+
+    """
+
+    def __post_init__(self):
+        """Store the related-field arguments as tuples, whichever sequence was passed.
+
+        The config is hashed -- the `@cache` on `_ModelBeforeValidator.from_modelclass` keys on it
+        -- so a mutable sequence would raise `TypeError: unhashable type: 'list'` while the
+        annotation is being built, at class-definition time, taking the whole module down with it.
+
+        """
+        self.select_related = _build_field_names("select_related", self.select_related)
+        self.prefetch_related = _build_field_names("prefetch_related", self.prefetch_related)
+
+
+def is_field_name_sequence[T](value: Sequence[T] | str) -> TypeGuard[Sequence[T]]:
+    """Whether `value` is a sequence of field names, and not a single name.
+
+    A `str` satisfies `Sequence[str]`, so neither the annotation nor a type checker objects to
+    `select_related="owner"` -- and iterating it asks for one related field per character.  This
+    tells a real sequence of names from the one value that only looks like one.
+
+    """
+    return isinstance(value, Sequence) and not isinstance(value, str | bytes)
+
+
+def _build_field_names[T](argument: str, value: Sequence[T] | None) -> tuple[T, ...] | None:
+    """Return `value` as a hashable tuple, refusing what only looks like a sequence of names.
+
+    `argument` names the `ModelConfig` field, so the error says which one was wrong.
+
+    """
+    if value is None:
+        return None
+    elif is_field_name_sequence(value):
+        return tuple(value)
+    elif isinstance(value, str):
+        raise TypeError(
+            f"ModelConfig.{argument} takes a sequence of field names, not the bare string "
+            f"{value!r}; wrap it as ({value!r},)"
+        )
+    else:
+        raise TypeError(f"ModelConfig.{argument} takes a sequence of field names, not {value!r}")
 
 
 _DEFAULT_MODEL_CONFIG = ModelConfig()
@@ -112,6 +162,19 @@ class _LazyModelProxy(Generic[M]):  # noqa
             self.__ensure_instance()
         return getattr(self.__instance, name)
 
+    def __bool__(self) -> bool:
+        """Whether the row this proxy stands for exists.
+
+        Resolves the instance, so it costs the query any other access would cost -- but without it
+        the proxy was unconditionally truthy, and `if component.item:` said "yes" for a row that had
+        been deleted, which is the one thing the check is asked.
+
+        For an optional field a missing row is simply `False`.  For a required one there is no
+        truthful answer to give, so this raises the same `ValueError` any other access raises.
+
+        """
+        return self.__ensure_instance() is not None
+
     def __ensure_instance(self):
         if not self.__instance:
             manager = self.__model.objects
@@ -147,11 +210,16 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
             return self._get_instance(value)
 
     def _get_lazy_proxy(self, value):
+        # The config has to reach the proxy: it is the proxy that builds the queryset when the row is
+        # finally fetched, so without it `select_related`/`prefetch_related` were accepted, stored on
+        # the annotation, and then quietly ignored -- the optimization never happened.
         if isinstance(value, _LazyModelProxy):
             instance = value._LazyModelProxy__instance or value._LazyModelProxy__pk
-            return _LazyModelProxy(self.model, instance, allow_none=self.allow_none)
+            return _LazyModelProxy(
+                self.model, instance, self.model_config, allow_none=self.allow_none
+            )
         else:
-            return _LazyModelProxy(self.model, value, allow_none=self.allow_none)
+            return _LazyModelProxy(self.model, value, self.model_config, allow_none=self.allow_none)
 
     def _get_instance(self, value):
         if value is None or isinstance(value, self.model):
@@ -216,7 +284,12 @@ def _Model[M: models.Model](
 
     return Annotated[
         annotated_type,
-        PlainValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
+        # `BeforeValidator`, not `PlainValidator`: a plain validator *replaces* the core schema, so
+        # pydantic's own `is_instance_of(annotated_type)` check never runs and the annotation stops
+        # meaning anything at runtime -- a non-optional field would happily hold the `None` this
+        # validator returns unchanged.  Running before the core schema keeps both: the pk (or the
+        # instance, or the proxy) is resolved here, and pydantic then enforces the declared type.
+        BeforeValidator(_ModelBeforeValidator.from_modelclass(model, model_config, allow_none)),
         PlainSerializer(
             func=_ModelPlainSerializer.from_modelclass(model, allow_none=allow_none),
             return_type=guess_pk_type(model) | None if allow_none else guess_pk_type(model),

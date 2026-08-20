@@ -14,6 +14,7 @@ from djhtmx.introspection import (
     get_related_fields,
     guess_pk_type,
     is_collection_annotation,
+    is_field_name_sequence,
     is_simple_annotation,
     isinstance_safe,
     issubclass_safe,
@@ -98,13 +99,13 @@ class TestSimpleAnnotationWithTypeAlias(TestCase):
 
 class TestModelConfig(TestCase):
     def test_model_config_creation(self):
-        """Test ModelConfig dataclass creation."""
+        """Test ModelConfig dataclass creation, storing the lists it accepts as tuples."""
         config = ModelConfig(
             select_related=["field1", "field2"], prefetch_related=["related1", "related2"]
         )
 
-        self.assertEqual(config.select_related, ["field1", "field2"])
-        self.assertEqual(config.prefetch_related, ["related1", "related2"])
+        self.assertEqual(config.select_related, ("field1", "field2"))
+        self.assertEqual(config.prefetch_related, ("related1", "related2"))
 
     def test_model_config_defaults(self):
         """Test ModelConfig with default values."""
@@ -112,6 +113,76 @@ class TestModelConfig(TestCase):
 
         self.assertIsNone(config.select_related)
         self.assertIsNone(config.prefetch_related)
+
+    def test_model_config_accepts_any_sequence(self):
+        """Any sequence of field names is accepted, and stored as a tuple."""
+        from collections.abc import Sequence
+
+        class Pair(Sequence):
+            """A sequence that is neither a list nor a tuple, for the general contract."""
+
+            def __getitem__(self, index):
+                return ("a", "b")[index]
+
+            def __len__(self):
+                return 2
+
+        self.assertEqual(ModelConfig(select_related=("a", "b")).select_related, ("a", "b"))
+        self.assertEqual(ModelConfig(select_related=["a", "b"]).select_related, ("a", "b"))
+        self.assertEqual(ModelConfig(select_related=Pair()).select_related, ("a", "b"))
+
+    def test_model_config_rejects_a_bare_string(self):
+        """A bare string is a `Sequence[str]`, so nothing else would catch it.
+
+        No type checker objects to it, and iterating it asks for one related field per character --
+        `select_related="owner"` would silently become `select_related("o", "w", ...)`.  Raise where
+        the mistake is, instead of failing later inside the query with a puzzling field name.
+        """
+        for name in ("select_related", "prefetch_related"):
+            with self.subTest(argument=name):
+                with self.assertRaises(TypeError) as context:
+                    ModelConfig(**{name: "content_type"})
+                # The message has to name the argument and offer the fix.
+                self.assertIn(name, str(context.exception))
+                self.assertIn("('content_type',)", str(context.exception))
+
+    def test_model_config_rejects_what_is_not_a_sequence(self):
+        """Anything that cannot be a list of names is refused by the argument's own name."""
+        with self.assertRaises(TypeError) as context:
+            ModelConfig(select_related=42)  # type: ignore[arg-type]
+
+        self.assertIn("select_related", str(context.exception))
+
+    def test_is_field_name_sequence_separates_names_from_a_name(self):
+        """The predicate behind the check: a string is the one sequence that is not a list of names."""
+        self.assertTrue(is_field_name_sequence(("owner",)))
+        self.assertTrue(is_field_name_sequence(["owner", "category"]))
+        self.assertTrue(is_field_name_sequence(()))
+        self.assertFalse(is_field_name_sequence("owner"))
+        self.assertFalse(is_field_name_sequence(b"owner"))
+
+    def test_model_config_is_hashable_when_built_from_lists(self):
+        """The config is a cache key, so a list argument must not make it unhashable.
+
+        A component annotated with the documented list form used to raise `TypeError: unhashable
+        type: 'list'` while its annotation was being built -- at class-definition time, so importing
+        the module was enough to bring the application down.
+        """
+        from typing import Annotated
+
+        from djhtmx.component import HtmxComponent
+
+        config = ModelConfig(lazy=True, select_related=["a"], prefetch_related=["b"])
+        self.assertEqual(
+            hash(config),
+            hash(ModelConfig(lazy=True, select_related=("a",), prefetch_related=("b",))),
+        )
+
+        class ListConfiguredModel(HtmxComponent):
+            _template_name = "ListConfiguredModel.html"
+            item: Annotated[Item, ModelConfig(select_related=["id"], prefetch_related=["id"])]
+
+        self.assertTrue(ListConfiguredModel.model_fields["item"])
 
 
 class TestModelRelatedField(TestCase):
@@ -363,6 +434,55 @@ class TestOptionalModelInComponent(TestCase):
         self.assertIn("Item", error_str)
         self.assertIn("does not exist", error_str)
 
+    def test_component_with_required_model_rejects_none(self):
+        """Test that a required Model field rejects None instead of holding it.
+
+        The field validator runs *before* the core schema precisely so the declared type keeps
+        meaning something at runtime: a plain validator would replace that schema, and the field
+        would hold the None it returned unchanged -- a component reading `self.item` in a handler
+        then fails far from the cause.
+        """
+        from pydantic import ValidationError
+
+        from djhtmx.component import HtmxComponent
+
+        class RequiredModelNone(HtmxComponent):
+            _template_name = "RequiredModelNone.html"
+            item: Item  # Required, not optional
+
+        with self.assertRaises(ValidationError) as context:
+            RequiredModelNone(
+                id="test-component",
+                hx_name="RequiredModelNone",
+                user=None,
+                item=None,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(
+            [(error["type"], error["loc"]) for error in context.exception.errors()],
+            [("is_instance_of", ("item",))],
+        )
+
+    def test_component_with_required_model_accepts_a_pk_and_an_instance(self):
+        """The control: enforcing the annotation must not reject what a component legitimately gets."""
+        from djhtmx.component import HtmxComponent
+
+        item = Item.objects.create(text="Test item")
+
+        class RequiredModelAccepts(HtmxComponent):
+            _template_name = "RequiredModelAccepts.html"
+            item: Item
+
+        from_pk = RequiredModelAccepts(
+            id="from-pk", hx_name="RequiredModelAccepts", user=None, item=item.pk
+        )
+        from_instance = RequiredModelAccepts(
+            id="from-instance", hx_name="RequiredModelAccepts", user=None, item=item
+        )
+
+        self.assertEqual(from_pk.item, item)
+        self.assertEqual(from_instance.item, item)
+
 
 class TestOptionalLazyModelInComponent(TestCase):
     """Test that HtmxComponent with lazy Model | None handles non-existent objects correctly."""
@@ -397,9 +517,8 @@ class TestOptionalLazyModelInComponent(TestCase):
         # Accessing the pk should work without triggering database query
         self.assertEqual(component.item.pk, nonexistent_id)
 
-        # When checking truthiness, it should return False (falsy)
-        # since the object doesn't exist
-        # Note: This behavior depends on __bool__ implementation in _LazyModelProxy
+        # Checking truthiness resolves the row and finds nothing, so the proxy is falsy
+        self.assertFalse(component.item)
 
     def test_component_with_optional_lazy_model_deleted_id(self):
         """Test that component with lazy Model | None handles deleted objects."""
@@ -497,6 +616,101 @@ class TestOptionalLazyModelInComponent(TestCase):
         error_str = str(context.exception)
         self.assertIn("Item", error_str)
         self.assertIn("does not exist", error_str)
+
+        # Truthiness cannot answer for a required field either: the row is gone, and claiming the
+        # proxy is truthy is what used to send callers on to the attribute access above.
+        with self.assertRaises(ValueError):
+            bool(component.item)
+
+    def test_lazy_proxy_truthiness_tracks_the_row(self):
+        """Truthiness must answer for the row, not for the proxy object.
+
+        Without `__bool__` a proxy was truthy no matter what it wrapped, so the one question the
+        check exists to ask -- is this thing there? -- always answered yes, deleted rows included.
+        """
+        from typing import Annotated
+
+        from djhtmx.component import HtmxComponent
+        from djhtmx.introspection import ModelConfig
+
+        class TruthinessLazyModel(HtmxComponent):
+            _template_name = "TruthinessLazyModel.html"
+            item: Annotated[Item | None, ModelConfig(lazy=True)]
+
+        item = Item.objects.create(text="Present")
+
+        def build(value):
+            return TruthinessLazyModel(
+                id="test-component", hx_name="TruthinessLazyModel", user=None, item=value
+            ).item
+
+        self.assertTrue(build(item.pk))
+        self.assertTrue(build(item))
+        self.assertFalse(build(None))
+
+        item.delete()
+        self.assertFalse(build(item.pk))
+
+
+class TestLazyModelRelatedFields(TestCase):
+    """`ModelConfig`'s related-field arguments have to reach the query the proxy finally makes."""
+
+    def test_select_related_saves_the_query_for_the_related_object(self):
+        """The proxy fetches the row; if the config never reaches it, the JOIN never happens."""
+        from typing import Annotated
+
+        from django.contrib.auth.models import Permission
+
+        from djhtmx.component import HtmxComponent
+        from djhtmx.introspection import ModelConfig
+
+        class SelectRelatedLazyModel(HtmxComponent):
+            _template_name = "SelectRelatedLazyModel.html"
+            permission: Annotated[
+                Permission, ModelConfig(lazy=True, select_related=("content_type",))
+            ]
+
+        # Read the expected value up front: the comparison must not be what pays for the JOIN.
+        permission = Permission.objects.select_related("content_type").first()
+        assert permission is not None
+        expected_app_label = permission.content_type.app_label
+
+        component = SelectRelatedLazyModel(
+            id="test-component",
+            hx_name="SelectRelatedLazyModel",
+            user=None,
+            permission=permission.pk,
+        )
+
+        # One query resolves the row *and* its content type, because the config reached the proxy.
+        with self.assertNumQueries(1):
+            self.assertEqual(component.permission.pk, permission.pk)
+            self.assertEqual(component.permission.content_type.app_label, expected_app_label)
+
+    def test_prefetch_related_is_applied_when_the_row_is_fetched(self):
+        from typing import Annotated
+
+        from django.contrib.auth.models import Group, User
+
+        from djhtmx.component import HtmxComponent
+        from djhtmx.introspection import ModelConfig
+
+        class PrefetchRelatedLazyModel(HtmxComponent):
+            _template_name = "PrefetchRelatedLazyModel.html"
+            member: Annotated[User, ModelConfig(lazy=True, prefetch_related=("groups",))]
+
+        member = User.objects.create_user(username="member")
+        member.groups.add(Group.objects.create(name="crew"))
+
+        component = PrefetchRelatedLazyModel(
+            id="test-component", hx_name="PrefetchRelatedLazyModel", user=None, member=member.pk
+        )
+
+        # Two queries: the row, plus the prefetch the config asked for.  Reading the groups a second
+        # time hits the prefetch cache instead of the database, which is the whole point.
+        with self.assertNumQueries(2):
+            self.assertEqual([group.name for group in component.member.groups.all()], ["crew"])
+            self.assertEqual([group.name for group in component.member.groups.all()], ["crew"])
 
 
 class TestQuerySetInComponent(TestCase):
