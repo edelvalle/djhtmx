@@ -86,15 +86,14 @@ Good:
 ```python
 from typing import Literal, assert_never
 
-def process_value(value: Literal['a', 'b', 'c']):
+def process_value(value: Literal['a', 'b']):
     match value:
         case 'a': return 'Alpha'
         case 'b': return 'Beta'
-        case 'c': return 'Gamma'
         case unreachable: assert_never(unreachable)
 
 # Bad - using underscore hides errors when new cases are added
-def process_value_bad(value: Literal['a', 'b', 'c']):
+def process_value_bad(value: Literal['a', 'b']):
     match value:
         case 'a': return 'Alpha'
         case 'b': return 'Beta'
