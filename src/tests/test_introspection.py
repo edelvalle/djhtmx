@@ -327,115 +327,87 @@ class TestComplexDataTypes(TestCase):
 
 
 class TestOptionalModelInComponent(TestCase):
-    """Test that HtmxComponent with Model | None handles non-existent objects correctly."""
+    """Model fields are resolved (pk -> instance) by their field validator during
+    construction (sync ORM, on the pool thread).  A bare pk is resolved; a
+    missing pk yields None for optional fields and raises for required ones."""
 
-    def test_component_with_optional_model_nonexistent_id(self):
-        """Test that component with Model | None sets field to None when ID doesn't exist."""
+    def _build(self, component_class, state):
+        return component_class(id="c", hx_name=component_class.__name__, user=None, **state)
+
+    def test_optional_model_nonexistent_id(self):
         from uuid import uuid4
 
         from djhtmx.component import HtmxComponent
 
-        # Create a test component with optional Item field
         class OptionalModelNonexistent(HtmxComponent):
             _template_name = "OptionalModelNonexistent.html"
             item: Item | None
 
-        # Generate a UUID that doesn't exist in the database
-        nonexistent_id = uuid4()
-
-        # Build the component with the non-existent ID
-        component = OptionalModelNonexistent(
-            id="test-component",
-            hx_name="OptionalModelNonexistent",
-            user=None,
-            item=nonexistent_id,
-        )
-
-        # The item field should be None instead of raising an exception
+        component = self._build(OptionalModelNonexistent, {"item": uuid4()})
         self.assertIsNone(component.item)
 
-    def test_component_with_optional_model_deleted_id(self):
-        """Test that component with Model | None sets field to None when object is deleted."""
+    def test_optional_model_deleted_id(self):
         from djhtmx.component import HtmxComponent
 
-        # Create an item and then delete it
         item = Item.objects.create(text="To be deleted")
         item_id = item.id
         item.delete()
 
-        # Create a test component with optional Item field
         class OptionalModelDeleted(HtmxComponent):
             _template_name = "OptionalModelDeleted.html"
             item: Item | None
 
-        # Build the component with the deleted item's ID
-        component = OptionalModelDeleted(
-            id="test-component",
-            hx_name="OptionalModelDeleted",
-            user=None,
-            item=item_id,
-        )
-
-        # The item field should be None since the object was deleted
+        component = self._build(OptionalModelDeleted, {"item": item_id})
         self.assertIsNone(component.item)
 
-    def test_component_with_optional_model_existing_id(self):
-        """Test that component with Model | None loads existing objects correctly."""
+    def test_optional_model_existing_id(self):
         from djhtmx.component import HtmxComponent
 
-        # Create a real item
         item = Item.objects.create(text="Test item")
 
-        # Create a test component with optional Item field
         class OptionalModelExisting(HtmxComponent):
             _template_name = "OptionalModelExisting.html"
             item: Item | None
 
-        # Build the component with the existing item's ID
-        component = OptionalModelExisting(
-            id="test-component",
-            hx_name="OptionalModelExisting",
-            user=None,
-            item=item.id,
-        )
-
-        # The item field should have the loaded item
-        self.assertIsNotNone(component.item)
-        self.assertEqual(component.item.id, item.id)
+        component = self._build(OptionalModelExisting, {"item": item.id})
+        self.assertEqual(component.item, item)
         self.assertEqual(component.item.text, "Test item")
 
-    def test_component_with_required_model_nonexistent_id(self):
-        """Test that component with required Model raises ValidationError for non-existent ID."""
+    def test_required_model_nonexistent_id_raises(self):
         from uuid import uuid4
 
         from pydantic import ValidationError
 
         from djhtmx.component import HtmxComponent
 
-        # Create a test component with required Item field
         class RequiredModelNonexistent(HtmxComponent):
             _template_name = "RequiredModelNonexistent.html"
-            item: Item  # Required, not optional
+            item: Item  # required
 
-        # Generate a UUID that doesn't exist in the database
-        nonexistent_id = uuid4()
+        with self.assertRaises(ValidationError) as ctx:
+            self._build(RequiredModelNonexistent, {"item": uuid4()})
+        self.assertIn("does not exist", str(ctx.exception))
 
-        # Should raise ValidationError, not DoesNotExist
-        with self.assertRaises(ValidationError) as context:
-            RequiredModelNonexistent(
-                id="test-component",
-                hx_name="RequiredModelNonexistent",
-                user=None,
-                item=nonexistent_id,
-            )
+    def test_validator_resolves_bare_pk(self):
+        # Constructing directly from a pk works: the validator resolves it (an
+        # existing pk -> instance; a missing optional pk -> None).
+        from uuid import uuid4
 
-        # Verify the error message contains useful information
-        error_str = str(context.exception)
-        self.assertIn("Item", error_str)
-        self.assertIn("does not exist", error_str)
+        from djhtmx.component import HtmxComponent
 
-    def test_component_with_required_model_rejects_none(self):
-        """Test that a required Model field rejects None instead of holding it.
+        class DirectModel(HtmxComponent):
+            _template_name = "DirectModel.html"
+            item: Item | None
+
+        item = Item.objects.create(text="direct")
+        resolved = DirectModel(id="c", hx_name="DirectModel", user=None, item=item.pk)
+        self.assertEqual(resolved.item, item)
+
+        missing = DirectModel(id="c", hx_name="DirectModel", user=None, item=uuid4())
+        self.assertIsNone(missing.item)
+
+    def test_required_model_rejects_none(self):
+        """A required Model field rejects None instead of holding it.
 
         The field validator runs *before* the core schema precisely so the declared type keeps
         meaning something at runtime: a plain validator would replace that schema, and the field
@@ -448,22 +420,17 @@ class TestOptionalModelInComponent(TestCase):
 
         class RequiredModelNone(HtmxComponent):
             _template_name = "RequiredModelNone.html"
-            item: Item  # Required, not optional
+            item: Item  # required
 
-        with self.assertRaises(ValidationError) as context:
-            RequiredModelNone(
-                id="test-component",
-                hx_name="RequiredModelNone",
-                user=None,
-                item=None,  # type: ignore[arg-type]
-            )
+        with self.assertRaises(ValidationError) as ctx:
+            self._build(RequiredModelNone, {"item": None})
 
         self.assertEqual(
-            [(error["type"], error["loc"]) for error in context.exception.errors()],
+            [(error["type"], error["loc"]) for error in ctx.exception.errors()],
             [("is_instance_of", ("item",))],
         )
 
-    def test_component_with_required_model_accepts_a_pk_and_an_instance(self):
+    def test_required_model_accepts_a_pk_and_an_instance(self):
         """The control: enforcing the annotation must not reject what a component legitimately gets."""
         from djhtmx.component import HtmxComponent
 
@@ -473,15 +440,8 @@ class TestOptionalModelInComponent(TestCase):
             _template_name = "RequiredModelAccepts.html"
             item: Item
 
-        from_pk = RequiredModelAccepts(
-            id="from-pk", hx_name="RequiredModelAccepts", user=None, item=item.pk
-        )
-        from_instance = RequiredModelAccepts(
-            id="from-instance", hx_name="RequiredModelAccepts", user=None, item=item
-        )
-
-        self.assertEqual(from_pk.item, item)
-        self.assertEqual(from_instance.item, item)
+        self.assertEqual(self._build(RequiredModelAccepts, {"item": item.pk}).item, item)
+        self.assertEqual(self._build(RequiredModelAccepts, {"item": item}).item, item)
 
 
 class TestOptionalLazyModelInComponent(TestCase):

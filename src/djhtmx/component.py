@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
+from inspect import isasyncgenfunction
 from os.path import basename
 from typing import (
     TYPE_CHECKING,
@@ -175,7 +176,14 @@ class HtmxComponent(BaseModel):
         }
 
         for name, params in cls._event_handler_params.items():
-            if params and not hasattr((attr := getattr(cls, name)), "raw_function"):
+            if (
+                params
+                and not hasattr((attr := getattr(cls, name)), "raw_function")
+                # `validate_call` does not support async generator functions and
+                # would obscure their `isasyncgenfunction` marker from the
+                # dispatcher's auto-wrap detection.  Leave them unwrapped.
+                and not isasyncgenfunction(attr)
+            ):
                 setattr(
                     cls,
                     name,

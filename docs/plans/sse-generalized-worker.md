@@ -810,7 +810,7 @@ SSE handler yields Emit(FeedbackMessage.success(...))
 ```bash
 make test
 make lint
-make pyright
+make typecheck
 ```
 
 ## Out of scope (follow-ups)

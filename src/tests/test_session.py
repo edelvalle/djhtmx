@@ -8,6 +8,61 @@ from djhtmx.component import HtmxComponent
 from djhtmx.repo import Session
 
 
+class _FakeSyncPipe:
+    """Minimal sync redis pipeline stub for the in-memory white-box tests."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def watch(self, *keys):
+        pass
+
+    def smembers(self, key):
+        return set()
+
+    def multi(self):
+        pass
+
+    def execute(self):
+        return []
+
+    def reset(self):
+        pass
+
+    def __getattr__(self, _name):
+        # buffered commands (hset/hdel/expire/srem/sadd/set/delete...) are no-ops
+        return lambda *a, **k: self
+
+
+class _FakeSyncRedis:
+    """Sync redis stub: empty reads, no-op writes.  Keeps the white-box
+    `_run_command` tests fully in-memory; the pipeline runs synchronously and
+    flushes over the sync redis client."""
+
+    def pipeline(self, transaction=True):
+        return _FakeSyncPipe()
+
+    def hgetall(self, key):
+        return {}
+
+    def memory_usage(self, key):
+        return 0
+
+
+def run_command(processor: CommandProcessor, commands) -> list:
+    """Drain the `_run_command` generator for a single command step, with the
+    redis layer stubbed so the test stays in-memory."""
+    fake = _FakeSyncRedis()
+    with (
+        patch("djhtmx.repo.conn", fake),
+        patch("djhtmx.sse.get_sync_conn", return_value=fake),
+    ):
+        return list(processor._run_command(commands))
+
+
 class MockComponent(HtmxComponent):
     """Mock component for testing."""
 
@@ -234,7 +289,7 @@ class TestAutomaticRelationshipTracking(TestCase):
 
         # Process the command through the repository
         commands = CommandQueue([build_command])
-        list(CommandProcessor(repo)._run_command(commands))
+        run_command(CommandProcessor(repo), commands)
 
         # Verify parent-child relationship was automatically established
         self.assertIn(parent_id, session.children)
@@ -266,7 +321,7 @@ class TestAutomaticRelationshipTracking(TestCase):
         commands = CommandQueue([build_command])
 
         # Process the command
-        list(CommandProcessor(repo)._run_command(commands))
+        run_command(CommandProcessor(repo), commands)
 
         # Verify no self-relationship was created
         self.assertEqual(len(session.children), 0)
@@ -297,7 +352,7 @@ class TestAutomaticRelationshipTracking(TestCase):
         commands = CommandQueue([build_command])
 
         # Process the command
-        list(CommandProcessor(repo)._run_command(commands))
+        run_command(CommandProcessor(repo), commands)
 
         # Verify no relationship was created
         self.assertEqual(len(session.children), 0)
@@ -331,7 +386,7 @@ class TestAutomaticRelationshipTracking(TestCase):
                 component=MockComponent, state={"id": child_id}, oob="true", parent_id=parent_id
             )
             commands = CommandQueue([build_command])
-            list(CommandProcessor(repo)._run_command(commands))
+            run_command(CommandProcessor(repo), commands)
 
         # Verify relationships were established
         self.assertEqual(len(session.children[parent_id]), 2)

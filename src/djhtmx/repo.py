@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import random
 from collections import defaultdict
-from collections.abc import AsyncIterable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from dataclasses import field as Field
 from typing import Any
@@ -36,11 +36,14 @@ from .settings import (
     SESSION_TTL,
     conn,
 )
-from .utils import compact_hash, db, get_fqn, get_params
+from .utils import compact_hash, get_fqn, get_params
 
 signer = Signer()
 
 logger = logging.getLogger(__name__)
+
+# Sentinel distinguishing "user not provided" from an explicit `user=None`.
+_UNSET: Any = object()
 
 
 # `ProcessedCommand` is re-exported from `.commands` so existing imports
@@ -58,6 +61,11 @@ class Repository:
     For instance, if a component is subscribed to an event and the event fires
     during the request, that component is rendered.
 
+    The repository is synchronous throughout: it is built and driven on a
+    sync-work pool thread (see `command_processor` and `sse_executor`), so every
+    ORM touch — Model-field resolution, the `request.user` evaluation, the
+    template render — happens on the thread that owns the DB connection.
+
     """
 
     @staticmethod
@@ -68,6 +76,8 @@ class Repository:
     def from_request(
         cls,
         request: HttpRequest,
+        *,
+        user: Any = _UNSET,
     ) -> Repository:
         """Get or build the Repository from the request.
 
@@ -76,6 +86,11 @@ class Repository:
 
         Otherwise, build the repository from the request's POST and attach it
         to the request.
+
+        `user` may be passed explicitly; otherwise it falls back to the lazy
+        `request.user`.  The lazy proxy is resolved later, when the dispatch
+        evaluates it on the pool thread (never on the event loop), so building
+        the repository itself triggers no DB hit.
 
         """
         from django.contrib.auth.models import AnonymousUser
@@ -91,7 +106,7 @@ class Repository:
             session = Session(session_id)
 
             result = cls(
-                user=getattr(request, "user", AnonymousUser()),
+                user=getattr(request, "user", AnonymousUser()) if user is _UNSET else user,
                 session=session,
                 params=get_params(request),
             )
@@ -142,22 +157,9 @@ class Repository:
         from .sse import unregister_consumer
 
         before = set(self.session.unregistered)
-        self.session.unregister_component(component_id)
+        self.session.unregister_component(component_id)  # in-memory
         for id_ in self.session.unregistered - before:
             unregister_consumer(self.session.id, id_)
-
-    async def adispatch_event(  # pragma: no cover
-        self,
-        component_id: str,
-        event_handler: str,
-        event_data: dict[str, Any],
-    ) -> AsyncIterable[ProcessedCommand]:
-        from .command_processor import CommandProcessor
-
-        processor = CommandProcessor(self)
-        processed_commands = processor.process([Execute(component_id, event_handler, event_data)])
-        while command := await db(next)(processed_commands, None):
-            yield command
 
     def dispatch_event(
         self,
@@ -170,14 +172,6 @@ class Repository:
         yield from CommandProcessor(self).process([
             Execute(component_id, event_handler, event_data)
         ])
-
-    def get_components_subscribed_to(
-        self, signals: set[tuple[str, str]]
-    ) -> Iterable[HtmxComponent | Destroy]:
-        return (
-            self.get_component_by_id(c_id)
-            for c_id in sorted(self.session.get_component_ids_subscribed_to(signals))
-        )
 
     def update_params_from(self, component: HtmxComponent) -> set[str]:
         """Updates self.params based on the state of the component
@@ -203,7 +197,7 @@ class Repository:
         If the component was already built, get it unchanged, otherwise build
         it from the request's payload and return it.
 
-        If the `component_id` cannot be found, raise a KeyError.
+        If the `component_id` cannot be found, return a `Destroy`.
 
         """
         if state := self.session.get_state(component_id):
@@ -214,6 +208,12 @@ class Repository:
             )
             return Destroy(component_id)
 
+    def get_components_subscribed_to(
+        self, signals: set[tuple[str, str]]
+    ) -> Iterable[HtmxComponent | Destroy]:
+        for c_id in sorted(self.session.get_component_ids_subscribed_to(signals)):
+            yield self.get_component_by_id(c_id)
+
     def build(
         self,
         component_name: str,
@@ -221,19 +221,37 @@ class Repository:
         retrieve_state: bool = True,
         parent_id: str | None = None,
     ):
-        """Build (or update) a component's state."""
+        """Build (or update) a component's state.
+
+        Model-typed fields are resolved (pk -> instance) by their field
+        validator during construction, with the sync ORM on the calling pool
+        thread; lazy Model fields defer that query to first access.
+        """
+        if retrieve_state and (component_id := state.get("id")):
+            state = (self.session.get_state(component_id) or {}) | state
+        state = self._apply_query_patchers(component_name, state)
+        return self._construct(component_name, state, parent_id)
+
+    def _apply_query_patchers(self, component_name: str, state: dict[str, Any]) -> dict[str, Any]:
+        """Overlay query-string values onto the state (pure CPU, no I/O).
+
+        Model query fields carry a pk; the instance is resolved afterwards by
+        the field validator during construction.
+        """
+        for patcher in _get_query_patchers(component_name):
+            state |= patcher.get_update_for_state(self.params)
+        return state
+
+    def _construct(self, component_name: str, state: dict[str, Any], parent_id: str | None):
+        """Construct the pydantic component from its state dict.
+
+        Model-field validators resolve pk -> instance here (sync ORM), and the
+        lazy `self.user` is evaluated here too — all on the pool thread that owns
+        the connection, never on the event loop.
+        """
         from django.contrib.auth.models import AnonymousUser
 
         with tracing_span("Repository.build", component_name=component_name):
-            # Retrieve state from storage
-            if retrieve_state and (component_id := state.get("id")):
-                state = (self.session.get_state(component_id) or {}) | state
-
-            # Patch it with whatever is the the GET params if needed
-            for patcher in _get_query_patchers(component_name):
-                state |= patcher.get_update_for_state(self.params)
-
-            # Inject component name and user
             kwargs = state | {
                 "hx_name": component_name,
                 "session_id": self.session.id,
@@ -241,7 +259,7 @@ class Repository:
             }
             component_class = REGISTRY[component_name]
             try:
-                component = component_class(**kwargs)
+                component = component_class(**kwargs)  # type: ignore[arg-type]
             except ValidationError as error:
                 # Every way of rejecting the user leaves here as one exception, so a caller never
                 # has to tell them apart.  Pydantic's own type check reports `is_instance_of` for a
@@ -257,10 +275,7 @@ class Repository:
                     raise LoginRequired(get_fqn(component_class)) from error
                 else:
                     raise
-
-            # Automatically track parent-child relationship if parent_id is specified
             self.session.register_child(parent_id, component.id)
-
             return component
 
     def get_components_by_names(self, *names: str) -> Iterable[HtmxComponent]:
@@ -278,6 +293,24 @@ class Repository:
         lazy: bool | None = None,
         context: dict[str, Any] | None = None,
     ) -> SafeString:
+        """Render a component to HTML and register its SSE consumer record."""
+        self.session.store(component)
+        from .sse import register_component
+
+        register_component(self.session.id, component)
+        return self._render_template(
+            component, oob=oob, template=template, lazy=lazy, context=context
+        )
+
+    def _render_template(
+        self,
+        component: HtmxComponent,
+        oob: str | None = None,
+        template: str | None = None,
+        lazy: bool | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> SafeString:
+        """Build the render context and render the template (ORM/CPU, no Redis)."""
         lazy = component.lazy if lazy is None else lazy
         with tracing_span(
             "Repository.render_html",
@@ -286,11 +319,6 @@ class Repository:
             template=str(template),
             lazy=str(lazy),
         ):
-            self.session.store(component)
-            from .sse import register_component
-
-            register_component(self.session.id, component)
-
             final_context = {
                 "htmx_repo": self,
                 "hx_oob": oob == "true",
@@ -301,7 +329,7 @@ class Repository:
                 template = template or component._template_name_lazy
                 final_context |= {"hx_lazy": True} | component._get_lazy_context() | (context or {})
             else:
-                final_context |= component._get_context() if context is None else context
+                final_context |= component._get_context() if context is None else context  # type: ignore[call-overload]
 
             html = mark_safe(component._get_template(template)(final_context).strip())
 
@@ -383,6 +411,9 @@ class Session:
 
     def get_component_ids_subscribed_to(self, signals: set[tuple[str, str]]) -> Iterable[str]:
         self._ensure_read()
+        yield from self._ids_subscribed_to(signals)
+
+    def _ids_subscribed_to(self, signals: set[tuple[str, str]]) -> Iterable[str]:
         for component_id, subscribed_to in self.subscriptions.items():
             # here we ignore signals emitted by the component it self
             if subscribed_to.intersection(signal for signal, cid in signals if cid != component_id):
@@ -392,21 +423,25 @@ class Session:
         self._ensure_read()
         return [json.loads(state) for state in self.states.values()]
 
+    def _apply_raw_states(self, raw: dict) -> None:
+        """Populate the in-memory maps from a raw `{id: state}` Redis hash."""
+        for component_id, state in raw.items():
+            component_id = component_id.decode()
+            if component_id == "__subs__":
+                # dict[component_id -> list[signals]]
+                for component_id, signals in json.loads(state).items():
+                    self.subscriptions[component_id] = set(signals)
+            elif component_id == "__children__":
+                # dict[parent_id -> list[child_ids]]
+                for parent_id, child_ids in json.loads(state).items():
+                    self.children[parent_id] = set(child_ids)
+            else:
+                self.states[component_id] = state.decode()
+        self.read = True
+
     def _ensure_read(self):
         if not self.read:
-            for component_id, state in conn.hgetall(f"{self.id}:states").items():  # type: ignore
-                component_id = component_id.decode()
-                if component_id == "__subs__":
-                    # dict[component_id -> list[signals]]
-                    for component_id, signals in json.loads(state).items():
-                        self.subscriptions[component_id] = set(signals)
-                elif component_id == "__children__":
-                    # dict[parent_id -> list[child_ids]]
-                    for parent_id, child_ids in json.loads(state).items():
-                        self.children[parent_id] = set(child_ids)
-                else:
-                    self.states[component_id] = state.decode()
-            self.read = True
+            self._apply_raw_states(conn.hgetall(f"{self.id}:states"))  # type: ignore
 
     def flush(self, ttl: int = SESSION_TTL):
         if self.is_dirty:
@@ -429,18 +464,21 @@ class Session:
             # https://redis.io/docs/latest/commands/memory-usage/
             #
             # So we perform a trivial sampling with some prob to test the memory usage of the state.
-            probe = random.random() <= KEY_SIZE_SAMPLE_PROB
-            if probe and isinstance(usage := conn.memory_usage(key), int):
-                if KEY_SIZE_ERROR_THRESHOLD and usage > KEY_SIZE_ERROR_THRESHOLD:
-                    logger.error(
-                        "HTMX session's size (%s) exceeded the size threshold %s",
-                        usage,
-                        KEY_SIZE_ERROR_THRESHOLD,
-                    )
-                elif KEY_SIZE_WARN_THRESHOLD and usage > KEY_SIZE_WARN_THRESHOLD:
-                    logger.warning(
-                        "HTMX session's size (%s) exceeded the size threshold %s",
-                        usage,
-                        KEY_SIZE_WARN_THRESHOLD,
-                    )
+            if random.random() <= KEY_SIZE_SAMPLE_PROB:
+                self._check_key_size(conn.memory_usage(key))
             self.is_dirty = False
+
+    def _check_key_size(self, usage: object) -> None:
+        if isinstance(usage, int):
+            if KEY_SIZE_ERROR_THRESHOLD and usage > KEY_SIZE_ERROR_THRESHOLD:
+                logger.error(
+                    "HTMX session's size (%s) exceeded the size threshold %s",
+                    usage,
+                    KEY_SIZE_ERROR_THRESHOLD,
+                )
+            elif KEY_SIZE_WARN_THRESHOLD and usage > KEY_SIZE_WARN_THRESHOLD:
+                logger.warning(
+                    "HTMX session's size (%s) exceeded the size threshold %s",
+                    usage,
+                    KEY_SIZE_WARN_THRESHOLD,
+                )
