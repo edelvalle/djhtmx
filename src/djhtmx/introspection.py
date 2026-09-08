@@ -622,6 +622,10 @@ def is_basic_type(ann):
         #  __origin__ -> model in 'Annotated[model, BeforeValidator(...), PlainSerializer(...)]'
         or issubclass_safe(ann, models.Model)
         or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
+        #  __origin__ -> _LazyModelProxy for a `ModelConfig(lazy=True)` field, which is carried in
+        #  the URL as its pk like any other Model field -- and reading that pk off the proxy costs
+        #  no query.
+        or issubclass_safe(getattr(ann, "__origin__", None), _LazyModelProxy)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
         or is_collection_annotation(ann)
         or is_literal_annotation(ann)

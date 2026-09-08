@@ -8,6 +8,10 @@ from fision.todo.models import Item  # type: ignore[import-untyped]
 from pydantic import Field
 
 from djhtmx.component import HtmxComponent, Query
+from djhtmx.introspection import (
+    ModelConfig,
+    _ModelBeforeValidator,  # noqa: PLC2701  (white-box test)
+)
 from djhtmx.query import QueryPatcher
 
 # A PEP 695 type alias used as the type of a `Query` field.
@@ -123,3 +127,51 @@ class TestQueryPatcherInvalidValue(TestCase):
         signals = patcher.get_updates_for_params(self.item, params)
         self.assertEqual(params[patcher.param_name], str(self.item.pk))
         self.assertEqual(signals, [patcher.signal_name])
+
+
+class TestQueryPatcherLazyModelField(TestCase):
+    """Regression: a `ModelConfig(lazy=True)` Model field must work as a `Query` field.
+
+    The annotation gate sees `_LazyModelProxy[Item] | None` rather than the model itself, so it
+    needs a branch of its own.  Without it the field is refused with ``Invalid type annotation ...
+    for a query string`` while the class is being defined, which takes down the whole module
+    declaring the component.
+
+    Lazy is the case the pk-in-the-URL design fits best: a proxy knows its pk without fetching the
+    row, so neither direction of the round-trip costs a query.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.item = Item.objects.create(text="hello")
+
+    def _patcher(self):
+        class _Concrete(HtmxComponent, public=False):
+            _template_name = "_Concrete.html"
+            editing: Annotated[
+                Item | None, ModelConfig(lazy=True), Query("editing"), Field(default=None)
+            ]
+
+        [patcher] = list(QueryPatcher.for_component(_Concrete))
+        return patcher
+
+    def _proxy(self):
+        """The value a lazy field holds: whatever its validator builds out of a pk."""
+        return _ModelBeforeValidator(Item, ModelConfig(lazy=True), allow_none=True)(self.item.pk)
+
+    def test_patcher_writes_the_pk_without_fetching_the_row(self):
+        patcher = self._patcher()
+        proxy = self._proxy()
+        params = QueryDict("", mutable=True)
+        # The pk is already on the proxy, and the patcher compares the value with `is not None`
+        # instead of asking for its truthiness -- truthiness resolves the row, by design.
+        with self.assertNumQueries(0):
+            patcher.get_updates_for_params(proxy, params)
+        self.assertEqual(params[patcher.param_name], str(self.item.pk))
+
+    def test_patcher_reads_the_pk_back_from_the_url(self):
+        patcher = self._patcher()
+        params = QueryDict(f"{patcher.param_name}={self.item.pk}", mutable=True)
+        # The pk reaches the state as a pk; the proxy wrapping it is built by the field validator
+        # during build, not here.
+        self.assertEqual(patcher.get_update_for_state(params), {patcher.field_name: self.item.pk})
