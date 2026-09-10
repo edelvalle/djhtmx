@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 
-{% load htmx %}
+{% load static htmx %}
 
 {% block body %}
   {% htmx 'TodoList' showing=showing %}
+  {% if ai_enabled %}
+    {% htmx 'AgentChat' id='agent-chat' %}
+    <script src="{% static 'agent-chat.js' %}" defer></script>
+  {% endif %}
 {% endblock body %}

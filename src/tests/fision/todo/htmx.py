@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass
 from enum import StrEnum
@@ -10,13 +11,22 @@ from django.contrib.auth.models import User
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from pydantic import BaseModel, Field
+from pydantic_ai import (
+    AgentRunResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
+from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from djhtmx.commands import BuildAndRender, Destroy, Emit, Focus, SkipRender
 from djhtmx.component import HtmxComponent, Query
-from djhtmx.sse import SSEEventEnvelope, SSESubscription, emit_sse_event
+from djhtmx.sse import SSEEventEnvelope, SSESubscription, aemit_sse_event, emit_sse_event
 from djhtmx.utils import run_on_commit
 
-from .models import Item
+from .agent import TodoAgentDeps, agent
+from .models import ChatMessage, Conversation, Item, Role, Status
 
 
 @dataclass
@@ -294,3 +304,178 @@ def emit_todo_item_removed(sender, instance: Item, **kwargs):
         TodoItemRemoved(item_id=item_id),
         topics={TODO_ITEMS_TOPIC, todo_item_topic(item_id)},
     )
+
+
+class AgentReplyUpdated(BaseModel):
+    message_id: UUID
+
+
+class AgentChat(HtmxComponent):
+    """A chat panel over the todo list.  Mount it only when `todo.agent.is_enabled()`."""
+
+    _template_name = "todo/AgentChat.html"
+
+    conversation: Conversation | None = None
+
+    @property
+    def messages(self):
+        if self.conversation:
+            return self.conversation.messages.all()
+        else:
+            return ChatMessage.objects.none()
+
+    async def send(self, prompt: str):
+        """Record the prompt and open an empty reply for the agent to fill."""
+        # An async generator, not a plain `async def`: `validate_call` wraps a
+        # coroutine handler that takes arguments into something the dispatcher no
+        # longer recognises as async, and the body then never runs.
+        prompt = prompt.strip()
+        # Append rather than let the panel re-render: a full render replaces the
+        # scroll container, which resets it to the top of the conversation.
+        yield SkipRender(self)
+        if prompt:
+            conversation = self.conversation or await Conversation.objects.acreate()
+            self.conversation = conversation
+            position = await conversation.messages.acount()
+            question = await ChatMessage.objects.acreate(
+                conversation=conversation,
+                position=position,
+                role=Role.USER,
+                text=prompt,
+            )
+            # The agent runs in a second dispatch: this one has to return for the
+            # bubble to reach the DOM before any streamed delta can land on it.
+            reply = await ChatMessage.objects.acreate(
+                conversation=conversation,
+                position=position + 1,
+                role=Role.AGENT,
+                status=Status.PENDING,
+            )
+            for message in (question, reply):
+                yield BuildAndRender.append(
+                    "#agent-chat-log",
+                    AgentChatMessage,
+                    parent_id=self.id,
+                    id=message.component_id,
+                    message=message,
+                )
+        yield Focus(f"#{self.id} input[name=prompt]")
+
+
+class AgentChatMessage(HtmxComponent):
+    """One chat bubble.  An agent reply also owns the agent run that fills it."""
+
+    _template_name = "todo/AgentChatMessage.html"
+
+    message: ChatMessage | None
+
+    @property
+    def sse_subscriptions(self):
+        if self.message:
+            return {SSESubscription(AgentReplyUpdated, agent_message_topic(self.message.id))}
+        else:
+            return set()
+
+    def _handle_sse_events(self, envelope: SSEEventEnvelope[AgentReplyUpdated]):
+        # No yields: the default render re-reads `message` from the database, which is
+        # the whole mechanism -- the reply grows in place as `stream` writes it.
+        return
+
+    async def stream(self):
+        """Run the agent for this reply, publishing its text as it arrives.
+
+        Triggered once per reply, by the bubble itself; a reply that is no longer
+        `PENDING` is left alone.
+
+        """
+        # Occupies one sync-work pool thread, and so one DB connection, for as long
+        # as the model takes: concurrent chats are bounded by `DJHTMX_SYNC_WORKERS`,
+        # shared with every other dispatch.
+        yield SkipRender(self)
+
+        message = self.message
+        if agent and message and message.status == Status.PENDING:
+            conversation = await Conversation.objects.aget(pk=message.conversation_id)
+            prompt = await conversation.messages.aget(position=message.position - 1)
+            history = ModelMessagesTypeAdapter.validate_python(conversation.history)
+
+            # Leave PENDING before calling the model: the re-renders this handler
+            # causes would otherwise ask for a second run of the same reply.
+            message.status = Status.STREAMING
+            await message.asave(update_fields=["status"])
+
+            text = ""
+            flushed = 0
+            deps = TodoAgentDeps()
+            try:
+                async with agent.run_stream_events(
+                    prompt.text,
+                    message_history=history,
+                    conversation_id=str(conversation.pk),
+                    deps=deps,
+                ) as events:
+                    async for event in events:
+                        match event:
+                            # The first chunk of a text part arrives as the part
+                            # itself; only the ones after it are deltas.  Matching
+                            # deltas alone silently drops the opening words.
+                            case (
+                                PartStartEvent(part=TextPart(content=str() as delta))
+                                | PartDeltaEvent(delta=TextPartDelta(content_delta=delta))
+                            ):
+                                text += delta
+                                # Publishing over SSE, not yielding: commands yielded
+                                # here are drained into a list and delivered only
+                                # once the handler returns.
+                                if len(text) - flushed >= FLUSH_EVERY_CHARS:
+                                    flushed = len(text)
+                                    await self._publish(message, text)
+                            case AgentRunResultEvent(result=result):
+                                # `all_messages()` rather than appending
+                                # `new_messages()` (the cheaper write the docs
+                                # suggest for a plain chat): compaction rewrites the
+                                # history in place, so only storing the whole thing
+                                # carries the summary forward -- appending would keep
+                                # replaying the turns it just collapsed.
+                                conversation.history = ModelMessagesTypeAdapter.dump_python(
+                                    result.all_messages(), mode="json"
+                                )
+                                await conversation.asave(update_fields=["history"])
+            except Exception as error:
+                # Own the failure instead of letting the dispatcher's handler swallow
+                # it: a reply left `PENDING` would ask to be run again on every
+                # reload.
+                logger.exception("The todo agent failed to answer %s", message.pk)
+                await self._publish(message, f"{text}\n\n⚠ {error}", status=Status.FAILED)
+            else:
+                # The tools only recorded their edits; this is where they land, out
+                # of the run and back under our own DB connection.
+                await deps.flush()
+                await self._publish(message, text, status=Status.DONE)
+
+    async def _publish(self, message: ChatMessage, text: str, status: str | None = None):
+        """Persist the reply's text so far and wake every browser showing it."""
+        # Stripped: models like to open a reply with a newline, and `pre-wrap`
+        # would render it as a blank first line.
+        message.text = text.strip()
+        updated = ["text"]
+        if status:
+            message.status = status
+            updated.append("status")
+        await message.asave(update_fields=updated)
+        await aemit_sse_event(
+            AgentReplyUpdated(message_id=message.pk),
+            topics=[agent_message_topic(message.pk)],
+        )
+
+
+def agent_message_topic(message_id: UUID):
+    return f"todo.agent.message.{message_id}"
+
+
+# Characters of reply text between database writes and SSE publishes.  Low enough to
+# read as streaming, high enough that a long answer costs tens of round trips rather
+# than one per token.
+FLUSH_EVERY_CHARS = 24
+
+logger = logging.getLogger(__name__)
