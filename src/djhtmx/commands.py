@@ -395,8 +395,9 @@ class Emit:
     dispatch cycle, no Redis publish.
 
     `Emit` is **always** session-local.  For cross-session delivery
-    use `djhtmx.sse.emit_sse_event`, which publishes to Redis and
-    wakes consumers on other workers / other browser sessions.
+    use `djhtmx.sse.emit_sse_event` (or `aemit_sse_event` from an
+    `async def` handler), which publishes to Redis and wakes consumers
+    on other workers / other browser sessions.
     """
 
     event: Any

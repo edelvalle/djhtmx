@@ -11,7 +11,9 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
 from djhtmx.introspection import (
+    _ModelBeforeValidator,
     get_annotation_adapter,
+    guess_pk_type,
     is_collection_annotation,
     is_simple_annotation,
 )
@@ -75,6 +77,12 @@ class QueryPatcher:
 
     use_json: bool
 
+    # When the field is a single `models.Model`, the URL carries its pk and
+    # `adapter` is a *pk* adapter (str <-> pk).  The component value is an
+    # instance, so we map instance->pk on the way out; the pk->instance load
+    # happens in the field validator during build, on the pool thread.
+    is_model: bool = False
+
     @classmethod
     def for_component(cls, component: type[BaseModel]):
         seen = set()
@@ -119,13 +127,32 @@ class QueryPatcher:
                 # abstract base and inherited by a concrete component would otherwise fall through
                 # to the bare `field.annotation` and drop the PlainSerializer — `dump_python` then
                 # fails to serialise the model instance.
-
                 full_annotation = (
                     Annotated[field.annotation, *field.metadata]
                     if field.metadata
                     else field.annotation
                 )
-                adapter = get_annotation_adapter(full_annotation)
+
+                # A single Model field is carried in the URL as its pk.  Use a
+                # pk adapter (the Model validator is pure and would reject a pk),
+                # and let build resolve the pk back to an instance.
+                # Keyed on the validator function, not on the pydantic wrapper `_Model` happens
+                # to use for it, so swapping that wrapper cannot silently turn this detection off.
+                model_validator = next(
+                    (
+                        meta.func
+                        for meta in field.metadata
+                        if isinstance(getattr(meta, "func", None), _ModelBeforeValidator)
+                    ),
+                    None,
+                )
+                if model_validator is not None:
+                    adapter = TypeAdapter(guess_pk_type(model_validator.model) | None)
+                    is_model = True
+                else:
+                    adapter = get_annotation_adapter(full_annotation)
+                    is_model = False
+
                 yield cls(
                     field_name=field_name,
                     param_name=param_name,
@@ -134,6 +161,7 @@ class QueryPatcher:
                     default_value=field.get_default(call_default_factory=True),
                     adapter=adapter,
                     use_json=is_collection_annotation(annotation),
+                    is_model=is_model,
                 )
 
     def get_update_for_state(self, params: QueryDict):
@@ -157,6 +185,12 @@ class QueryPatcher:
             return {self.field_name: self.default_value}
 
     def get_updates_for_params(self, value: Any, params: QueryDict) -> list[str]:
+        # For a Model field the URL holds the pk; the component value is an
+        # instance, so reduce it to its pk before (de)serialising with the pk
+        # adapter.  `default_value` for these fields is None (no instance).
+        if self.is_model:
+            value = value.pk if value is not None else None
+
         # If we're setting the default value, let remove it from the query
         # string completely, and trigger the signal if needed.
         if value == self.default_value:

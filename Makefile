@@ -87,9 +87,11 @@ format: format-python format-rescript
 .PHONY: format format-python format-rescript
 
 
+# Checks the same tree `format` fixes, tests included: a lint that skipped
+# them reported clean on files `format` would still rewrite.
 lint:
-	@$(RUN) ruff check src/$(PROJECT_NAME)
-	@$(RUN) ruff format --check src/$(PROJECT_NAME)
+	@$(RUN) ruff check src/
+	@$(RUN) ruff format --check src/
 .PHONY: lint
 
 
@@ -114,6 +116,16 @@ run: install
 test:
 	@cd src/tests; $(RUN) coverage run --rcfile=../../pyproject.toml -m manage test
 .PHONY: test
+
+# Async concurrency / connection-bound load test.  Fires N concurrent SSE
+# drains through a deliberately small sync-work pool to exercise the SSE
+# re-entrancy fix and the DB-connection bound.  Requires a running Redis.
+#   make loadtest N=40 WORKERS=4
+N ?= 40
+WORKERS ?= 4
+loadtest: install
+	@cd src/tests; $(RUN) python loadtest_async.py $(N) $(WORKERS)
+.PHONY: loadtest
 
 coverage-html: test
 	@cd src/tests; $(RUN) coverage html --rcfile=../../pyproject.toml

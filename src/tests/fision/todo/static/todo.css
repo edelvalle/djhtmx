@@ -386,3 +386,140 @@ html .clear-completed:active {
     bottom: 10px;
   }
 }
+
+/* Agent chat panel (shown only when AI_PROVIDER_KEY is configured) */
+
+.agent-chat {
+	background: #fff;
+	margin: 30px 0 40px 0;
+	padding: 15px 20px 20px 20px;
+	box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.2), 0 25px 50px 0 rgba(0, 0, 0, 0.1);
+}
+
+.agent-chat-title {
+	color: #b83f45;
+	font-size: 20px;
+	font-weight: 200;
+	margin: 0 0 10px 0;
+}
+
+.agent-chat-viewport {
+	position: relative;
+}
+
+.agent-chat-scroll {
+	max-height: 320px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.agent-chat-log {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.agent-chat-follow {
+	position: absolute;
+	right: 14px;
+	bottom: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	border: 1px solid #ededed;
+	border-radius: 50%;
+	background: #fff;
+	color: #b83f45;
+	cursor: pointer;
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+.agent-chat-follow:hover {
+	background: #fdf3f3;
+}
+
+/* The `display` above outranks the UA stylesheet's `[hidden] { display: none }`,
+   so the attribute needs saying again here or it does nothing. */
+.agent-chat-follow[hidden] {
+	display: none;
+}
+
+.agent-chat-message {
+	padding: 8px 12px;
+	margin: 6px 0;
+	border-radius: 10px;
+	line-height: 1.4;
+	max-width: 85%;
+}
+
+.agent-chat-message.from-user {
+	background: #f2f2f2;
+	margin-left: auto;
+	text-align: right;
+}
+
+.agent-chat-message.from-agent {
+	background: #fdf3f3;
+}
+
+.agent-chat-message.failed {
+	background: #fbe9e9;
+	color: #b83f45;
+}
+
+/* Only the message body honours the model's own line breaks.  On the <li> this
+   would also preserve the template's indentation and newlines, which shows up as a
+   blank first line and a phantom bottom margin. */
+.agent-chat-text {
+	white-space: pre-wrap;
+}
+
+.agent-chat-thinking {
+	color: #999;
+	font-style: italic;
+}
+
+.agent-chat-cursor {
+	color: #b83f45;
+	animation: agent-chat-blink 1s step-start infinite;
+}
+
+@keyframes agent-chat-blink {
+	50% { opacity: 0; }
+}
+
+.agent-chat-form {
+	display: flex;
+	align-items: stretch;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.agent-chat-prompt {
+	flex: 1;
+	min-width: 0;
+	box-sizing: border-box;
+	padding: 10px 12px;
+	font-size: 16px;
+	font-family: inherit;
+	border: 1px solid #ededed;
+}
+
+.agent-chat-send {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 42px;
+	padding: 0;
+	border: 1px solid #ededed;
+	background: #fff;
+	color: #b83f45;
+	cursor: pointer;
+}
+
+.agent-chat-send:hover {
+	background: #fdf3f3;
+}

@@ -1,5 +1,7 @@
 from django.shortcuts import redirect, render
 
+from . import agent
+
 
 def index(request):
     return render(request, "index.html", context={"title": "index"})
@@ -12,6 +14,9 @@ def todo(request):
         context={
             "title": "todo",
             "showing": request.GET.get("showing", "all"),
+            # Without a provider key there is no agent, so the chat panel is not
+            # offered at all rather than offered and broken.
+            "ai_enabled": agent.is_enabled(),
         },
     )
 

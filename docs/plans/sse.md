@@ -126,7 +126,7 @@ Model event topics should mirror the existing djhtmx model subscription naming w
 
 The signal receiver should avoid broadcasting every database write blindly. It can compute the possible topics for the changed instance, check Redis topic indexes, and only enqueue an `SSEModelEvent` when at least one active SSE consumer is subscribed.
 
-An async variant may exist later for fully async producers, but the primary public API is the non-awaitable `emit_sse_event(...)`.
+For fully async producers there is `await aemit_sse_event(...)`, the `redis.asyncio` counterpart with identical semantics; use it from `async def` handlers and other on-loop coroutines.  The synchronous `emit_sse_event(...)` remains the API for synchronous producers (sync handlers, signal receivers, `run_on_commit` callbacks).
 
 When publishing from database writes, application code should usually publish after commit:
 

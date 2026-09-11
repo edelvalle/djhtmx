@@ -1,10 +1,11 @@
 import logging
 from collections.abc import Awaitable, Callable
 
-from asgiref.sync import iscoroutinefunction, sync_to_async
+from asgiref.sync import iscoroutinefunction
 from django.http import HttpRequest, HttpResponse
 
 from .exceptions import LoginRequired
+from .sse_executor import submit_sync_work
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,9 @@ def middleware(
         async def middleware(request: HttpRequest) -> HttpResponse:
             response = await get_response(request)
             if repo := getattr(request, "htmx_repo", None):
-                await sync_to_async(repo.session.flush)()
+                # Flush over the sync Redis client on a pool thread (never async
+                # Redis on a throwaway loop), matching the rest of the dispatch.
+                await submit_sync_work(repo.session.flush)
                 delattr(request, "htmx_repo")
             return response
 

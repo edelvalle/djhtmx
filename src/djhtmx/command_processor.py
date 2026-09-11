@@ -9,13 +9,23 @@ This module is the single source of truth for command semantics.
 template rendering, and query parameter patching — i.e. the *state* a
 command consults — but the *decisions* about what each command means live
 here.
+
+The pipeline is **synchronous**: the whole dispatch runs as one job on the
+bounded sync-work pool (see `sse_executor`), so every database touch happens
+on a pool thread that owns a single reused connection.  Postgres connection
+count is therefore bounded by `DJHTMX_SYNC_WORKERS`, independent of request or
+SSE-stream concurrency.  Components may still define `async def` handlers; they
+are run via `async_to_sync` on the pool thread (see `_invoke_handler`), so
+their ORM work stays on the same bounded connection.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator, Iterable
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Generator, Iterable
+from typing import TYPE_CHECKING, Any
+
+from asgiref.sync import async_to_sync
 
 from djhtmx.global_events import HtmxUnhandledError
 from djhtmx.tracing import tracing_span
@@ -44,11 +54,15 @@ from .commands import (
 )
 from .component import (
     LISTENERS,
+    REGISTRY,
+    HandlerKind,
     HtmxComponent,
+    get_handler_kind,
 )
 from .exceptions import LoginRequired
 from .introspection import filter_parameters
 from .settings import LOGIN_URL
+from .utils import atomic_if_requested
 
 if TYPE_CHECKING:
     from .repo import Repository
@@ -108,7 +122,8 @@ class CommandProcessor:
                         handler = getattr(component, event_handler)
                         handler_kwargs = filter_parameters(handler, event_data)
                         try:
-                            emitted_commands = handler(**handler_kwargs)
+                            kind = self._get_handler_kind(component, event_handler, handler)
+                            emitted_commands = self._invoke_handler(kind, handler, **handler_kwargs)
                         except Exception as error:
                             annotations = getattr(handler, "_htmx_annotations_", None)
                             logger.exception(
@@ -143,10 +158,13 @@ class CommandProcessor:
                             # Component dropped its SSE subscription between
                             # enqueue and dispatch; nothing to do.
                             return
+                        kind = self._get_handler_kind(component, "_handle_sse_events", handler)
                         emitted_commands = []
                         for envelope in envelopes:
                             try:
-                                yielded = handler(envelope)
+                                emitted_commands.extend(
+                                    self._invoke_handler(kind, handler, envelope)
+                                )
                             except Exception as error:
                                 logger.exception(
                                     "HTMX unhandled exception in _handle_sse_events of %s",
@@ -155,8 +173,6 @@ class CommandProcessor:
                                 if not isinstance(error, HtmxUnhandledError):
                                     emitted_commands.append(Emit(HtmxUnhandledError(error)))
                                 continue
-                            if yielded is not None:
-                                emitted_commands.extend(yielded)
                         yield from self._process_emitted_commands(
                             component,
                             emitted_commands,
@@ -193,7 +209,9 @@ class CommandProcessor:
                     commands.processing_component_id = component.id
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     try:
-                        emitted_commands = component._handle_event(event)  # type: ignore
+                        handler = component._handle_event  # type: ignore[attr-defined]
+                        kind = self._get_handler_kind(component, "_handle_event", handler)
+                        emitted_commands = self._invoke_handler(kind, handler, event)
                     except Exception as error:
                         logger.exception(
                             "HTMX unhandled error in the event handler of %s",
@@ -235,7 +253,8 @@ class CommandProcessor:
                 yield command
 
         commands.extend(commands_to_append)
-        repo.session.flush()
+        if repo.session.is_dirty:
+            repo.session.flush()
 
     def _process_emitted_commands(
         self,
@@ -244,7 +263,7 @@ class CommandProcessor:
         commands: CommandQueue,
         during_execute: bool,
         method_name: str | None = None,
-    ) -> Iterable[ProcessedCommand]:
+    ) -> Generator[ProcessedCommand]:
         """Normalise the commands a handler emitted for `component`.
 
         Shared post-processing for the three handler entry points (`Execute`, `Emit` fan-out,
@@ -296,6 +315,82 @@ class CommandProcessor:
 
         commands.extend(commands_to_add)
         repo.session.store(component)
+
+    @staticmethod
+    def _get_handler_kind(component: HtmxComponent, name: str, handler: Callable) -> HandlerKind:
+        """The shape of `component`'s `name` handler, as recorded at registration.
+
+        The record was taken before `validate_call`:func: wrapped anything, so
+        it survives the wrapper that hides a generator behind a plain function.
+        Anything the registry does not list was never wrapped either, so
+        inspecting the handler is a sound fallback for it.
+
+        """
+        if (registered := REGISTRY.get(component.hx_name)) and (
+            kind := registered.handler_kind_mapping.get(name)
+        ):
+            return kind
+        else:
+            return get_handler_kind(handler)
+
+    @staticmethod
+    def _invoke_handler(kind: HandlerKind, handler: Callable, /, *args: Any, **kwargs: Any) -> list:
+        """Invoke an event handler of the given `kind` and return its commands as a list.
+
+        The pipeline runs synchronously on a sync-work pool thread, so this is the
+        auto-wrap boundary that lets components mix sync and async handlers freely:
+
+        - ``function`` / ``generator``     -> run directly on this pool thread, which
+          owns the DB connection (see :meth:`_drain_sync_handler`).
+        - ``coroutine``                    -> run via ``async_to_sync`` on this pool
+          thread.  ``async_to_sync`` makes the pool thread the thread-sensitive
+          thread, so any Django async ORM the handler awaits runs on this same
+          thread and shares its single connection -- and any transaction open on it.
+        - ``async_generator``              -> consumed with ``async for`` under the
+          same ``async_to_sync`` bridge, and only outside a transaction.
+
+        A handler returning ``None`` normalises to ``[]``, preserving the
+        "no explicit render ⇒ default render" semantics of
+        :meth:`_process_emitted_commands`.
+
+        """
+        if kind == "async_generator":
+            return async_to_sync(CommandProcessor._drain_async_handler)(handler, args, kwargs)
+        elif kind == "coroutine":
+            return async_to_sync(CommandProcessor._await_handler)(handler, args, kwargs)
+        else:
+            return CommandProcessor._drain_sync_handler(handler, args, kwargs)
+
+    @staticmethod
+    async def _await_handler(handler: Callable, args: tuple, kwargs: dict) -> list:
+        result = await handler(*args, **kwargs)
+        return [] if result is None else list(result)
+
+    @staticmethod
+    async def _drain_async_handler(handler: Callable, args: tuple, kwargs: dict) -> list:
+        return [command async for command in handler(*args, **kwargs)]
+
+    @staticmethod
+    def _drain_sync_handler(handler: Callable, args: tuple, kwargs: dict) -> list:
+        """Run a synchronous handler to completion on the sync-work pool thread.
+
+        Handles both plain functions (returning a list/None) and generator
+        functions (yielding commands): the generator is fully drained here, on the
+        worker thread that owns the DB connection, so no lazy iteration leaks back
+        onto the event loop.
+
+        Honours `ATOMIC_REQUESTS`, but only where the dispatch did not already
+        open a transaction.  `Repository.atomic_dispatch`:meth: normally wraps
+        the whole dispatch, and this handler then simply runs inside it, so the
+        cascade commits or rolls back as one unit.  Where it did not -- a
+        streaming dispatch, which cannot hold a transaction for the length of
+        its stream -- the handler gets one of its own and a failure rolls back
+        its writes alone.
+
+        """
+        with atomic_if_requested():
+            result = handler(*args, **kwargs)
+            return [] if result is None else list(result)
 
 
 __all__ = ["CommandProcessor"]

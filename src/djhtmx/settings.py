@@ -56,12 +56,26 @@ KEY_SIZE_SAMPLE_PROB = getattr(
 STRICT_PUBLIC_BASE = getattr(settings, "DJHTMX_STRICT_PUBLIC_BASE", False)
 
 
-# SSE render executor: a small pool of long-lived worker threads owns one
-# Django DB connection each.  Size this in coordination with the host
-# project's PG pool budget.
-SSE_RENDER_WORKERS = getattr(settings, "DJHTMX_SSE_RENDER_WORKERS", 8)
-if SSE_RENDER_WORKERS < 1:
-    raise ValueError("DJHTMX_SSE_RENDER_WORKERS must be >= 1")
+# Sync-work executor: a small pool of long-lived worker threads owns one
+# Django DB connection each.  ALL synchronous, ORM-touching work — auto-wrapped
+# sync event handlers on the async HTTP path, component rendering, and SSE
+# renders — funnels through this single pool, so the process-wide Django DB
+# connection count is bounded by `SYNC_WORKERS` regardless of how many
+# concurrent HTTP requests or SSE streams are in flight.  Size this in
+# coordination with the host project's PG pool budget.
+#
+# `DJHTMX_SSE_RENDER_WORKERS` is the former name (when the pool only served the
+# SSE path) and is still honoured as a deprecated alias.
+SYNC_WORKERS = getattr(
+    settings,
+    "DJHTMX_SYNC_WORKERS",
+    getattr(settings, "DJHTMX_SSE_RENDER_WORKERS", 8),
+)
+if SYNC_WORKERS < 1:
+    raise ValueError("DJHTMX_SYNC_WORKERS must be >= 1")
+
+# Deprecated alias kept so existing references (and any in-tree imports) resolve.
+SSE_RENDER_WORKERS = SYNC_WORKERS
 
 # 0 = unbounded queue; otherwise the executor raises when this many jobs are
 # already in flight, so the SSE loop logs and drops rather than blowing up.

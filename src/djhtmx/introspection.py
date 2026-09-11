@@ -54,10 +54,9 @@ class ModelConfig:
     """
 
     lazy: bool = False
-    """If set to True, annotations of models.Model will return a _LazyModelProxy instead of the
-       actual model instance.
-
-    """
+    """If True, a `models.Model` annotation resolves to a `_LazyModelProxy` that
+    defers the DB query until the instance is first accessed (on the sync-work
+    pool thread), instead of fetching eagerly during validation."""
 
     select_related: Sequence[str] | None = None
     """The arguments to `model.objects.select_related(*select_related)`.
@@ -118,49 +117,65 @@ def _build_field_names[T](argument: str, value: Sequence[T] | None) -> tuple[T, 
 _DEFAULT_MODEL_CONFIG = ModelConfig()
 
 
-@dataclass(slots=True, init=False)
-class _LazyModelProxy(Generic[M]):  # noqa
-    """Deferred proxy for a Django model instance; only fetches from the database on access."""
+class _LazyModelProxy[M: models.Model]:
+    """Deferred proxy for a Django model instance.
 
-    __model: type[M]
-    __instance: M | None
-    __pk: Any | None
-    __select_related: Sequence[str] | None
-    __prefetch_related: Sequence[str | Prefetch] | None
-    __allow_none: bool
+    Holds the pk and fetches the row from the DB only on first attribute access.
+    Because the whole djhtmx dispatch (and the page render) runs synchronously on
+    the sync-work pool thread, that access uses the sync ORM on a pooled
+    connection — never the event loop.  Serializes back to its pk via
+    `_ModelPlainSerializer`, so a component holding a proxy round-trips through
+    the session as a pk.
+    """
+
+    __slots__ = ("_allow_none", "_instance", "_loaded", "_model", "_model_config", "_pk")
 
     def __init__(
         self,
         model: type[M],
         value: Any,
-        model_annotation: ModelConfig | None = None,
+        model_config: ModelConfig | None = None,
         allow_none: bool = False,
     ):
-        self.__model = model
-        self.__allow_none = allow_none
+        self._model = model
+        self._model_config = model_config or _DEFAULT_MODEL_CONFIG
+        self._allow_none = allow_none
         if value is None or isinstance(value, model):
-            self.__instance = value
-            self.__pk = getattr(value, "pk", None)
+            self._instance = value
+            self._pk = getattr(value, "pk", None)
+            self._loaded = True
         else:
-            self.__instance = None
+            self._instance = None
             pk_field = model._meta.pk
-            if pk_field is not None:
-                self.__pk = pk_field.to_python(value)
-            else:
-                self.__pk = value
-        if model_annotation:
-            self.__select_related = model_annotation.select_related
-            self.__prefetch_related = model_annotation.prefetch_related
-        else:
-            self.__select_related = None
-            self.__prefetch_related = None
+            self._pk = pk_field.to_python(value) if pk_field is not None else value
+            self._loaded = False
+
+    @property
+    def pk(self):
+        return self._pk
+
+    def _ensure(self) -> M | None:
+        if not self._loaded:
+            manager = self._model.objects
+            if select_related := self._model_config.select_related:
+                manager = manager.select_related(*select_related)
+            if prefetch_related := self._model_config.prefetch_related:
+                manager = manager.prefetch_related(*prefetch_related)
+            # filter().first() instead of get() to avoid exceptions.
+            instance = manager.filter(pk=self._pk).first()
+            if instance is None and not self._allow_none:
+                raise ValueError(f"{self._model.__name__} with pk={self._pk} does not exist")
+            self._instance = instance
+            self._loaded = True
+        return self._instance
 
     def __getattr__(self, name: str) -> Any:
-        if name == "pk":
-            return self.__pk
-        if self.__instance is None:
-            self.__ensure_instance()
-        return getattr(self.__instance, name)
+        # Only reached for names not in __slots__ and not class attributes.
+        # Guard internal/dunder names so pydantic/copy probing them never fires a
+        # DB query (and never recurses through an unset slot).
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._ensure(), name)
 
     def __bool__(self) -> bool:
         """Whether the row this proxy stands for exists.
@@ -173,28 +188,20 @@ class _LazyModelProxy(Generic[M]):  # noqa
         truthful answer to give, so this raises the same `ValueError` any other access raises.
 
         """
-        return self.__ensure_instance() is not None
+        return self._ensure() is not None
 
-    def __ensure_instance(self):
-        if not self.__instance:
-            manager = self.__model.objects
-            if select_related := self.__select_related:
-                manager = manager.select_related(*select_related)
-            if prefetch_related := self.__prefetch_related:
-                manager = manager.prefetch_related(*prefetch_related)
-            # Use filter().first() instead of get() to avoid exceptions
-            self.__instance = manager.filter(pk=self.__pk).first()
-            if self.__instance is None:
-                if self.__allow_none:
-                    # For Model | None, object doesn't exist - proxy becomes None-like
-                    pass
-                else:
-                    # For required Model fields, raise error
-                    raise ValueError(f"{self.__model.__name__} with pk={self.__pk} does not exist")
-        return self.__instance
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _LazyModelProxy):
+            return self._model is other._model and self._pk == other._pk
+        if isinstance(other, self._model):
+            return self._pk == other.pk
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash((self._model, self._pk))
 
     def __repr__(self) -> str:
-        return f"<_LazyModelProxy model={self.__model}, pk={self.__pk}, instance={self.__instance}>"
+        return f"<_LazyModelProxy {self._model.__name__} pk={self._pk} loaded={self._loaded}>"
 
 
 @dataclass(slots=True)
@@ -204,46 +211,48 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
     allow_none: bool = False
 
     def __call__(self, value):
-        if self.model_config.lazy:
-            return self._get_lazy_proxy(value)
-        else:
-            return self._get_instance(value)
+        """Resolve the field value to a model instance (or a lazy proxy).
 
-    def _get_lazy_proxy(self, value):
+        Accepts an instance (passed through), a lazy proxy, or a bare pk.  Given
+        a pk it queries the DB — safe because every djhtmx build runs on the
+        sync-work pool thread, never on the event loop.  When `model_config.lazy`
+        is set it wraps the value in a `_LazyModelProxy` and defers the query to
+        first access instead.
+        """
+        if self.model_config.lazy:
+            return self._lazy_proxy(value)
+        return self._resolve(value)
+
+    def _lazy_proxy(self, value):
         # The config has to reach the proxy: it is the proxy that builds the queryset when the row is
         # finally fetched, so without it `select_related`/`prefetch_related` were accepted, stored on
         # the annotation, and then quietly ignored -- the optimization never happened.
         if isinstance(value, _LazyModelProxy):
-            instance = value._LazyModelProxy__instance or value._LazyModelProxy__pk
-            return _LazyModelProxy(
-                self.model, instance, self.model_config, allow_none=self.allow_none
-            )
-        else:
-            return _LazyModelProxy(self.model, value, self.model_config, allow_none=self.allow_none)
+            # Hand the fetched row over when there is one, so re-validating a proxy does not pay
+            # for the query a second time; fall back to the pk it stands for.
+            value = value._instance if value._instance is not None else value.pk
+        return _LazyModelProxy(self.model, value, self.model_config, self.allow_none)
 
-    def _get_instance(self, value):
+    def _resolve(self, value):
         if value is None or isinstance(value, self.model):
             return value
-        # If a component has a lazy model proxy, and passes it down to another component that
-        # doesn't allow lazy proxies, we need to materialize it.
-        elif isinstance(value, _LazyModelProxy):
-            return value._LazyModelProxy__ensure_instance()
-        else:
-            manager = self.model.objects
-            if select_related := self.model_config.select_related:
-                manager = manager.select_related(*select_related)
-            if prefetch_related := self.model_config.prefetch_related:
-                manager = manager.prefetch_related(*prefetch_related)
-            # Use filter().first() instead of get() to avoid exceptions
-            instance = manager.filter(pk=value).first()
-            if instance is None:
-                if self.allow_none:
-                    # For Model | None fields, return None when object doesn't exist
-                    return None
-                else:
-                    # For required Model fields, raise validation error
-                    raise ValueError(f"{self.model.__name__} with pk={value} does not exist")
-            return instance
+        # A lazy proxy handed down to a non-lazy field is materialised here.
+        if isinstance(value, _LazyModelProxy):
+            return value._ensure()
+        return self._check(self._queryset().filter(pk=value).first(), value)
+
+    def _queryset(self):
+        manager = self.model.objects
+        if select_related := self.model_config.select_related:
+            manager = manager.select_related(*select_related)
+        if prefetch_related := self.model_config.prefetch_related:
+            manager = manager.prefetch_related(*prefetch_related)
+        return manager
+
+    def _check(self, instance, value):
+        if instance is None and not self.allow_none:
+            raise ValueError(f"{self.model.__name__} with pk={value} does not exist")
+        return instance
 
     @classmethod
     @cache
@@ -269,17 +278,16 @@ class _ModelPlainSerializer(Generic[M]):  # noqa
         return cls(model, allow_none=allow_none)
 
 
-def _Model[M: models.Model](
-    model: type[M],
+def _Model(
+    model: type[models.Model],
     model_config: ModelConfig | None = None,
     allow_none: bool = False,
 ):
     assert issubclass_safe(model, models.Model)
     model_config = model_config or _DEFAULT_MODEL_CONFIG
 
-    # Determine the base type
-    base_type = model if not model_config.lazy else _LazyModelProxy[M]
-    # If allow_none, make it optional
+    # A lazy field is typed as the proxy; an eager one as the model itself.
+    base_type = _LazyModelProxy[model] if model_config.lazy else model
     annotated_type = base_type | None if allow_none else base_type
 
     return Annotated[
@@ -614,6 +622,9 @@ def is_basic_type(ann):
         #  __origin__ -> model in 'Annotated[model, BeforeValidator(...), PlainSerializer(...)]'
         or issubclass_safe(ann, models.Model)
         or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
+        #  __origin__ -> _LazyModelProxy for a `ModelConfig(lazy=True)` field, which is carried in
+        #  the URL as its pk like any other Model field -- and reading that pk off the proxy costs
+        #  no query.
         or issubclass_safe(getattr(ann, "__origin__", None), _LazyModelProxy)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
         or is_collection_annotation(ann)

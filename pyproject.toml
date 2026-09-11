@@ -39,7 +39,7 @@ classifiers = [
 
 dependencies = [
    "django>=5.2",
-   "pydantic>=2,<3; python_version < '3.14'",
+   "pydantic>=2.10,<3; python_version < '3.14'",
    "pydantic>=2.13,<3; python_version >= '3.14'",
    "xotl.tools>=3.1.1",
    "orjson>=3.10.7; python_version < '3.14'",
@@ -66,6 +66,10 @@ test = [
    "lxml>=6.0; python_version >= '3.14'",
    "cssselect>=1.2.0",
    "coverage[toml]>=7.6.9",
+]
+showcase = [
+  "pydantic-ai-slim[openai]~=2.42",
+  "pydantic-ai-harness~=0.30",
 ]
 typing = [
   # zuban reads mypy-format config and runs its pyright-style "default" mode.
@@ -98,6 +102,7 @@ dev = [
   { include-group = "test" },
   { include-group = "lint" },
   { include-group = "devtools" },
+  { include-group = "showcase" },
 ]
 
 [tool.uv]
