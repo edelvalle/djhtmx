@@ -4,16 +4,17 @@ import logging
 import re
 import types
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
-from inspect import isasyncgenfunction
+from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 from os.path import basename
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Literal,
     Union,
     cast,
     get_args,
@@ -58,14 +59,88 @@ PYDANTIC_MODEL_METHODS = {
     attr_name for attr_name in dir(BaseModel) if not attr_name.startswith("_")
 }
 
-REGISTRY: dict[str, type[HtmxComponent]] = {}
+type HandlerKind = Literal["function", "generator", "coroutine", "async_generator"]
+"""The four shapes an event handler can take, and how each is consumed.
+
+Each name is the `inspect`:mod: vocabulary for the predicate that recognises
+the shape, and equally for what calling such a handler hands back:
+
+`function`
+   A plain ``def`` with no ``yield``.  Returns its commands directly, or
+   ``None`` to mean "no explicit render", which the pipeline turns into the
+   component's default render.
+
+`generator`
+   A ``def`` containing ``yield``.  Calling it returns a generator, which the
+   dispatcher drains to exhaustion before acting on any of the commands.
+
+`coroutine`
+   An ``async def`` with no ``yield``.  Awaited; its thread-sensitive ORM work
+   runs back on the calling thread, so it shares that thread's connection and
+   any transaction open on it.
+
+`async_generator`
+   An ``async def`` containing ``yield``.  Drained with ``async for``.  This is
+   the only shape that can stream over an unbounded period -- the run of a
+   language model, say -- and therefore the only one that must not be held
+   inside a transaction.  It is also the only shape `validate_call`:func:
+   never wraps, because it does not support it.
+
+A handler's kind is fixed when its module is compiled: the presence of a
+``yield`` anywhere in the body sets a flag on the code object, whether or not
+that ``yield`` is ever reached.  Nothing has to run for the kind to be known.
+
+"""
+
+
+@dataclass(slots=True, frozen=True)
+class RegisteredComponent:
+    """A public component together with what the dispatcher must know about it.
+
+    `handler_kind_mapping` holds the shape of every event handler of the
+    component, `_handle_event` included, keyed by handler name.  It is built
+    while the class is registered, which happens *before* `validate_call` wraps
+    the handlers that declare parameters: that wrapper is an ordinary function
+    and would otherwise make a generator handler look like a plain one.  A
+    handler's kind is fixed at compile time, so the record stays true for the
+    life of the process and no caller needs to unwrap anything to ask.
+
+    Only public components are registered; consult `LISTENERS`:obj: for the
+    components that react to an event.
+
+    """
+
+    htmx_component_class: type[HtmxComponent]
+    handler_kind_mapping: Mapping[str, HandlerKind]
+
+
+REGISTRY: dict[str, RegisteredComponent] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[HtmxComponent], str] = {}
 
 
+def get_handler_kind(handler: Callable) -> HandlerKind:
+    """Report which of the `HandlerKind`:obj: shapes `handler` has.
+
+    Ask this of the *undecorated* handler.  A wrapper that is not itself a
+    generator function hides the shape of what it wraps, so a handler already
+    through `validate_call`:func: reports as a plain ``function`` whatever it
+    was written as.
+
+    """
+    if isasyncgenfunction(handler):
+        return "async_generator"
+    elif iscoroutinefunction(handler):
+        return "coroutine"
+    elif isgeneratorfunction(handler):
+        return "generator"
+    else:
+        return "function"
+
+
 @cache
 def _get_query_patchers(component_name: str) -> list[QueryPatcher]:
-    return list(QueryPatcher.for_component(REGISTRY[component_name]))
+    return list(QueryPatcher.for_component(REGISTRY[component_name].htmx_component_class))
 
 
 @cache
@@ -134,10 +209,24 @@ class HtmxComponent(BaseModel):
         if public:
             if existing_component := REGISTRY.get(component_name):
                 raise TypeError(
-                    f"Component {get_fqn(cls)} would shadow existing {get_fqn(existing_component)}"
+                    f"Component {get_fqn(cls)} would shadow existing "
+                    f"{get_fqn(existing_component.htmx_component_class)}"
                 )
 
-            REGISTRY[component_name] = cls
+            handlers = dict(cls.__own_event_handlers(get_parent_ones=True))
+            # `__own_event_handlers` skips names starting with `_`, but
+            # `_handle_event` reaches the dispatcher through the same path as
+            # any other handler, and its shape is what says whether a listener
+            # can stream.
+            if (handle_event := getattr(cls, "_handle_event", None)) is not None:
+                handlers["_handle_event"] = handle_event
+
+            REGISTRY[component_name] = RegisteredComponent(
+                htmx_component_class=cls,
+                handler_kind_mapping={
+                    name: get_handler_kind(handler) for name, handler in handlers.items()
+                },
+            )
 
             # Warn of components that do not have event handlers and are public
             if (
