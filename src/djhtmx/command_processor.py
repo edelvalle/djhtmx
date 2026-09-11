@@ -23,10 +23,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Generator, Iterable
-from inspect import isasyncgenfunction
 from typing import TYPE_CHECKING, Any
 
-from asgiref.sync import async_to_sync, iscoroutinefunction
+from asgiref.sync import async_to_sync
 
 from djhtmx.global_events import HtmxUnhandledError
 from djhtmx.tracing import tracing_span
@@ -55,7 +54,10 @@ from .commands import (
 )
 from .component import (
     LISTENERS,
+    REGISTRY,
+    HandlerKind,
     HtmxComponent,
+    get_handler_kind,
 )
 from .exceptions import LoginRequired
 from .introspection import filter_parameters
@@ -120,7 +122,8 @@ class CommandProcessor:
                         handler = getattr(component, event_handler)
                         handler_kwargs = filter_parameters(handler, event_data)
                         try:
-                            emitted_commands = self._invoke_handler(handler, **handler_kwargs)
+                            kind = self._get_handler_kind(component, event_handler, handler)
+                            emitted_commands = self._invoke_handler(kind, handler, **handler_kwargs)
                         except Exception as error:
                             annotations = getattr(handler, "_htmx_annotations_", None)
                             logger.exception(
@@ -155,10 +158,13 @@ class CommandProcessor:
                             # Component dropped its SSE subscription between
                             # enqueue and dispatch; nothing to do.
                             return
+                        kind = self._get_handler_kind(component, "_handle_sse_events", handler)
                         emitted_commands = []
                         for envelope in envelopes:
                             try:
-                                emitted_commands.extend(self._invoke_handler(handler, envelope))
+                                emitted_commands.extend(
+                                    self._invoke_handler(kind, handler, envelope)
+                                )
                             except Exception as error:
                                 logger.exception(
                                     "HTMX unhandled exception in _handle_sse_events of %s",
@@ -203,7 +209,9 @@ class CommandProcessor:
                     commands.processing_component_id = component.id
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     try:
-                        emitted_commands = self._invoke_handler(component._handle_event, event)  # type: ignore
+                        handler = component._handle_event  # type: ignore[attr-defined]
+                        kind = self._get_handler_kind(component, "_handle_event", handler)
+                        emitted_commands = self._invoke_handler(kind, handler, event)
                     except Exception as error:
                         logger.exception(
                             "HTMX unhandled error in the event handler of %s",
@@ -309,32 +317,46 @@ class CommandProcessor:
         repo.session.store(component)
 
     @staticmethod
-    def _invoke_handler(handler: Callable, /, *args: Any, **kwargs: Any) -> list:
-        """Invoke an event handler of any shape and return its commands as a list.
+    def _get_handler_kind(component: HtmxComponent, name: str, handler: Callable) -> HandlerKind:
+        """The shape of `component`'s `name` handler, as recorded at registration.
+
+        The record was taken before `validate_call`:func: wrapped anything, so
+        it survives the wrapper that hides a generator behind a plain function.
+        Anything the registry does not list was never wrapped either, so
+        inspecting the handler is a sound fallback for it.
+
+        """
+        if (registered := REGISTRY.get(component.hx_name)) and (
+            kind := registered.handler_kind_mapping.get(name)
+        ):
+            return kind
+        else:
+            return get_handler_kind(handler)
+
+    @staticmethod
+    def _invoke_handler(kind: HandlerKind, handler: Callable, /, *args: Any, **kwargs: Any) -> list:
+        """Invoke an event handler of the given `kind` and return its commands as a list.
 
         The pipeline runs synchronously on a sync-work pool thread, so this is the
         auto-wrap boundary that lets components mix sync and async handlers freely:
 
-        - plain ``def`` / sync generator   -> run directly on this pool thread, which
-          owns the DB connection; ``ATOMIC_REQUESTS`` is applied per handler (see
-          :meth:`_drain_sync_handler`).
-        - ``async def`` (coroutine)        -> run via ``async_to_sync`` on this pool
+        - ``function`` / ``generator``     -> run directly on this pool thread, which
+          owns the DB connection (see :meth:`_drain_sync_handler`).
+        - ``coroutine``                    -> run via ``async_to_sync`` on this pool
           thread.  ``async_to_sync`` makes the pool thread the thread-sensitive
           thread, so any Django async ORM the handler awaits runs on this same
-          thread and shares its single connection.
-        - ``async def`` + ``yield``        -> consumed with ``async for`` under the
-          same ``async_to_sync`` bridge.
+          thread and shares its single connection -- and any transaction open on it.
+        - ``async_generator``              -> consumed with ``async for`` under the
+          same ``async_to_sync`` bridge, and only outside a transaction.
 
         A handler returning ``None`` normalises to ``[]``, preserving the
         "no explicit render ⇒ default render" semantics of
         :meth:`_process_emitted_commands`.
+
         """
-        # Detection unwraps bound methods; `iscoroutinefunction` is asgiref's, which
-        # also honours `markcoroutinefunction`-marked callables and pydantic's
-        # `validate_call` async wrappers.
-        if isasyncgenfunction(handler):
+        if kind == "async_generator":
             return async_to_sync(CommandProcessor._drain_async_handler)(handler, args, kwargs)
-        elif iscoroutinefunction(handler):
+        elif kind == "coroutine":
             return async_to_sync(CommandProcessor._await_handler)(handler, args, kwargs)
         else:
             return CommandProcessor._drain_sync_handler(handler, args, kwargs)

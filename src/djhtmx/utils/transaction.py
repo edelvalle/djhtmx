@@ -9,6 +9,19 @@ from django.db.transaction import on_commit as django_on_commit
 from .runtime import is_testing
 
 
+def has_atomic_requests() -> bool:
+    """Whether any configured database asks for per-request transactions.
+
+    Answers for the databases configured *now*; a project that flips
+    `ATOMIC_REQUESTS` after start-up -- a test usually -- gets the new answer
+    on the next call.
+
+    """
+    return any(
+        connections[alias].settings_dict.get("ATOMIC_REQUESTS", False) for alias in connections
+    )
+
+
 @contextmanager
 def atomic_if_requested() -> Iterator[None]:
     """Open a transaction on each database configured with `ATOMIC_REQUESTS`.

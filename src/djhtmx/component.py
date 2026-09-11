@@ -39,7 +39,7 @@ from .introspection import (
 )
 from .query import Query, QueryPatcher
 from .tracing import tracing_span
-from .utils import generate_id, get_fqn
+from .utils import generate_id, get_fqn, has_atomic_requests
 
 __all__ = (
     "ComponentNotFound",
@@ -138,6 +138,37 @@ def get_handler_kind(handler: Callable) -> HandlerKind:
         return "function"
 
 
+def check_listener_can_join_a_transaction(
+    component_class: type[HtmxComponent], handler_kind_mapping: Mapping[str, HandlerKind]
+) -> None:
+    """Refuse a listener that would hold a dispatch transaction open.
+
+    A dispatch entered through any non-streaming handler runs inside one
+    transaction, and a listener it wakes runs inside that transaction too.  An
+    `async_generator` listener streams for as long as its source produces, so
+    it would keep the transaction -- and the connection and locks it holds --
+    open for that whole time.
+
+    Only checked where a database asks for `ATOMIC_REQUESTS`; without one no
+    dispatch transaction is ever opened and the shape is harmless.  A streaming
+    handler is perfectly fine as the *entry point* of its own dispatch, which
+    is how a component streams: `Repository.atomic_dispatch`:meth: leaves that
+    dispatch unwrapped.
+
+    """
+    streaming = sorted(
+        name for name, kind in handler_kind_mapping.items() if kind == "async_generator"
+    )
+    listeners = [name for name in streaming if name in ("_handle_event", "_handle_sse_events")]
+    if listeners and has_atomic_requests():
+        raise TypeError(
+            f"Component {get_fqn(component_class)} declares {', '.join(listeners)} as an async "
+            f"generator.  A listener runs inside the transaction of whatever dispatch woke it, "
+            f"and a streaming one would hold that transaction open for the length of its stream.  "
+            f"Collect the stream in a handler the browser calls directly instead."
+        )
+
+
 @cache
 def _get_query_patchers(component_name: str) -> list[QueryPatcher]:
     return list(QueryPatcher.for_component(REGISTRY[component_name].htmx_component_class))
@@ -214,18 +245,21 @@ class HtmxComponent(BaseModel):
                 )
 
             handlers = dict(cls.__own_event_handlers(get_parent_ones=True))
-            # `__own_event_handlers` skips names starting with `_`, but
-            # `_handle_event` reaches the dispatcher through the same path as
-            # any other handler, and its shape is what says whether a listener
-            # can stream.
-            if (handle_event := getattr(cls, "_handle_event", None)) is not None:
-                handlers["_handle_event"] = handle_event
+            # `__own_event_handlers` skips names starting with `_`, but these
+            # two reach the dispatcher through the same path as any other
+            # handler, and a listener's shape is what says whether it may
+            # stream.
+            for name in ("_handle_event", "_handle_sse_events"):
+                if (handler := getattr(cls, name, None)) is not None:
+                    handlers[name] = handler
 
+            handler_kind_mapping = {
+                name: get_handler_kind(handler) for name, handler in handlers.items()
+            }
+            check_listener_can_join_a_transaction(cls, handler_kind_mapping)
             REGISTRY[component_name] = RegisteredComponent(
                 htmx_component_class=cls,
-                handler_kind_mapping={
-                    name: get_handler_kind(handler) for name, handler in handlers.items()
-                },
+                handler_kind_mapping=handler_kind_mapping,
             )
 
             # Warn of components that do not have event handlers and are public

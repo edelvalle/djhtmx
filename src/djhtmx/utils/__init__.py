@@ -7,7 +7,11 @@ from .autodiscover import autodiscover_htmx_modules
 from .hashing import compact_hash, generate_id
 from .http import get_params
 from .subscriptions import get_instance_subscriptions, get_model_subscriptions
-from .transaction import atomic_if_requested, run_on_commit
+from .transaction import (
+    atomic_if_requested,
+    has_atomic_requests,
+    run_on_commit,
+)
 
 if TYPE_CHECKING:
 
@@ -24,6 +28,7 @@ __all__ = (
     "get_instance_subscriptions",
     "get_model_subscriptions",
     "get_params",
+    "has_atomic_requests",
     "run_on_commit",
 )
 
