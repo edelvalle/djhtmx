@@ -129,7 +129,7 @@ class TestEndpoint(TestCase):
         }
 
         mock_parse.return_value = {}
-        mock_repo = make_repo_double(mock_repo_class, [])
+        make_repo_double(mock_repo_class, [])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
         mock_sentry_tags.return_value.__enter__ = Mock()
@@ -152,7 +152,7 @@ class TestEndpoint(TestCase):
         # Mock dependencies
         mock_parse.return_value = {}
         destroy_command = Destroy("component-123")
-        mock_repo = make_repo_double(mock_repo_class, [destroy_command])
+        make_repo_double(mock_repo_class, [destroy_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -173,7 +173,7 @@ class TestEndpoint(TestCase):
         # Mock dependencies
         mock_parse.return_value = {}
         redirect_command = Redirect("/redirect-url")
-        mock_repo = make_repo_double(mock_repo_class, [redirect_command])
+        make_repo_double(mock_repo_class, [redirect_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -193,7 +193,7 @@ class TestEndpoint(TestCase):
         # Mock dependencies
         mock_parse.return_value = {}
         focus_command = Focus("#input-field")
-        mock_repo = make_repo_double(mock_repo_class, [focus_command])
+        make_repo_double(mock_repo_class, [focus_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -214,7 +214,7 @@ class TestEndpoint(TestCase):
         # Mock dependencies
         mock_parse.return_value = {}
         open_command = Open("/open-url", "window_name", "_blank", "noopener")
-        mock_repo = make_repo_double(mock_repo_class, [open_command])
+        make_repo_double(mock_repo_class, [open_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -237,7 +237,7 @@ class TestEndpoint(TestCase):
         dom_event_command = DispatchDOMEvent(
             "#target", "custom-event", {"data": "value"}, True, False, True
         )
-        mock_repo = make_repo_double(mock_repo_class, [dom_event_command])
+        make_repo_double(mock_repo_class, [dom_event_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -258,7 +258,7 @@ class TestEndpoint(TestCase):
         # Mock dependencies
         mock_parse.return_value = {}
         html_command = SendHtml(mark_safe("<div>Custom HTML</div>"))
-        mock_repo = make_repo_double(mock_repo_class, [html_command])
+        make_repo_double(mock_repo_class, [html_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -278,7 +278,7 @@ class TestEndpoint(TestCase):
         # Mock dependencies
         mock_parse.return_value = {}
         push_url_command = PushURL("/new-url")
-        mock_repo = make_repo_double(mock_repo_class, [push_url_command])
+        make_repo_double(mock_repo_class, [push_url_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -298,7 +298,7 @@ class TestEndpoint(TestCase):
         # Mock dependencies
         mock_parse.return_value = {}
         replace_url_command = ReplaceURL("/replace-url")
-        mock_repo = make_repo_double(mock_repo_class, [replace_url_command])
+        make_repo_double(mock_repo_class, [replace_url_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -322,7 +322,7 @@ class TestEndpoint(TestCase):
             SendHtml(mark_safe("<div>Second</div>")),
             Redirect("/redirect"),
         ]
-        mock_repo = make_repo_double(mock_repo_class, list(commands))
+        make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -347,7 +347,7 @@ class TestEndpoint(TestCase):
             ReplaceURL("/some-other-url/"),
             Redirect("/new-page/"),
         ]
-        mock_repo = make_repo_double(mock_repo_class, list(commands))
+        make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -369,7 +369,7 @@ class TestEndpoint(TestCase):
             PushURL("/pushed-url/"),
             Redirect("/new-page/"),
         ]
-        mock_repo = make_repo_double(mock_repo_class, list(commands))
+        make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 

@@ -87,9 +87,11 @@ format: format-python format-rescript
 .PHONY: format format-python format-rescript
 
 
+# Checks the same tree `format` fixes, tests included: a lint that skipped
+# them reported clean on files `format` would still rewrite.
 lint:
-	@$(RUN) ruff check src/$(PROJECT_NAME)
-	@$(RUN) ruff format --check src/$(PROJECT_NAME)
+	@$(RUN) ruff check src/
+	@$(RUN) ruff format --check src/
 .PHONY: lint
 
 
