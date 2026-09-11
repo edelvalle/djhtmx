@@ -21,14 +21,12 @@ their ORM work stays on the same bounded connection.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from collections.abc import Callable, Generator, Iterable
 from inspect import isasyncgenfunction
 from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import async_to_sync, iscoroutinefunction
-from django.db import connections, transaction
 
 from djhtmx.global_events import HtmxUnhandledError
 from djhtmx.tracing import tracing_span
@@ -62,6 +60,7 @@ from .component import (
 from .exceptions import LoginRequired
 from .introspection import filter_parameters
 from .settings import LOGIN_URL
+from .utils import atomic_if_requested
 
 if TYPE_CHECKING:
     from .repo import Repository
@@ -358,16 +357,16 @@ class CommandProcessor:
         worker thread that owns the DB connection, so no lazy iteration leaks back
         onto the event loop.
 
-        Honours `ATOMIC_REQUESTS`: an async view bypasses Django's per-request
-        atomic wrapping, so each sync handler is instead wrapped in
-        `transaction.atomic` for every database configured with `ATOMIC_REQUESTS`.
-        Atomicity is per-handler; a handler that raises rolls back its own writes
-        before the error is surfaced.
+        Honours `ATOMIC_REQUESTS`, but only where the dispatch did not already
+        open a transaction.  `Repository.atomic_dispatch`:meth: normally wraps
+        the whole dispatch, and this handler then simply runs inside it, so the
+        cascade commits or rolls back as one unit.  Where it did not -- a
+        streaming dispatch, which cannot hold a transaction for the length of
+        its stream -- the handler gets one of its own and a failure rolls back
+        its writes alone.
+
         """
-        with contextlib.ExitStack() as stack:
-            for alias in connections:
-                if connections[alias].settings_dict["ATOMIC_REQUESTS"]:
-                    stack.enter_context(transaction.atomic(using=alias))
+        with atomic_if_requested():
             result = handler(*args, **kwargs)
             return [] if result is None else list(result)
 

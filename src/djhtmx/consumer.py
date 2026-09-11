@@ -77,7 +77,15 @@ class Consumer(AsyncJsonWebsocketConsumer):
                         assert_never(unreachable)
 
     def _dispatch(self, component_id: str, event_handler: str, event_data: dict[str, Any]) -> list:
-        return list(self.repo.dispatch_event(component_id, event_handler, event_data))
+        """Run one dispatch to completion on the sync-work pool thread.
+
+        The commands are drained here rather than streamed out lazily, so every
+        database touch stays on the thread that owns the connection and inside
+        the transaction `atomic_dispatch`:meth: opens around it.
+
+        """
+        with self.repo.atomic_dispatch(component_id, event_handler):
+            return list(self.repo.dispatch_event(component_id, event_handler, event_data))
 
     async def send_commands(self, commands: list[Command]):
         for command in commands:

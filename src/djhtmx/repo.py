@@ -4,6 +4,7 @@ import logging
 import random
 from collections import defaultdict
 from collections.abc import Iterable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from dataclasses import field as Field
 from typing import Any
@@ -25,6 +26,7 @@ from .commands import (
 )
 from .component import (
     REGISTRY,
+    HandlerKind,
     HtmxComponent,
     _get_query_patchers,
 )
@@ -36,7 +38,7 @@ from .settings import (
     SESSION_TTL,
     conn,
 )
-from .utils import compact_hash, get_fqn, get_params
+from .utils import atomic_if_requested, compact_hash, get_fqn, get_params
 
 signer = Signer()
 
@@ -172,6 +174,45 @@ class Repository:
         yield from CommandProcessor(self).process([
             Execute(component_id, event_handler, event_data)
         ])
+
+    def get_handler_kind(self, component_id: str, event_handler: str) -> HandlerKind | None:
+        """The shape of the handler `component_id` would run for `event_handler`.
+
+        The component is named by its session state, so answering costs no
+        database query and builds nothing.  `None` when the component has left
+        the session, is not registered, or declares no such handler.
+
+        """
+        if (state := self.session.get_state(component_id)) and (
+            registered := REGISTRY.get(state["hx_name"])
+        ):
+            return registered.handler_kind_mapping.get(event_handler)
+        else:
+            return None
+
+    def atomic_dispatch(
+        self, component_id: str, event_handler: str
+    ) -> AbstractContextManager[None]:
+        """The transaction guard for dispatching `event_handler`.
+
+        A dispatch is one unit of work: on a database with `ATOMIC_REQUESTS`
+        the component build, every handler the cascade reaches through `Emit`,
+        and the render all commit or roll back together.  Listeners cannot
+        escape it whatever shape they are declared, because a synchronous
+        pipeline runs them on its own thread, and Django routes the async ORM
+        of an `async def` listener back to that same thread and connection.
+
+        An `async_generator` handler is the exception: it streams for as long
+        as its source produces -- the run of a language model, say -- and a
+        transaction spanning that would pin a connection and hold its locks
+        for the whole stream.  Such a dispatch runs unwrapped, and each of its
+        handlers keeps a transaction of its own instead.
+
+        """
+        if self.get_handler_kind(component_id, event_handler) == "async_generator":
+            return nullcontext()
+        else:
+            return atomic_if_requested()
 
     def update_params_from(self, component: HtmxComponent) -> set[str]:
         """Updates self.params based on the state of the component

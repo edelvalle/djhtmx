@@ -64,6 +64,11 @@ def _dispatch_request(request: HttpRequest, component_id: str, event_handler: st
     Model fields — here on the pool thread that owns the connection, and the
     template render runs here too.  Nothing in the request path touches the ORM
     on the event loop.
+
+    The build, the handlers and the render share one transaction per
+    `ATOMIC_REQUESTS` database, opened here because this is the thread that owns
+    the connection — see `Repository.atomic_dispatch`:meth: for the one dispatch
+    shape that opts out.
     """
     repo = Repository.from_request(request)
     event_data = parse_request_data(request.POST | request.FILES) | (  # type: ignore[operator]
@@ -71,10 +76,11 @@ def _dispatch_request(request: HttpRequest, component_id: str, event_handler: st
         if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
         else {}
     )
-    batch = CommandBatch.from_processed(
-        repo.dispatch_event(component_id, event_handler, event_data)
-    )
-    return to_http_response(batch)
+    with repo.atomic_dispatch(component_id, event_handler):
+        batch = CommandBatch.from_processed(
+            repo.dispatch_event(component_id, event_handler, event_data)
+        )
+        return to_http_response(batch)
 
 
 def _resolve_user(request: HttpRequest):

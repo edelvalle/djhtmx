@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
@@ -24,6 +25,22 @@ def call_endpoint(*args, **kwargs):
     return async_to_sync(endpoint)(*args, **kwargs)
 
 
+def make_repo_double(mock_repo_class, commands=()):
+    """Install a `Repository` double whose dispatch yields `commands`.
+
+    The double has to provide `atomic_dispatch` because the endpoint runs the
+    dispatch inside that guard, and a bare `Mock` does not implement the
+    context manager protocol.  `nullcontext` keeps these tests about the
+    command-to-response translation rather than about transactions.
+
+    """
+    mock_repo = Mock()
+    mock_repo.dispatch_event.return_value = list(commands)
+    mock_repo.atomic_dispatch.return_value = nullcontext()
+    mock_repo_class.from_request.return_value = mock_repo
+    return mock_repo
+
+
 class TestEndpoint(TestCase):
     def setUp(self):
         self.factory = RequestFactory()
@@ -47,9 +64,7 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {"parsed": "data"}
-        mock_repo = Mock()
-        mock_repo.dispatch_event.return_value = []
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -72,9 +87,7 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {"parsed": "data"}
-        mock_repo = Mock()
-        mock_repo.dispatch_event.return_value = []
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -116,9 +129,7 @@ class TestEndpoint(TestCase):
         }
 
         mock_parse.return_value = {}
-        mock_repo = Mock()
-        mock_repo.dispatch_event.return_value = []
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
         mock_sentry_tags.return_value.__enter__ = Mock()
@@ -140,10 +151,8 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         destroy_command = Destroy("component-123")
-        mock_repo.dispatch_event.return_value = [destroy_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [destroy_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -163,10 +172,8 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         redirect_command = Redirect("/redirect-url")
-        mock_repo.dispatch_event.return_value = [redirect_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [redirect_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -185,10 +192,8 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         focus_command = Focus("#input-field")
-        mock_repo.dispatch_event.return_value = [focus_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [focus_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -208,10 +213,8 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         open_command = Open("/open-url", "window_name", "_blank", "noopener")
-        mock_repo.dispatch_event.return_value = [open_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [open_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -231,12 +234,10 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         dom_event_command = DispatchDOMEvent(
             "#target", "custom-event", {"data": "value"}, True, False, True
         )
-        mock_repo.dispatch_event.return_value = [dom_event_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [dom_event_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -256,10 +257,8 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         html_command = SendHtml(mark_safe("<div>Custom HTML</div>"))
-        mock_repo.dispatch_event.return_value = [html_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [html_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -278,10 +277,8 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         push_url_command = PushURL("/new-url")
-        mock_repo.dispatch_event.return_value = [push_url_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [push_url_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -300,10 +297,8 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         replace_url_command = ReplaceURL("/replace-url")
-        mock_repo.dispatch_event.return_value = [replace_url_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [replace_url_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -322,14 +317,12 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         commands = [
             SendHtml(mark_safe("<div>First</div>")),
             SendHtml(mark_safe("<div>Second</div>")),
             Redirect("/redirect"),
         ]
-        mock_repo.dispatch_event.return_value = list(commands)
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -350,13 +343,11 @@ class TestEndpoint(TestCase):
         request.META["HTTP_HX_SESSION"] = "test-session"
 
         mock_parse.return_value = {}
-        mock_repo = Mock()
         commands = [
             ReplaceURL("/some-other-url/"),
             Redirect("/new-page/"),
         ]
-        mock_repo.dispatch_event.return_value = list(commands)
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
@@ -374,13 +365,11 @@ class TestEndpoint(TestCase):
         request.META["HTTP_HX_SESSION"] = "test-session"
 
         mock_parse.return_value = {}
-        mock_repo = Mock()
         commands = [
             PushURL("/pushed-url/"),
             Redirect("/new-page/"),
         ]
-        mock_repo.dispatch_event.return_value = list(commands)
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
