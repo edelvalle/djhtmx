@@ -507,30 +507,50 @@ def is_async_handler(handler) -> bool:
     what comes back synchronously, so an ``async def`` handler would only ever hand it a coroutine
     or an async generator, and its body would never run.
 
-    Ask this of the *undecorated* handler, for the reason `get_handler_kind`:func: gives.
+    A wrapped handler is answered for as written: `validate_call`:func: marks the wrapper it puts
+    around a coroutine function, but the wrapper around an async generator is an ordinary function,
+    so the question has to reach the handler underneath it.
 
     """
+    handler = _undecorated(handler)
     return iscoroutinefunction(handler) or isasyncgenfunction(handler)
 
 
 def get_handler_kind(handler) -> HandlerKind:
     """Report which of the `HandlerKind`:obj: shapes `handler` has.
 
-    Ask this of the *undecorated* handler.  A wrapper that is not itself a generator function hides
-    the shape of what it wraps, so a handler already through `validate_call`:func: reports as a
-    plain ``function`` whatever it was written as.
+    The `validate_call`:func: wrapper djhtmx installs on every handler that declares parameters is
+    an ordinary function, and would make each handler it wraps report as a plain ``function``; it is
+    looked through, so the answer is about the handler as written.  A handler decorated with
+    anything else answers for the decorator, which is the honest answer: another decorator need not
+    have the shape of what it wraps.
 
     Raise `TypeError`:class: for an ``async def`` handler, which has no `HandlerKind`:obj: at all.
     A caller that can name the component declaring it should ask `is_async_handler`:func: first and
     raise the message that names it.
 
     """
+    handler = _undecorated(handler)
     if is_async_handler(handler):
         raise TypeError(f"{handler!r} is an async handler, which has no handler kind")
     elif isgeneratorfunction(handler):
         return "generator"
     else:
         return "function"
+
+
+def _undecorated(handler):
+    """Return the function `handler` was written as, looking through `validate_call`:func:.
+
+    Only that wrapper is looked through: it is the one djhtmx installs itself, and it delegates to
+    the handler unchanged, so questions about the handler's shape are questions about the wrapped
+    function.  Anything else `handler` may be decorated with is left in place.
+
+    The result is to ask questions about, not to call: given a bound method it is the underlying
+    function, without the instance.
+
+    """
+    return getattr(handler, "raw_function", handler)
 
 
 logger = logging.getLogger(__name__)
