@@ -365,7 +365,8 @@ class HtmxComponent(BaseModel):
     def subscriptions(self) -> set[str]:
         return set()
 
-    def render(self): ...
+    def render(self):
+        return
 
     def _get_all_subscriptions(self) -> set[str]:
         return self.subscriptions | _get_querystring_subscriptions(self.hx_name)
