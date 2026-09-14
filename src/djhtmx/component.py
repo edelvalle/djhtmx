@@ -41,6 +41,11 @@ from .query import Query, QueryPatcher
 from .tracing import tracing_span
 from .utils import generate_id, get_fqn
 
+try:
+    frozendict({})  # type: ignore
+except NameError:
+    from immutables import Map as frozendict
+
 __all__ = (
     "ComponentNotFound",
     "HtmxComponent",
@@ -78,10 +83,6 @@ its own: the dispatcher calls handlers synchronously, so registration refuses on
 of admitting a shape nothing can run.  Teaching dispatch to run them is what would earn them a kind
 here.
 
-A handler's kind is fixed when its module is compiled: a ``yield`` anywhere in the body sets a flag
-on the code object, whether or not that ``yield`` is ever reached.  Nothing has to run for the kind
-to be known.
-
 """
 
 
@@ -89,18 +90,8 @@ to be known.
 class _RegisteredComponent:
     """A public component together with what is known about it at import time.
 
-    `handler_kind_mapping` holds the shape of every event handler of the component, `_handle_event`
-    and `_handle_sse_events` included, keyed by handler name.  It is built while the class is
-    registered, which happens *before* `validate_call`:func: wraps the handlers that declare
-    parameters: that wrapper is an ordinary function and would otherwise make a generator handler
-    look like a plain one.  A handler's kind is fixed at compile time, so the record stays true for
-    the life of the process and no caller has to unwrap anything to ask.
-
-    ``frozen=True`` is shallow, so the mapping is typed as a `Mapping`:class: to say that it is not
-    to be mutated once the record is built.
-
-    Only public components are registered; consult `LISTENERS`:obj: for the components that react
-    to an event.
+    `handler_kind_mapping` holds the shape of every event handler of the component, including
+    `_handle_event` and `_handle_sse_events`, keyed by handler name.
 
     """
 
@@ -211,9 +202,9 @@ class HtmxComponent(BaseModel):
 
             REGISTRY[component_name] = _RegisteredComponent(
                 htmx_component_class=cls,
-                handler_kind_mapping={
+                handler_kind_mapping=frozendict({
                     name: get_handler_kind(handler) for name, handler in handlers.items()
-                },
+                }),
             )
 
             # Warn of components that do not have event handlers and are public
