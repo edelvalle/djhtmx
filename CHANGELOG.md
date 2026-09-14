@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An `async def` event handler is now refused when its component registers**: djhtmx calls event handlers synchronously, so an `async def` handler -- a coroutine function or an async generator function -- never ran: calling it only handed the dispatcher a coroutine to iterate.  The call itself sits inside the unhandled-error guard, but the iteration that raises `TypeError: 'coroutine' object is not iterable` happens after that guard in every dispatch path, and no layer up to the view catches it: the interaction failed with a server error, the handler's body never ran, and Python warned that the coroutine was never awaited.  Declaring one now raises a `TypeError` at import naming the component and the handler, so the mistake surfaces where it is made instead of as a 500 at run time.  The check covers every handler of a public component, `_handle_event` and `_handle_sse_events` included.
 
+- **Minimum pydantic is now 2.10 on Python 3.13**: djhtmx requires `pydantic>=2.10` (was `>=2`); Python 3.14 already required `>=2.13`, and 2.10 covers the whole 3.8-3.13 range.
+
 - **Minimum Django is now 5.2**: djhtmx requires `django>=5.2` (was `>=4.1`).  Django releases before 5.2 are end-of-life upstream and were neither tested nor supported; 5.2 is the LTS line djhtmx is developed against and the first to support Python 3.14.
 
 ### Fixed
