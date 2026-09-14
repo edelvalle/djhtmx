@@ -239,7 +239,7 @@ class Repository:
                 "session_id": self.session.id,
                 "user": None if isinstance(self.user, AnonymousUser) else self.user,
             }
-            component_class = REGISTRY[component_name]
+            component_class = REGISTRY[component_name].htmx_component_class
             try:
                 component = component_class(**kwargs)
             except ValidationError as error:

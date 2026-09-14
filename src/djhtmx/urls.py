@@ -195,11 +195,12 @@ urlpatterns = [
     path("_sse/connect", sse_endpoint, name="djhtmx.sse"),
     *[
         path(
-            f"{app_name_of_component(component)}/{component_name}/<component_id>/<event_handler>",
+            f"{app_name_of_component(registered.htmx_component_class)}/{component_name}"
+            "/<component_id>/<event_handler>",
             csrf_exempt(partial(endpoint, component_name=component_name)),
             name=f"djhtmx.{component_name}",
         )
-        for component_name, component in REGISTRY.items()
+        for component_name, registered in REGISTRY.items()
     ],
 ]
 
