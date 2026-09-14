@@ -86,7 +86,7 @@ to be known.
 
 
 @dataclass(slots=True, frozen=True)
-class RegisteredComponent:
+class _RegisteredComponent:
     """A public component together with what is known about it at import time.
 
     `handler_kind_mapping` holds the shape of every event handler of the component, `_handle_event`
@@ -108,7 +108,7 @@ class RegisteredComponent:
     handler_kind_mapping: Mapping[str, HandlerKind]
 
 
-REGISTRY: dict[str, RegisteredComponent] = {}
+REGISTRY: dict[str, _RegisteredComponent] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[HtmxComponent], str] = {}
 
@@ -209,7 +209,7 @@ class HtmxComponent(BaseModel):
                     "or as a 'def' that yields its commands."
                 )
 
-            REGISTRY[component_name] = RegisteredComponent(
+            REGISTRY[component_name] = _RegisteredComponent(
                 htmx_component_class=cls,
                 handler_kind_mapping={
                     name: get_handler_kind(handler) for name, handler in handlers.items()
