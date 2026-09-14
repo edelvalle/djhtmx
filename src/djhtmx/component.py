@@ -4,15 +4,17 @@ import logging
 import re
 import types
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
+from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 from os.path import basename
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Literal,
     Union,
     cast,
     get_args,
@@ -57,14 +59,63 @@ PYDANTIC_MODEL_METHODS = {
     attr_name for attr_name in dir(BaseModel) if not attr_name.startswith("_")
 }
 
-REGISTRY: dict[str, type[HtmxComponent]] = {}
+type HandlerKind = Literal["function", "generator"]
+"""The shapes an event handler can take, and how each one is consumed.
+
+Each name is the `inspect`:mod: vocabulary for the predicate that recognises the shape, and equally
+for what calling such a handler hands back:
+
+`function`
+   A plain ``def`` with no ``yield``.  Returns its commands directly, or ``None`` to mean "no
+   explicit render", which the pipeline turns into the component's default render.
+
+`generator`
+   A ``def`` containing ``yield``.  Calling it returns a generator, which the dispatcher drains to
+   exhaustion before acting on any of the commands.
+
+An ``async def`` handler -- a coroutine function or an async generator function -- has no kind of
+its own: the dispatcher calls handlers synchronously, so registration refuses one outright instead
+of admitting a shape nothing can run.  Teaching dispatch to run them is what would earn them a kind
+here.
+
+A handler's kind is fixed when its module is compiled: a ``yield`` anywhere in the body sets a flag
+on the code object, whether or not that ``yield`` is ever reached.  Nothing has to run for the kind
+to be known.
+
+"""
+
+
+@dataclass(slots=True, frozen=True)
+class RegisteredComponent:
+    """A public component together with what is known about it at import time.
+
+    `handler_kind_mapping` holds the shape of every event handler of the component, `_handle_event`
+    and `_handle_sse_events` included, keyed by handler name.  It is built while the class is
+    registered, which happens *before* `validate_call`:func: wraps the handlers that declare
+    parameters: that wrapper is an ordinary function and would otherwise make a generator handler
+    look like a plain one.  A handler's kind is fixed at compile time, so the record stays true for
+    the life of the process and no caller has to unwrap anything to ask.
+
+    ``frozen=True`` is shallow, so the mapping is typed as a `Mapping`:class: to say that it is not
+    to be mutated once the record is built.
+
+    Only public components are registered; consult `LISTENERS`:obj: for the components that react
+    to an event.
+
+    """
+
+    htmx_component_class: type[HtmxComponent]
+    handler_kind_mapping: Mapping[str, HandlerKind]
+
+
+REGISTRY: dict[str, RegisteredComponent] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[HtmxComponent], str] = {}
 
 
 @cache
 def _get_query_patchers(component_name: str) -> list[QueryPatcher]:
-    return list(QueryPatcher.for_component(REGISTRY[component_name]))
+    return list(QueryPatcher.for_component(REGISTRY[component_name].htmx_component_class))
 
 
 @cache
@@ -133,10 +184,37 @@ class HtmxComponent(BaseModel):
         if public:
             if existing_component := REGISTRY.get(component_name):
                 raise TypeError(
-                    f"Component {get_fqn(cls)} would shadow existing {get_fqn(existing_component)}"
+                    f"Component {get_fqn(cls)} would shadow existing "
+                    f"{get_fqn(existing_component.htmx_component_class)}"
                 )
 
-            REGISTRY[component_name] = cls
+            handlers = dict(cls.__own_event_handlers(get_parent_ones=True))
+            # `__own_event_handlers` skips names starting with `_`, yet `_handle_event` and
+            # `_handle_sse_events` reach the dispatcher by the same path as any other handler, so
+            # their shape is worth just as much.
+            handlers |= {
+                name: handler
+                for name in ("_handle_event", "_handle_sse_events")
+                if (handler := getattr(cls, name, None)) is not None
+            }
+
+            if async_handlers := sorted(
+                name for name, handler in handlers.items() if is_async_handler(handler)
+            ):
+                raise TypeError(
+                    f"Component {get_fqn(cls)} declares async event handlers: "
+                    f"{', '.join(async_handlers)}.  djhtmx calls event handlers synchronously, so "
+                    "an 'async def' handler never runs: calling it only hands back a coroutine "
+                    "(or an async generator) that nothing consumes.  Write it as a plain 'def', "
+                    "or as a 'def' that yields its commands."
+                )
+
+            REGISTRY[component_name] = RegisteredComponent(
+                htmx_component_class=cls,
+                handler_kind_mapping={
+                    name: get_handler_kind(handler) for name, handler in handlers.items()
+                },
+            )
 
             # Warn of components that do not have event handlers and are public
             if (
@@ -419,6 +497,39 @@ def _compose[**P, A, B](f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B
         return g(f(*args, **kwargs))
 
     return result
+
+
+def is_async_handler(handler) -> bool:
+    """Tell whether `handler` is an ``async def``, with or without a ``yield`` in its body.
+
+    Both shapes are refused when a component registers: the dispatcher calls a handler and consumes
+    what comes back synchronously, so an ``async def`` handler would only ever hand it a coroutine
+    or an async generator, and its body would never run.
+
+    Ask this of the *undecorated* handler, for the reason `get_handler_kind`:func: gives.
+
+    """
+    return iscoroutinefunction(handler) or isasyncgenfunction(handler)
+
+
+def get_handler_kind(handler) -> HandlerKind:
+    """Report which of the `HandlerKind`:obj: shapes `handler` has.
+
+    Ask this of the *undecorated* handler.  A wrapper that is not itself a generator function hides
+    the shape of what it wraps, so a handler already through `validate_call`:func: reports as a
+    plain ``function`` whatever it was written as.
+
+    Raise `TypeError`:class: for an ``async def`` handler, which has no `HandlerKind`:obj: at all.
+    A caller that can name the component declaring it should ask `is_async_handler`:func: first and
+    raise the message that names it.
+
+    """
+    if is_async_handler(handler):
+        raise TypeError(f"{handler!r} is an async handler, which has no handler kind")
+    elif isgeneratorfunction(handler):
+        return "generator"
+    else:
+        return "function"
 
 
 logger = logging.getLogger(__name__)

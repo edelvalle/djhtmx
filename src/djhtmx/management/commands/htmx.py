@@ -85,7 +85,7 @@ def check_unused_non_public():
             without_duplicates=True,
         )
     )
-    registered = set(REGISTRY.values())
+    registered = {entry.htmx_component_class for entry in REGISTRY.values()}
     unused_non_public = list(final_subclasses - registered)
 
     if unused_non_public:
@@ -108,9 +108,9 @@ def check_shadowing():
     ):
         name = cls.__name__
         registered = REGISTRY.get(name)
-        if registered is not cls and registered is not None:
+        if registered is not None and registered.htmx_component_class is not cls:
             clashes[name].append(cls)
-            clashes[name].append(registered)
+            clashes[name].append(registered.htmx_component_class)
 
     if clashes:
         for name, shadows in clashes.items():

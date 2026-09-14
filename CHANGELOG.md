@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **An `async def` event handler is now refused when its component registers**: djhtmx calls event handlers synchronously, so an `async def` handler -- a coroutine function or an async generator function -- never ran: calling it handed the dispatcher a coroutine to iterate, the resulting `TypeError: 'coroutine' object is not iterable` was caught as any other handler error, and the interaction ended in a default render with the handler's body never executed.  Declaring one now raises a `TypeError` at import naming the component and the handler, so the mistake surfaces where it is made instead of as a silent no-op at run time.  The check covers every handler of a public component, `_handle_event` and `_handle_sse_events` included.
+
+- **`djhtmx.component.REGISTRY` maps a component name to a `RegisteredComponent`**: the record carries the component class as `htmx_component_class` plus `handler_kind_mapping`, the shape (`"function"` or `"generator"`) of each of its event handlers.  The shape has to be read while the class registers, because `validate_call` later wraps every handler that declares parameters and the wrapper reports as a plain function whatever it wraps.  `REGISTRY` is internal, but code reaching into it for the class must now read the attribute.
+
 - **Minimum Django is now 5.2**: djhtmx requires `django>=5.2` (was `>=4.1`).  Django releases before 5.2 are end-of-life upstream and were neither tested nor supported; 5.2 is the LTS line djhtmx is developed against and the first to support Python 3.14.
 
 ### Fixed
