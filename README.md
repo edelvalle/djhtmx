@@ -1069,3 +1069,44 @@ htmx.send(todo_list.new_item, text="New todo item")
 ```python
 htmx.dispatch_event("#todo-list", "new_item", {"text": "New todo item"})
 ```
+
+#### Assertions
+
+A component reports to the person by emitting an event, and a listener turns it into what they see.  Neither that event nor the commands a handler yields ever reach the DOM, so asserting on them means watching the dispatch itself.
+
+`htmx.assertEmits(event_class: type[E], *, with_sse: bool = True) -> AbstractContextManager[E]`: Asserts that an event of that class is emitted inside the block, and hands the test the event.
+
+```python
+with self.htmx.assertEmits(FeedbackMessage) as event:
+    self.htmx.send(editor.rebuild_the_items)
+    self.assertIn("Open an item first", event.body)
+```
+
+`htmx.assertYields(command_class: type[C] | None, *, with_sse: bool = True) -> AbstractContextManager[C]`: The same one level down: it watches the commands the handlers yield instead of the events they emit.
+
+```python
+with self.htmx.assertYields(Redirect) as command:
+    self.htmx.send(editor.save_and_leave)
+    self.assertEqual(command.url, self.owner_url)
+```
+
+`None` asserts the other side, that no handler yielded anything at all:
+
+```python
+with self.htmx.assertYields(None):
+    self.htmx.send(editor.open_the_item, item=self.item)
+```
+
+What the block watches:
+
+- **The block, not one call.**  Any event or command produced inside it counts: the one from the handler under test, and any from a handler the cascade woke up on the way.  Several watchers can be open at once -- `with htmx.assertYields(Redirect) as command, htmx.assertEmits(Saved) as event:` -- and they share a single recording.
+
+- **Only what a handler yields.**  The default `Render` djhtmx adds for a handler that yielded nothing of its own is djhtmx's command, not the handler's, so it is not what makes `assertYields(None)` fail.  Neither is the `ReplaceURL`/`Signal` pair a query patcher produces, nor the `SendHtml` a `Render` becomes.
+
+- **The SSE leg as well.**  `htmx.send` drains the session's SSE events before it returns, and the handlers that drain wakes are watched too.  Pass `with_sse=False` to watch only what the browser event itself set off.
+
+The value the block receives stands for the event or the command and can be read as soon as it exists, so an assertion on it can sit right after the `send` that produces it.  Reading an attribute of it before anything has matched fails the test, and so does leaving the block having produced nothing; when several match, it stands for the first.  A failure names every command the block's handlers yielded, and which handler yielded each:
+
+```
+No Redirect was yielded inside the block; got: TodoItem.toggle_editing -> Focus(selector='#item-1 input[name=text]', command='focus'), TodoItem.toggle_editing -> Emit(SetEditing(item=<Item: First task>)), TodoList._handle_event -> SkipRender(TodoList#hx-01a0c915cb6a)
+```

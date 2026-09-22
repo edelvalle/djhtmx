@@ -1,7 +1,8 @@
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from functools import reduce
-from typing import Any
+from typing import Any, cast, overload
 from urllib.parse import urlparse
 from warnings import deprecated
 
@@ -14,16 +15,21 @@ from pygments.formatters import TerminalTrueColorFormatter
 from pygments.lexers import HtmlLexer
 
 from . import json
+from .command_processor import CommandProcessor, CommandRecorder, RecordedCommand
 from .commands import (
+    Command,
     Destroy,
     DispatchDOMEvent,
+    Emit,
     Focus,
     Open,
     PushURL,
     Redirect,
+    Render,
     ReplaceURL,
     ScrollIntoView,
     SendHtml,
+    SkipRender,
 )
 from .component import HtmxComponent
 from .introspection import parse_request_data
@@ -194,6 +200,84 @@ class Htmx:
         if navigate_to_url:
             self.navigate_to(navigate_to_url)
 
+    @contextmanager
+    def assertEmits[E](self, event_class: type[E], *, with_sse: bool = True) -> Iterator[E]:
+        """Assert that an `event_class` event is emitted inside the block.
+
+        The block is what is watched, not one command: every `Emit` a handler yields inside it
+        counts, the one from the handler under test and any a listener raised while it reacted to
+        that one.  The value the block receives stands for the event and can be read as soon as it
+        exists::
+
+            with self.htmx.assertEmits(FeedbackMessage) as event:
+                self.htmx.send(editor.rebuild_the_items)
+                self.assertIn("Open an item first", event.body)
+
+        Reading an attribute of it before any such event was emitted fails the test, and so does
+        leaving the block having emitted none.  When several match it stands for the first.
+
+        The handlers the SSE drain wakes -- `dispatch_event` runs it before returning -- are
+        watched as well; pass `with_sse=False` to watch only what the browser event itself set
+        off.
+
+        """
+        with self._watching(Emit, event_class, with_sse=with_sse) as event:
+            yield cast(E, event)
+
+    @overload
+    def assertYields[C: Command](
+        self, command_class: type[C], *, with_sse: bool = True
+    ) -> AbstractContextManager[C]: ...
+
+    @overload
+    def assertYields(
+        self, command_class: None, *, with_sse: bool = True
+    ) -> AbstractContextManager[None]: ...
+
+    @contextmanager
+    def assertYields(
+        self, command_class: type[Any] | None, *, with_sse: bool = True
+    ) -> Iterator[Any]:
+        """Assert that a `command_class` command is yielded inside the block.
+
+        The sibling of `assertEmits`:meth: one level down: it watches the commands handlers yield
+        instead of the events they emit.  Any command of that class yielded inside the block
+        counts -- the handler under test's, and that of any handler the cascade woke up::
+
+            with self.htmx.assertYields(Redirect) as command:
+                self.htmx.send(editor.save_and_leave)
+                self.assertEqual(command.url, self.owner_url)
+
+        `None` asserts the other side, that no handler yielded anything at all::
+
+            with self.htmx.assertYields(None):
+                self.htmx.send(editor.open_the_item, item=self.item)
+
+        Only what a handler yields is watched, so the default `Render` djhtmx adds for a handler
+        that yielded nothing of its own -- djhtmx's command, not the handler's -- is not what
+        makes `assertYields(None)` fail.
+
+        See `assertEmits`:meth: about reading the value inside the block, about several matches,
+        and about `with_sse`.
+
+        """
+        with self._watching(command_class, None, with_sse=with_sse) as command:
+            yield command
+
+    @contextmanager
+    def _watching(
+        self,
+        command_class: type[Any] | None,
+        event_class: type[Any] | None,
+        *,
+        with_sse: bool,
+    ) -> Iterator[Any]:
+        """Run the block with a recorder installed, and assert on the tape it left."""
+        with CommandProcessor._install_recorder() as recorder:
+            watch = _Watch(recorder, command_class, event_class, with_sse=with_sse)
+            yield None if command_class is None else watch
+            assert watch.matched(), watch.failure()
+
     async def _render_sse_events(self):
         from .sse import render_sse_events
 
@@ -244,3 +328,104 @@ class Htmx:
     def type(self, selector: str | html.HtmlElement, text: str, clear=False):
         """Deprecated alias of `type_into`:meth:."""
         self.type_into(selector, text, clear=clear)
+
+
+class _Watch:
+    """What a watched block expects of the commands its handlers yield.
+
+    It is also the value the block receives: attribute access resolves against what has been
+    yielded *so far*, so an assertion can sit right after the `Htmx.send`:meth: that produces it,
+    inside the block.  While nothing matches, any attribute access fails the test with the same
+    message leaving the block would give.
+
+    """
+
+    def __init__(
+        self,
+        recorder: CommandRecorder,
+        command_class: type[Any] | None,
+        event_class: type[Any] | None,
+        *,
+        with_sse: bool,
+    ):
+        self._recorder = recorder
+        self._start = len(recorder.commands)
+        self._command_class = command_class
+        self._event_class = event_class
+        self._with_sse = with_sse
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("__"):
+            # Let introspection (copy, pickle, a test runner formatting a failure) fail its own
+            # look-ups the way it expects instead of failing the test being written.
+            raise AttributeError(name)
+        return getattr(self._first(), name)
+
+    def __eq__(self, other: object) -> bool:
+        return self._first() == other
+
+    def __repr__(self) -> str:
+        if matches := self.matches():
+            return repr(matches[0])
+        else:
+            return f"<{type(self).__name__}: {self.failure()}>"
+
+    def matched(self) -> bool:
+        """Whether the block kept what it promised."""
+        if self._command_class is None:
+            return not self.recorded()
+        else:
+            return bool(self.matches())
+
+    def matches(self) -> list[Any]:
+        """The events, or the commands, yielded inside the block that the watch is about."""
+        commands = [recorded.command for recorded in self.recorded()]
+        if self._event_class is not None:
+            return [
+                command.event
+                for command in commands
+                if isinstance(command, Emit) and isinstance(command.event, self._event_class)
+            ]
+        elif self._command_class is not None:
+            return [command for command in commands if isinstance(command, self._command_class)]
+        else:
+            return []
+
+    def recorded(self) -> list[RecordedCommand]:
+        """Everything the handlers yielded inside the block, watched or not."""
+        return self._recorder.since(self._start, with_sse=self._with_sse)
+
+    def failure(self) -> str:
+        """The message for a block that did not keep its promise."""
+        yielded = _describe(self.recorded())
+        if self._command_class is None:
+            return f"Expected nothing to be yielded inside the block, but got: {yielded}"
+        elif self._event_class is not None:
+            return f"No {self._event_class.__name__} was emitted inside the block; got: {yielded}"
+        else:
+            return f"No {self._command_class.__name__} was yielded inside the block; got: {yielded}"
+
+    def _first(self) -> Any:
+        if matches := self.matches():
+            return matches[0]
+        else:
+            raise AssertionError(self.failure())
+
+
+def _describe(recorded: Iterable[RecordedCommand]) -> str:
+    """One line naming each command in `recorded` and the handler that yielded it."""
+    described = ", ".join(
+        f"{recorded_command.source} -> {_describe_command(recorded_command.command)}"
+        for recorded_command in recorded
+    )
+    return described or "nothing"
+
+
+def _describe_command(command: Command) -> str:
+    """A command in one short piece of text, with no component state in it."""
+    if isinstance(command, Emit):
+        return f"Emit({command.event!r})"
+    elif isinstance(command, Render | SkipRender):
+        return f"{type(command).__name__}({command.component.hx_name}#{command.component.id})"
+    else:
+        return repr(command)
