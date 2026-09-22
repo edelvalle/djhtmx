@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`Htmx.assertEmits` and `Htmx.assertYields`**: two context managers on `djhtmx.testing.Htmx` that assert on a dispatch.  `assertEmits(EventClass)` watches the events emitted inside the block and hands the test the event, `assertYields(CommandClass)` watches the commands the handlers yielded, and `assertYields(None)` asserts they yielded none.  Any event or command produced inside the block counts, wherever in the cascade it was raised, and watchers open at the same time share one recording.  Only what a handler yields is watched, so the default `Render` djhtmx adds on its own does not make `assertYields(None)` fail.  The handlers woken by the SSE drain are watched too; both take `with_sse=False` to leave them out.
+- **`Htmx.assertEmits` and `Htmx.assertYields`**: two context managers on `djhtmx.testing.Htmx` that assert on a dispatch.  `assertEmits(EventClass)` watches the events emitted inside the block and hands the test a `djhtmx.testing.CapturedEvents` list of them, `assertYields(CommandClass)` watches the commands the handlers yielded and hands the test all of them, and `assertYields(None)` asserts they yielded none.
 
 - **A non-optional `user` annotation is now enforced as a login requirement**: a component that declares `user: Annotated[User, Field(exclude=True)]` (instead of the optional annotation inherited from `HtmxComponent`) refuses to be built without a logged-in user.
 
