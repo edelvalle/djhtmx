@@ -1000,7 +1000,7 @@ class TestNormalRendering(TestCase):
         self.assertEqual(count.text_content(), "2 items left")
 
         # Add new item
-        self.htmx.type("input.new-todo", "3rd task")
+        self.htmx.type_into("input.new-todo", "3rd task")
         self.htmx.trigger("input.new-todo")
 
         [count] = self.htmx.select(".todo-count")
@@ -1048,12 +1048,12 @@ class TestNormalRendering(TestCase):
 
 #### Interactions
 
-`htmx.type(selector: str | html.HtmlElement, text: str, clear=False)`: This simulates typing in an input or text area. If `clear=True` it clears it replaces the current text in it.
+`htmx.type_into(selector: str | html.HtmlElement, text: str, clear=False)`: This simulates typing in an input or text area. If `clear=True` it clears it replaces the current text in it.  It used to be called `htmx.type`, which still works and warns.
 
 `htmx.trigger(selector: str | html.HtmlElement)`: This triggers whatever event is bound in the selected element and returns after all side effects had been processed.
 
 ```python
-self.htmx.type("input.new-todo", "3rd task")
+self.htmx.type_into("input.new-todo", "3rd task")
 self.htmx.trigger("input.new-todo")
 ```
 

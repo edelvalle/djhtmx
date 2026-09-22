@@ -3,6 +3,7 @@ from collections.abc import Callable, Iterable
 from functools import reduce
 from typing import Any
 from urllib.parse import urlparse
+from warnings import deprecated
 
 from asgiref.sync import async_to_sync
 from django.contrib.auth.models import AnonymousUser
@@ -77,8 +78,12 @@ class Htmx:
         assert isinstance(component, HtmxComponent)
         return component
 
-    def type(self, selector: str | html.HtmlElement, text: str, clear=False):
-        """Sets the value of an input, by "typing" in to it"""
+    def type_into(self, selector: str | html.HtmlElement, text: str, clear=False):
+        """Set the value of an input or textarea, by "typing" into it.
+
+        Appends `text` to what the element already holds, or replaces it when `clear` is true.
+
+        """
         element = self._select(selector)
         if (
             element.tag == "input" and element.attrib.get("type", "text") == "text"
@@ -230,3 +235,12 @@ class Htmx:
                     parent.remove(target)
             else:
                 assert False, "Unknown swap strategy, please define it here"
+
+    # Keep this last.  A method named `type` shadows the builtin for every annotation that
+    # follows it in the class body, and those annotations are evaluated when their method is
+    # defined (Python 3.14 made them lazy, 3.13 did not), so a `type[X]` below this point raises
+    # `TypeError: 'function' object is not subscriptable` at import time.
+    @deprecated("Htmx.type is deprecated, use Htmx.type_into instead")
+    def type(self, selector: str | html.HtmlElement, text: str, clear=False):
+        """Deprecated alias of `type_into`:meth:."""
+        self.type_into(selector, text, clear=clear)

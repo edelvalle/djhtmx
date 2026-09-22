@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`djhtmx.testing.Htmx.type` is renamed to `type_into`**: to avoid shadowing the builtin.  The old name remains as a `@deprecated` alias that forwards to `type_into`.
+
 - **An `async def` event handler is now refused when its component registers**: djhtmx calls event handlers synchronously, so an `async def` handler -- a coroutine function or an async generator function -- never ran: calling it only handed the dispatcher a coroutine to iterate.  The call itself sits inside the unhandled-error guard, but the iteration that raises `TypeError: 'coroutine' object is not iterable` happens after that guard in every dispatch path, and no layer up to the view catches it: the interaction failed with a server error, the handler's body never ran, and Python warned that the coroutine was never awaited.  Declaring one now raises a `TypeError` at import naming the component and the handler, so the mistake surfaces where it is made instead of as a 500 at run time.  The check covers every handler of a public component, `_handle_event` and `_handle_sse_events` included.
 
 - **Minimum pydantic is now 2.10 on Python 3.13**: djhtmx requires `pydantic>=2.10` (was `>=2`); Python 3.14 already required `>=2.13`, and 2.10 covers the whole 3.8-3.13 range.
