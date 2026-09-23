@@ -5,7 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-09-23
+
+### Upgrading from 1.3.x
+
+Three changes can break a project that worked on 1.3.13.
+
+- **A component with a non-optional `user` refuses to be built without a logged-in user.**  Review every component that declares `user: Annotated[User, Field(exclude=True)]`, directly or through a base, and is mounted on a page anonymous visitors can reach: it now sends them to the login page instead of rendering with `user=None`.  Annotate it `user: Annotated[User | None, Field(exclude=True)]` to keep the previous behavior.  `djhtmx.component.requires_logged_user(component_class)` reports which of the two a component is.
+
+- **A public `async def` method on a component raises `TypeError` at import.**  The front-end names the handler it calls, so every public method of a component is reachable as one.  Rename a helper that is not a handler to start with `_`, or move it off the component.
+
+- **Type checkers now read djhtmx's own annotations** (the package ships `py.typed`).  A project that type-checks its own code may see new errors, and indirect imports of names djhtmx merely re-imports (`from djhtmx.sse import Iterable`) stop resolving.  Import public names from their documented modules.
+
+Nothing was removed or renamed: `djhtmx.testing.Htmx.type` keeps working as a deprecated alias of `type_into`, and no public name changed module.  The `django>=5.2` and `pydantic>=2.10` floors drop only releases that are end-of-life upstream.
 
 ### Added
 
