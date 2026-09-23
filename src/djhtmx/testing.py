@@ -383,7 +383,7 @@ class CapturedEvents[E](UserList[E]):
         return f"No {get_fqn(self._event_class)} was emitted inside the block; emitted: {emitted}"
 
 
-class CapturedCommands[C](UserList[C]):
+class CapturedCommands[C: Command](UserList[C]):
     """The `C` commands that the handlers yielded inside a watched block.
 
     This is what `Htmx.assertYields`:meth: hands to its block.  It is a list, and a live one: the
@@ -442,4 +442,7 @@ class CapturedCommands[C](UserList[C]):
         if self._command_class is None:
             return f"Expected nothing to be yielded inside the block, but got: {yielded}"
         else:
-            return f"No {get_fqn(self._command_class)} was yielded inside the block; got: {yielded}"
+            # A command lives in `djhtmx.commands`, so its module tells a reader nothing; an
+            # event's does, since two applications can name an event alike.
+            command = get_fqn(self._command_class).removeprefix("djhtmx.commands.")
+            return f"No {command} was yielded inside the block; got: {yielded}"
