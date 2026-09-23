@@ -22,7 +22,7 @@ class TestNormalRendering(TestCase):
         self.assertEqual(count.text_content(), "2 items left")
 
         # Add new item
-        self.htmx.type("input.new-todo", "3rd task")
+        self.htmx.type_into("input.new-todo", "3rd task")
         self.htmx.trigger("input.new-todo")
 
         [count] = self.htmx.select(".todo-count")
@@ -84,7 +84,7 @@ class TestNormalRendering(TestCase):
         self.assertEqual(len(self.htmx.select("li.editing")), 1)
 
         # type new name and save!
-        self.htmx.type("li.editing input.edit", "New name", clear=True)
+        self.htmx.type_into("li.editing input.edit", "New name", clear=True)
         self.htmx.trigger("li.editing input.edit")
 
         # ensure new name is set

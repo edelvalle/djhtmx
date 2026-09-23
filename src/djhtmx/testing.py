@@ -1,8 +1,10 @@
-from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections import UserList, defaultdict
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from functools import reduce
-from typing import Any
+from typing import Any, overload
 from urllib.parse import urlparse
+from warnings import deprecated
 
 from asgiref.sync import async_to_sync
 from django.contrib.auth.models import AnonymousUser
@@ -13,9 +15,12 @@ from pygments.formatters import TerminalTrueColorFormatter
 from pygments.lexers import HtmlLexer
 
 from . import json
+from .command_processor import CommandProcessor, CommandRecorder, RecordedCommand
 from .commands import (
+    Command,
     Destroy,
     DispatchDOMEvent,
+    Emit,
     Focus,
     Open,
     PushURL,
@@ -27,9 +32,9 @@ from .commands import (
 from .component import HtmxComponent
 from .introspection import parse_request_data
 from .repo import Repository, Session, signer
-from .utils import get_params
+from .utils import get_fqn, get_params
 
-__all__ = ("Htmx",)
+__all__ = ("CapturedCommands", "CapturedEvents", "Htmx")
 
 
 class Htmx:
@@ -67,7 +72,8 @@ class Htmx:
 
     def get_component_by_type[C: HtmxComponent](self, component_type: type[C]) -> C:
         [component] = self.repo.get_components_by_names(component_type.__name__)
-        return component  # type: ignore
+        assert isinstance(component, component_type)
+        return component
 
     def get_components_by_type[C: HtmxComponent](self, component_type: type[C]) -> Iterable[C]:
         return self.repo.get_components_by_names(component_type.__name__)  # type: ignore
@@ -77,8 +83,12 @@ class Htmx:
         assert isinstance(component, HtmxComponent)
         return component
 
-    def type(self, selector: str | html.HtmlElement, text: str, clear=False):
-        """Sets the value of an input, by "typing" in to it"""
+    def type_into(self, selector: str | html.HtmlElement, text: str, clear=False):
+        """Set the value of an input or textarea, by "typing" into it.
+
+        Appends `text` to what the element already holds, or replaces it when `clear` is true.
+
+        """
         element = self._select(selector)
         if (
             element.tag == "input" and element.attrib.get("type", "text") == "text"
@@ -113,6 +123,12 @@ class Htmx:
         return element
 
     def trigger(self, selector: str | html.HtmlElement):
+        """Fire the event bound to the element, and apply everything it produces.
+
+        Delivers the session's pending SSE events before returning, as `dispatch_event`:meth:
+        does.
+
+        """
         element = self._select(selector)
 
         # mutate in case of a checkbox and radios
@@ -155,10 +171,23 @@ class Htmx:
         self.dispatch_event(component_id, event_handler, parse_request_data(vals))
 
     def send[**P](self, method: Callable[P, Any], *args: P.args, **kwargs: P.kwargs):
+        """Run a component's event handler, and apply everything it produces.
+
+        Delivers the session's pending SSE events before returning, as `dispatch_event`:meth:
+        does.
+
+        """
         assert not args, "All parameters have to be passed by name"
         self.dispatch_event(method.__self__.id, method.__name__, kwargs)  # type: ignore
 
     def dispatch_event(self, component_id: str, event_handler: str, kwargs: dict[str, Any]):
+        """Run the named handler of the component, and apply everything it produces.
+
+        Always ends by delivering the session's pending SSE events, the way the browser receives
+        them between requests, so a component's reaction to one is applied without asking; see
+        `drain_sse_events`:meth:.
+
+        """
         commands = self.repo.dispatch_event(component_id, event_handler, kwargs)
         navigate_to_url = None
         for command in commands:
@@ -183,11 +212,83 @@ class Htmx:
                 case Focus() | ScrollIntoView() | DispatchDOMEvent():
                     pass
 
-        if sse_html := async_to_sync(self._render_sse_events)():
-            self._apply_oob_html(sse_html)
+        self.drain_sse_events()
 
         if navigate_to_url:
             self.navigate_to(navigate_to_url)
+
+    @contextmanager
+    def assertEmits[E](self, event_class: type[E]) -> "Iterator[CapturedEvents[E]]":
+        """Assert that at least one `event_class` event is emitted inside the block.
+
+        The block receives a `CapturedEvents`:class: standing for the events of that class.  If no
+        event was found it will raise at exit.
+
+        Example::
+
+            with self.htmx.assertEmits(FeedbackMessage) as captured:
+                self.htmx.send(editor.rebuild_the_items)
+            event = captured.get_event()
+            self.assertIn("Open an item first", event.body)
+
+        """
+        with self.assertYields(Emit) as emits:
+            captured = CapturedEvents(emits, event_class)
+            yield captured
+        # Outside the block above, so that everything it captures on its way out counts.
+        captured.get_event()
+
+    @overload
+    def assertYields[C: Command](
+        self, command_class: type[C]
+    ) -> "AbstractContextManager[CapturedCommands[C]]": ...
+
+    @overload
+    def assertYields(self, command_class: None) -> AbstractContextManager[None]: ...
+
+    @contextmanager
+    def assertYields[C: Command](self, command_class: type[C] | None) -> Iterator[Any]:
+        """Assert that at least one `command_class` command is yielded inside the block.
+
+        Every command of that class yielded inside the block is captured::
+
+            with self.htmx.assertYields(Redirect) as commands:
+                self.htmx.send(editor.save_and_leave)
+            [redirect] = commands  # Ensure only 1 Redirect
+            self.assertEqual(redirect.url, self.owner_url)
+
+        .. note:: The sequence is a live view, not a snapshot: the block receives it before its
+           first command exists.  This means that it might mutate inside the block.
+
+           We suggest to make validations outside of the block, after this method has asserted that
+           `command_class` was produced.
+
+        .. rubric:: Validating no yields
+
+        Pass `None` to assert no command is ever yielded by the handler::
+
+            with self.htmx.assertYields(None):
+                self.htmx.send(editor.open_the_item, item=self.item)
+
+        Only what a handler yields is watched, so the default `Render` djhtmx adds for a handler
+        that yielded nothing of its own -- djhtmx's command, not the handler's -- is not what
+        makes `assertYields(None)` fail.
+
+        """
+        with CommandProcessor._install_recorder() as recorder:
+            captured = CapturedCommands(recorder, command_class)
+            yield None if command_class is None else captured
+            assert captured.is_satisfied(), captured.get_failure_message()
+
+    def drain_sse_events(self):
+        """Deliver the session's pending SSE events and apply whatever they render.
+
+        `dispatch_event`:meth:, and so `send`:meth: and `trigger`:meth:, always ends by doing
+        this, so a test needs it only for the events raised by something other than a handler.
+
+        """
+        if sse_html := async_to_sync(self._render_sse_events)():
+            self._apply_oob_html(sse_html)
 
     async def _render_sse_events(self):
         from .sse import render_sse_events
@@ -230,3 +331,119 @@ class Htmx:
                     parent.remove(target)
             else:
                 assert False, "Unknown swap strategy, please define it here"
+
+    # Keep this last.  A method named `type` shadows the builtin for every annotation that
+    # follows it in the class body, and those annotations are evaluated when their method is
+    # defined (Python 3.14 made them lazy, 3.13 did not), so a `type[X]` below this point raises
+    # `TypeError: 'function' object is not subscriptable` at import time.
+    @deprecated("Htmx.type is deprecated, use Htmx.type_into instead")
+    def type(self, selector: str | html.HtmlElement, text: str, clear=False):
+        """Deprecated alias of `type_into`:meth:."""
+        self.type_into(selector, text, clear=clear)
+
+
+class CapturedEvents[E](UserList[E]):
+    """The `E` events emitted inside a watched block.
+
+    This is what `Htmx.assertEmits`:meth: hands to its block.  It is a list, and a live one: the
+    block receives it before anything has been emitted, and every read answers with what has been
+    emitted so far, whether the read happens inside the block or after it::
+
+        with htmx.assertEmits(FeedbackMessage) as captured:
+            htmx.send(editor.rebuild_the_items)
+        [event] = captured
+        assert "Open an item first" in event.body
+
+    Its items are the events the listeners received, with nothing standing in for them, so reading
+    their attributes is checked like any other attribute access.  `get_event`:meth: answers with
+    the first one and fails with a message naming what *was* emitted, which `captured[0]` cannot
+    do.
+
+    Mutating the list has no effect.
+
+    """
+
+    def __init__(self, emits: Sequence[Emit], event_class: type[E]):
+        self._emits = emits
+        self._event_class = event_class
+
+    # `UserList` declares `data` as a plain list it owns, hence the ignore: here it is derived
+    # instead, which is what makes the list live -- the block is handed this object before its first
+    # event exists, and `UserList` reads every operation off `data`.
+    @property
+    def data(self) -> list[E]:  # type: ignore[override]
+        return [emit.event for emit in self._emits if isinstance(emit.event, self._event_class)]
+
+    def get_event(self) -> E:
+        """Answer with the first event captured, or fail the assertion while there is none."""
+        if events := self.data:
+            return events[0]
+        else:
+            raise AssertionError(self.get_failure_message())
+
+    def get_failure_message(self) -> str:
+        """Build the message for a block that emitted no such event."""
+        emitted = ", ".join(repr(emit.event) for emit in self._emits) or "nothing"
+        return f"No {get_fqn(self._event_class)} was emitted inside the block; emitted: {emitted}"
+
+
+class CapturedCommands[C: Command](UserList[C]):
+    """The `C` commands that the handlers yielded inside a watched block.
+
+    This is what `Htmx.assertYields`:meth: hands to its block.  It is a list, and a live one: the
+    block receives it before anything has been yielded, and every read answers with what has been
+    yielded so far, which is why a test reads it after the block rather than inside it -- see the
+    note in `Htmx.assertYields`:meth:.
+
+    Its items are the commands the handlers yielded, so reading their attributes is checked like
+    any other attribute access.  `get_recorded`:meth: answers with everything the handlers yielded,
+    captured or not, which is what a failure reports.
+
+    Mutating the list has no effect.
+
+    """
+
+    def __init__(
+        self,
+        recorder: CommandRecorder,
+        command_class: type[C] | None,
+    ):
+        self._recorder = recorder
+        self._start = len(recorder.commands)
+        self._command_class = command_class
+
+    # `UserList` declares `data` as a plain list it owns, hence the ignore: here it is derived
+    # instead, which is what makes the list live -- the block is handed this object before its
+    # first command exists, and `UserList` reads every operation off `data`.
+    @property
+    def data(self) -> list[C]:  # type: ignore[override]
+        if self._command_class is None:
+            return []
+        else:
+            return [
+                recorded.command
+                for recorded in self.get_recorded()
+                if isinstance(recorded.command, self._command_class)
+            ]
+
+    def get_recorded(self) -> list[RecordedCommand]:
+        """Answer with everything the handlers yielded inside the block, captured or not."""
+        return self._recorder.since(self._start)
+
+    def is_satisfied(self) -> bool:
+        """Whether the block kept what it promised."""
+        if self._command_class is None:
+            return not self.get_recorded()
+        else:
+            return bool(self.data)
+
+    def get_failure_message(self) -> str:
+        """Build the message for a block that did not keep its promise."""
+        yielded = ", ".join(recorded.describe() for recorded in self.get_recorded()) or "nothing"
+        if self._command_class is None:
+            return f"Expected nothing to be yielded inside the block, but got: {yielded}"
+        else:
+            # A command lives in `djhtmx.commands`, so its module tells a reader nothing; an
+            # event's does, since two applications can name an event alike.
+            command = get_fqn(self._command_class).removeprefix("djhtmx.commands.")
+            return f"No {command} was yielded inside the block; got: {yielded}"

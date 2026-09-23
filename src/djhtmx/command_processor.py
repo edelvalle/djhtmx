@@ -14,8 +14,11 @@ here.
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator, Iterable
-from typing import TYPE_CHECKING
+from collections.abc import Generator, Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, assert_never
 
 from djhtmx.global_events import HtmxUnhandledError
 from djhtmx.tracing import tracing_span
@@ -79,11 +82,12 @@ class CommandProcessor:
         from .sse import sse_source_session
         from .utils import compact_hash
 
-        queue = CommandQueue(list(commands))
+        roots = list(commands)
+        queue = CommandQueue(roots)
         with tracing_span(
             "djhtmx.CommandProcessor.process",
             session=compact_hash(self.repo.session.id),
-            roots=str(len(queue._commands)),
+            roots=str(len(roots)),
         ):
             try:
                 with sse_source_session(self.repo.session.id):
@@ -270,6 +274,7 @@ class CommandProcessor:
         component_was_rendered = False
         commands_to_add: list[Command | InternalCommand] = []
         for command in emitted_commands or []:
+            self._record_command(command, component, method_name)
             if method_name:
                 logger.debug("< YIELD: %s.%s -> %s", component.hx_name, method_name, command)
             component_was_rendered = component_was_rendered or (
@@ -297,5 +302,109 @@ class CommandProcessor:
         commands.extend(commands_to_add)
         repo.session.store(component)
 
+    @classmethod
+    @contextmanager
+    def _install_recorder(cls) -> Iterator[CommandRecorder]:
+        """Record the commands handlers yield while the block runs.
 
-__all__ = ["CommandProcessor"]
+        The recorder lives in a `ContextVar`, so it also reaches the handlers that run on another
+        thread inside the block: the SSE drain goes through `sse_executor.submit_sse_render`, which
+        carries the context over to whichever thread renders.
+
+        A recorder already installed is reused instead of shadowed, so several watchers open at
+        once (`with htmx.assertYields(Redirect), htmx.assertEmits(Message)`) share one tape and
+        each reads the window that opened with it.
+
+        """
+        if (recorder := _recorder.get()) is not None:
+            yield recorder
+        else:
+            recorder = CommandRecorder()
+            token = _recorder.set(recorder)
+            try:
+                yield recorder
+            finally:
+                _recorder.reset(token)
+
+    def _record_command(
+        self,
+        command: Command,
+        component: HtmxComponent,
+        method_name: str | None,
+    ) -> None:
+        """Hand a command a handler just yielded to the recorder, if one is installed.
+
+        Only what a handler yields reaches here.  The commands djhtmx adds on its own -- the
+        default `Render` for a handler that yielded nothing, the `ReplaceURL`/`Signal` pair a
+        query patcher produces, the `SendHtml` a `Render` becomes -- are added elsewhere and are
+        deliberately out of the tape: a test that asks what a block yielded means the handlers'
+        yields.
+
+        """
+        if (recorder := _recorder.get()) is not None:
+            source = f"{component.hx_name}.{method_name}" if method_name else component.hx_name
+            recorder.commands.append(RecordedCommand(command=command, source=source))
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedCommand:
+    """A command a handler yielded, and where it came from.
+
+    `source` names the handler that yielded it (`TodoItem.toggle_editing`).
+
+    """
+
+    command: Command
+    source: str
+
+    def describe(self) -> str:
+        """Answer with the command and the handler that yielded it, in one short piece of text.
+
+        A command carrying a component names it by hx-name and id rather than printing its whole
+        state, which is what keeps an assertion message readable.
+
+        """
+        match self.command:
+            case Emit(event=event):
+                described = f"Emit({event!r})"
+            case Render(component=component) | SkipRender(component=component) as command:
+                described = f"{type(command).__name__}({component.hx_name}#{component.id})"
+            case (
+                BuildAndRender()
+                | Destroy()
+                | Open()
+                | Focus()
+                | ScrollIntoView()
+                | Redirect()
+                | DispatchDOMEvent()
+                | PushURL()
+                | ReplaceURL()
+                | Execute() as command
+            ):
+                described = repr(command)
+            case unreachable:
+                assert_never(unreachable)
+        return f"{self.source} -> {described}"
+
+
+class CommandRecorder:
+    """The tape of commands handlers yielded while it was installed.
+
+    One recorder serves every watcher open at the same time: a watcher keeps the length of the
+    tape at the moment it opened and reads through `since`, so what it sees is what the handlers
+    yielded inside it.
+
+    """
+
+    def __init__(self):
+        self.commands: list[RecordedCommand] = []
+
+    def since(self, start: int) -> list[RecordedCommand]:
+        """The commands recorded after `start`."""
+        return self.commands[start:]
+
+
+_recorder: ContextVar[CommandRecorder | None] = ContextVar("djhtmx.command_recorder", default=None)
+
+
+__all__ = ["CommandProcessor", "CommandRecorder", "RecordedCommand"]

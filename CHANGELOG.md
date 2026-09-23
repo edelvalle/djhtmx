@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Htmx.assertEmits` and `Htmx.assertYields`**: two context managers on `djhtmx.testing.Htmx` that assert on a dispatch.  `assertEmits(EventClass)` watches the events emitted inside the block and hands the test a `djhtmx.testing.CapturedEvents` list of them, `assertYields(CommandClass)` watches the commands the handlers yielded and hands the test all of them, and `assertYields(None)` asserts they yielded none.
+
 - **A non-optional `user` annotation is now enforced as a login requirement**: a component that declares `user: Annotated[User, Field(exclude=True)]` (instead of the optional annotation inherited from `HtmxComponent`) refuses to be built without a logged-in user.
 
   Until now the annotation documented an intention that nothing checked: Django model fields are validated with a `PlainValidator` that returns `None` unchanged, so a component annotated with a required user still ran its handlers with `self.user` set to `None` whenever the session had died (an expired session on an open page, a logout in another tab, a POST without cookies to the `csrf_exempt` endpoints), and failed deep in whatever it wrote -- typically a NOT NULL violation on a `created_by` column, losing the user's edit with no feedback on screen.
@@ -26,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python 3.14 support**: djhtmx is now tested on a Python 3.13 + 3.14 matrix.  On 3.14 the dependency floors rise to the first releases shipping 3.14 wheels (`pydantic>=2.13`, `orjson>=3.11`, `lxml>=6`); 3.13 installs are unaffected.
 
 ### Changed
+
+- **`djhtmx.testing.Htmx.type` is renamed to `type_into`**: to avoid shadowing the builtin.  The old name remains as a `@deprecated` alias that forwards to `type_into`.
 
 - **An `async def` event handler is now refused when its component registers**: djhtmx calls event handlers synchronously, so an `async def` handler -- a coroutine function or an async generator function -- never ran: calling it only handed the dispatcher a coroutine to iterate.  The call itself sits inside the unhandled-error guard, but the iteration that raises `TypeError: 'coroutine' object is not iterable` happens after that guard in every dispatch path, and no layer up to the view catches it: the interaction failed with a server error, the handler's body never ran, and Python warned that the coroutine was never awaited.  Declaring one now raises a `TypeError` at import naming the component and the handler, so the mistake surfaces where it is made instead of as a 500 at run time.  The check covers every handler of a public component, `_handle_event` and `_handle_sse_events` included.
 

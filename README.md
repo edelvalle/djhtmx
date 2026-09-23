@@ -1000,7 +1000,7 @@ class TestNormalRendering(TestCase):
         self.assertEqual(count.text_content(), "2 items left")
 
         # Add new item
-        self.htmx.type("input.new-todo", "3rd task")
+        self.htmx.type_into("input.new-todo", "3rd task")
         self.htmx.trigger("input.new-todo")
 
         [count] = self.htmx.select(".todo-count")
@@ -1048,12 +1048,12 @@ class TestNormalRendering(TestCase):
 
 #### Interactions
 
-`htmx.type(selector: str | html.HtmlElement, text: str, clear=False)`: This simulates typing in an input or text area. If `clear=True` it clears it replaces the current text in it.
+`htmx.type_into(selector: str | html.HtmlElement, text: str, clear=False)`: This simulates typing in an input or text area. If `clear=True` it clears it replaces the current text in it.  It used to be called `htmx.type`, which still works and warns.
 
 `htmx.trigger(selector: str | html.HtmlElement)`: This triggers whatever event is bound in the selected element and returns after all side effects had been processed.
 
 ```python
-self.htmx.type("input.new-todo", "3rd task")
+self.htmx.type_into("input.new-todo", "3rd task")
 self.htmx.trigger("input.new-todo")
 ```
 
@@ -1068,4 +1068,48 @@ htmx.send(todo_list.new_item, text="New todo item")
 
 ```python
 htmx.dispatch_event("#todo-list", "new_item", {"text": "New todo item"})
+```
+
+#### Assertions
+
+A component reports to the person by emitting an event, and a listener turns it into what they see.  Neither that event nor the commands a handler yields ever reach the DOM, so asserting on them means watching the dispatch itself.
+
+`htmx.assertEmits(event_class: type[E]) -> AbstractContextManager[CapturedEvents[E]]`: Asserts that at least one event of that class is emitted inside the block, and hands the test the list of them.
+
+```python
+with self.htmx.assertEmits(FeedbackMessage) as captured:
+    self.htmx.send(editor.rebuild_the_items)
+event = captured.get_event()
+self.assertIn("Open an item first", event.body)
+```
+
+`htmx.assertYields(command_class: type[C]) -> AbstractContextManager[CapturedCommands[C]]`: The same one level down: it watches the commands the handlers yield instead of the events they emit, and hands the test every command of that class the block yielded.
+
+```python
+with self.htmx.assertYields(Redirect) as commands:
+    self.htmx.send(editor.save_and_leave)
+[redirect] = commands
+self.assertEqual(redirect.url, self.owner_url)
+```
+
+`None` asserts the other side, that no handler yielded anything at all:
+
+```python
+with self.htmx.assertYields(None):
+    self.htmx.send(editor.open_the_item, item=self.item)
+```
+
+What the block watches:
+
+- **The block, not one call.**  Any event or command produced inside it counts: the one from the handler under test, and any from a handler the cascade woke up on the way.  Several watchers can be open at once -- `with htmx.assertYields(Redirect) as commands, htmx.assertEmits(Saved) as captured:` -- and they share a single recording.
+
+- **Only what a handler yields.**  A capture holds the commands the handlers yielded and nothing else: the commands djhtmx adds on its own never appear in one, so `assertYields(None)` holds for a handler that yielded nothing of its own -- the default `Render` it gets is not its command.
+
+- **Reacting to SSE events.**  You can test if a component reacts to SSE events by using `emit_sse_event` and `drain_sse_events` inside the `assertYields(...)` block.  Note: Some methods of the `Htmx` helper already drain the SSE events.
+
+
+Both values are live lists, not snapshots -- `djhtmx.testing.CapturedCommands` and `djhtmx.testing.CapturedEvents` -- and the block receives them before anything has been produced, so they fill as it runs.  Assert on them **after** the block: that is where djhtmx has checked that anything was produced at all, so `[redirect] = commands` inside the block can fail on an empty list with a confusing unpacking error instead.  Watch `Emit` with `assertYields` to reach every event a block emitted rather than those of one class.  Both hold the objects the dispatch really produced, so assertions on their attributes are checked like any other attribute access; `captured.get_event()` answers with the first event and fails naming what *was* emitted, something `captured[0]` cannot do.  A failure names every command the block's handlers yielded, and which handler yielded each:
+
+```
+No Redirect was yielded inside the block; got: TodoItem.toggle_editing -> Focus(selector='#item-1 input[name=text]', command='focus'), TodoItem.toggle_editing -> Emit(SetEditing(item=<Item: First task>)), TodoList._handle_event -> SkipRender(TodoList#hx-01a0c915cb6a)
 ```
