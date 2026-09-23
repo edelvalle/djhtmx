@@ -18,7 +18,7 @@ from collections.abc import Generator, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from djhtmx.global_events import HtmxUnhandledError
 from djhtmx.tracing import tracing_span
@@ -365,6 +365,35 @@ class RecordedCommand:
     command: Command
     source: str
     from_sse: bool
+
+    def describe(self) -> str:
+        """Answer with the command and the handler that yielded it, in one short piece of text.
+
+        A command carrying a component names it by hx-name and id rather than printing its whole
+        state, which is what keeps an assertion message readable.
+
+        """
+        match self.command:
+            case Emit(event=event):
+                described = f"Emit({event!r})"
+            case Render(component=component) | SkipRender(component=component) as command:
+                described = f"{type(command).__name__}({component.hx_name}#{component.id})"
+            case (
+                BuildAndRender()
+                | Destroy()
+                | Open()
+                | Focus()
+                | ScrollIntoView()
+                | Redirect()
+                | DispatchDOMEvent()
+                | PushURL()
+                | ReplaceURL()
+                | Execute() as command
+            ):
+                described = repr(command)
+            case unreachable:
+                assert_never(unreachable)
+        return f"{self.source} -> {described}"
 
 
 class CommandRecorder:

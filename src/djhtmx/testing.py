@@ -25,11 +25,9 @@ from .commands import (
     Open,
     PushURL,
     Redirect,
-    Render,
     ReplaceURL,
     ScrollIntoView,
     SendHtml,
-    SkipRender,
 )
 from .component import HtmxComponent
 from .introspection import parse_request_data
@@ -440,27 +438,8 @@ class CapturedCommands[C](UserList[C]):
 
     def get_failure_message(self) -> str:
         """Build the message for a block that did not keep its promise."""
-        yielded = _describe(self.get_recorded())
+        yielded = ", ".join(recorded.describe() for recorded in self.get_recorded()) or "nothing"
         if self._command_class is None:
             return f"Expected nothing to be yielded inside the block, but got: {yielded}"
         else:
             return f"No {get_fqn(self._command_class)} was yielded inside the block; got: {yielded}"
-
-
-def _describe(recorded: Iterable[RecordedCommand]) -> str:
-    """One line naming each command in `recorded` and the handler that yielded it."""
-    described = ", ".join(
-        f"{recorded_command.source} -> {_describe_command(recorded_command.command)}"
-        for recorded_command in recorded
-    )
-    return described or "nothing"
-
-
-def _describe_command(command: Command) -> str:
-    """A command in one short piece of text, with no component state in it."""
-    if isinstance(command, Emit):
-        return f"Emit({command.event!r})"
-    elif isinstance(command, Render | SkipRender):
-        return f"{type(command).__name__}({command.component.hx_name}#{command.component.id})"
-    else:
-        return repr(command)
