@@ -31,6 +31,9 @@ from django.db.models import Prefetch
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer, PlainValidator, TypeAdapter
 
+from djhtmx.tracing import tracing_span
+from djhtmx.utils import get_fqn
+
 M = TypeVar("M", bound=models.Model)
 
 
@@ -177,20 +180,23 @@ class _LazyModelProxy(Generic[M]):  # noqa
 
     def __ensure_instance(self):
         if not self.__instance:
-            manager = self.__model.objects
-            if select_related := self.__select_related:
-                manager = manager.select_related(*select_related)
-            if prefetch_related := self.__prefetch_related:
-                manager = manager.prefetch_related(*prefetch_related)
-            # Use filter().first() instead of get() to avoid exceptions
-            self.__instance = manager.filter(pk=self.__pk).first()
-            if self.__instance is None:
-                if self.__allow_none:
-                    # For Model | None, object doesn't exist - proxy becomes None-like
-                    pass
-                else:
-                    # For required Model fields, raise error
-                    raise ValueError(f"{self.__model.__name__} with pk={self.__pk} does not exist")
+            with tracing_span(
+                "djhtmx.model.fetch",
+                model=get_fqn(self.__model),
+                pk=_describe_pk(self.__pk),
+                lazy="True",
+            ):
+                manager = self.__model.objects
+                if select_related := self.__select_related:
+                    manager = manager.select_related(*select_related)
+                if prefetch_related := self.__prefetch_related:
+                    manager = manager.prefetch_related(*prefetch_related)
+                # Use filter().first() instead of get() to avoid exceptions
+                self.__instance = manager.filter(pk=self.__pk).first()
+            if self.__instance is None and not self.__allow_none:
+                # For Model | None, object doesn't exist - proxy becomes None-like; for required
+                # Model fields, raise error
+                raise ValueError(f"{self.__model.__name__} with pk={self.__pk} does not exist")
         return self.__instance
 
     def __repr__(self) -> str:
@@ -229,13 +235,19 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
         elif isinstance(value, _LazyModelProxy):
             return value._LazyModelProxy__ensure_instance()
         else:
-            manager = self.model.objects
-            if select_related := self.model_config.select_related:
-                manager = manager.select_related(*select_related)
-            if prefetch_related := self.model_config.prefetch_related:
-                manager = manager.prefetch_related(*prefetch_related)
-            # Use filter().first() instead of get() to avoid exceptions
-            instance = manager.filter(pk=value).first()
+            with tracing_span(
+                "djhtmx.model.fetch",
+                model=get_fqn(self.model),
+                pk=_describe_pk(value),
+                lazy="False",
+            ):
+                manager = self.model.objects
+                if select_related := self.model_config.select_related:
+                    manager = manager.select_related(*select_related)
+                if prefetch_related := self.model_config.prefetch_related:
+                    manager = manager.prefetch_related(*prefetch_related)
+                # Use filter().first() instead of get() to avoid exceptions
+                instance = manager.filter(pk=value).first()
             if instance is None:
                 if self.allow_none:
                     # For Model | None fields, return None when object doesn't exist
@@ -249,6 +261,18 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
     @cache
     def from_modelclass(cls, model: type[M], model_config: ModelConfig, allow_none: bool = False):
         return cls(model, model_config=model_config, allow_none=allow_none)
+
+
+def _describe_pk(value) -> str:
+    """Render the primary key `value` stands for, as a span tag.
+
+    Never `repr(value)`: `Model.__repr__` calls `__str__`, and a `__str__` that follows a relation
+    issues the very query these spans are counting.  And `str` of the pk rather than `repr`, so one
+    row tags the same whether it arrived as the wire's string or as the type the lazy proxy coerces
+    it to -- otherwise the same row counts as two.
+
+    """
+    return str(getattr(value, "pk", value))
 
 
 @dataclass(slots=True)
@@ -301,7 +325,7 @@ def _QuerySet(qs: type[models.QuerySet]):
     [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]  # type: ignore
     return Annotated[
         qs,
-        PlainValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
+        PlainValidator(lambda v: v if isinstance(v, qs) else model.objects.filter(pk__in=v)),
         PlainSerializer(
             func=lambda v: (
                 [instance.pk for instance in v]
