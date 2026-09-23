@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Htmx.assertEmits` and `Htmx.assertYields`**: two context managers on `djhtmx.testing.Htmx` that assert on a dispatch.  `assertEmits(EventClass)` watches the events emitted inside the block and hands the test a `djhtmx.testing.CapturedEvents` list of them, `assertYields(CommandClass)` watches the commands the handlers yielded and hands the test all of them, and `assertYields(None)` asserts they yielded none.
 
+- **`Htmx.capturing`**: the capture behind those assertions.
+
 - **A non-optional `user` annotation is now enforced as a login requirement**: a component that declares `user: Annotated[User, Field(exclude=True)]` (instead of the optional annotation inherited from `HtmxComponent`) refuses to be built without a logged-in user.
 
   Until now the annotation documented an intention that nothing checked: Django model fields are validated with a `PlainValidator` that returns `None` unchanged, so a component annotated with a required user still ran its handlers with `self.user` set to `None` whenever the session had died (an expired session on an open page, a logout in another tab, a POST without cookies to the `csrf_exempt` endpoints), and failed deep in whatever it wrote -- typically a NOT NULL violation on a `created_by` column, losing the user's edit with no feedback on screen.

@@ -1099,6 +1099,16 @@ with self.htmx.assertYields(None):
     self.htmx.send(editor.open_the_item, item=self.item)
 ```
 
+`htmx.capturing(*command_classes: type[Command]) -> AbstractContextManager[CapturedCommands[Command]]`: The same capture without the assertion, for a test that looks at what a dispatch produced instead of stating up front what it must produce.  It watches every class named -- and every kind of command when none is -- holding what the handlers yielded in the order they yielded it:
+
+```python
+with self.htmx.capturing(SkipRender, Emit) as captured:
+    self.htmx.send(editor.save)
+[skip_render, emit] = captured
+```
+
+A capture is empty both for a block whose handlers yielded nothing and for one that yielded only commands of other classes; `captured.did_yield` tells those apart.
+
 What the block watches:
 
 - **The block, not one call.**  Any event or command produced inside it counts: the one from the handler under test, and any from a handler the cascade woke up on the way.  Several watchers can be open at once -- `with htmx.assertYields(Redirect) as commands, htmx.assertEmits(Saved) as captured:` -- and they share a single recording.
@@ -1108,7 +1118,7 @@ What the block watches:
 - **Reacting to SSE events.**  You can test if a component reacts to SSE events by using `emit_sse_event` and `drain_sse_events` inside the `assertYields(...)` block.  Note: Some methods of the `Htmx` helper already drain the SSE events.
 
 
-Both values are live lists, not snapshots -- `djhtmx.testing.CapturedCommands` and `djhtmx.testing.CapturedEvents` -- and the block receives them before anything has been produced, so they fill as it runs.  Assert on them **after** the block: that is where djhtmx has checked that anything was produced at all, so `[redirect] = commands` inside the block can fail on an empty list with a confusing unpacking error instead.  Watch `Emit` with `assertYields` to reach every event a block emitted rather than those of one class.  Both hold the objects the dispatch really produced, so assertions on their attributes are checked like any other attribute access; `captured.get_event()` answers with the first event and fails naming what *was* emitted, something `captured[0]` cannot do.  A failure names every command the block's handlers yielded, and which handler yielded each:
+Both values are live lists, not snapshots -- `djhtmx.testing.CapturedCommands` and `djhtmx.testing.CapturedEvents` -- and the block receives them before anything has been produced, so they fill as it runs.  A `CapturedCommands` holds its commands in the order the handlers yielded them, whichever classes it watches.  Assert on them **after** the block: that is where djhtmx has checked that anything was produced at all, so `[redirect] = commands` inside the block can fail on an empty list with a confusing unpacking error instead.  Watch `Emit` with `assertYields` to reach every event a block emitted rather than those of one class.  Both hold the objects the dispatch really produced, so assertions on their attributes are checked like any other attribute access; `captured.get_event()` answers with the first event and fails naming what *was* emitted, something `captured[0]` cannot do.  A failure names every command the block's handlers yielded, and which handler yielded each:
 
 ```
 No Redirect was yielded inside the block; got: TodoItem.toggle_editing -> Focus(selector='#item-1 input[name=text]', command='focus'), TodoItem.toggle_editing -> Emit(SetEditing(item=<Item: First task>)), TodoList._handle_event -> SkipRender(TodoList#hx-01a0c915cb6a)
