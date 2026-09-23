@@ -14,7 +14,7 @@ here.
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -111,17 +111,7 @@ class CommandProcessor:
                     case HtmxComponent() as component:
                         handler = getattr(component, event_handler)
                         handler_kwargs = filter_parameters(handler, event_data)
-                        try:
-                            emitted_commands = handler(**handler_kwargs)
-                        except Exception as error:
-                            annotations = getattr(handler, "_htmx_annotations_", None)
-                            logger.exception(
-                                "HTMX unhandled exception in component %s",
-                                component.__class__.__name__,
-                            )
-                            emitted_commands = [
-                                Emit(HtmxUnhandledError(error, handler_annotations=annotations))
-                            ]
+                        emitted_commands = _drain_commands_safely(handler, **handler_kwargs)
                         yield from self._process_emitted_commands(
                             component,
                             emitted_commands,
@@ -134,12 +124,10 @@ class CommandProcessor:
                 commands.processing_component_id = component_id
                 match repo.get_component_by_id(component_id):
                     case Destroy():
-                        # Stale consumer record: the component was destroyed
-                        # elsewhere in this dispatch (or earlier) but its SSE
-                        # consumer entry in Redis hasn't been cleaned up yet.
-                        # Silently skip; the browser-side OOB delete has
-                        # already been (or will be) emitted by whoever
-                        # destroyed it.
+                        # Stale consumer record: the component was destroyed elsewhere in this
+                        # dispatch (or earlier) but its SSE consumer entry in Redis hasn't been
+                        # cleaned up yet.  Silently skip; the browser-side OOB delete has already
+                        # been (or will be) emitted by whoever destroyed it.
                         return
                     case HtmxComponent() as component:
                         handler = getattr(component, "_handle_sse_events", None)
@@ -149,18 +137,7 @@ class CommandProcessor:
                             return
                         emitted_commands = []
                         for envelope in envelopes:
-                            try:
-                                yielded = handler(envelope)
-                            except Exception as error:
-                                logger.exception(
-                                    "HTMX unhandled exception in _handle_sse_events of %s",
-                                    component.__class__.__name__,
-                                )
-                                if not isinstance(error, HtmxUnhandledError):
-                                    emitted_commands.append(Emit(HtmxUnhandledError(error)))
-                                continue
-                            if yielded is not None:
-                                emitted_commands.extend(yielded)
+                            emitted_commands.extend(_drain_commands_safely(handler, envelope))
                         yield from self._process_emitted_commands(
                             component,
                             emitted_commands,
@@ -197,7 +174,10 @@ class CommandProcessor:
                     commands.processing_component_id = component.id
                     logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                     try:
-                        emitted_commands = component._handle_event(event)  # type: ignore
+                        emitted_commands = _drain_commands_unsafely(
+                            component._handle_event,  # type: ignore
+                            event,
+                        )
                     except Exception as error:
                         logger.exception(
                             "HTMX unhandled error in the event handler of %s",
@@ -402,6 +382,31 @@ class CommandRecorder:
     def since(self, start: int) -> list[RecordedCommand]:
         """The commands recorded after `start`."""
         return self.commands[start:]
+
+
+def _drain_commands_safely[**P](
+    handler: Callable[P, Iterable[Command] | None], *args: P.args, **kwargs: P.kwargs
+) -> list[Command]:
+    """Drains the `handler` for commands.
+
+    Any error while calling the handler or during the drain gets converted
+    trapped and transformed to an ``Emit`` of ``HtmxUnhandledError``.  Any annotation (given by
+    `annotate_handler`:func:) gets recorded.  If `trap_error` is False, errors are propagated.
+
+    """
+    try:
+        return _drain_commands_unsafely(handler, *args, **kwargs)
+    except Exception as error:
+        annotations = getattr(handler, "_htmx_annotations_", None)
+        logger.exception("HTMX unhandled exception in component")
+        return [Emit(HtmxUnhandledError(error, handler_annotations=annotations))]
+
+
+def _drain_commands_unsafely[**P](
+    handler: Callable[P, Iterable[Command] | None], *args: P.args, **kwargs: P.kwargs
+) -> list[Command]:
+    yielded = handler(*args, **kwargs)
+    return list(yielded) if yielded is not None else []
 
 
 _recorder: ContextVar[CommandRecorder | None] = ContextVar("djhtmx.command_recorder", default=None)
