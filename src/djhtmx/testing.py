@@ -72,7 +72,8 @@ class Htmx:
 
     def get_component_by_type[C: HtmxComponent](self, component_type: type[C]) -> C:
         [component] = self.repo.get_components_by_names(component_type.__name__)
-        return component  # type: ignore
+        assert isinstance(component, component_type)
+        return component
 
     def get_components_by_type[C: HtmxComponent](self, component_type: type[C]) -> Iterable[C]:
         return self.repo.get_components_by_names(component_type.__name__)  # type: ignore
