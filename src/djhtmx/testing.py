@@ -2,7 +2,7 @@ from collections import UserList, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from functools import reduce
-from typing import Any, overload
+from typing import Any, get_args, overload
 from urllib.parse import urlparse
 from warnings import deprecated
 
@@ -275,10 +275,49 @@ class Htmx:
         makes `assertYields(None)` fail.
 
         """
+        if command_class is None:
+            with self.capturing() as captured:
+                yield None
+            assert not captured.did_yield, (
+                f"Expected nothing to be yielded inside the block, but got: {captured.describe()}"
+            )
+        else:
+            with self.capturing(command_class) as captured:
+                yield captured
+            # A command lives in `djhtmx.commands`, so its module tells a reader nothing; an
+            # event's does, since two applications can name an event alike.
+            command = get_fqn(command_class).removeprefix("djhtmx.commands.")
+            assert captured, (
+                f"No {command} was yielded inside the block; got: {captured.describe()}"
+            )
+
+    @contextmanager
+    def capturing(self, *command_classes: type[Command]) -> "Iterator[CapturedCommands[Command]]":
+        """Capture the commands the handlers yield inside the block.
+
+        This is the mechanism the assertions above are built on, for a test that wants to look at
+        what a dispatch produced instead of stating up front what it must produce::
+
+            with self.htmx.capturing(SkipRender, Emit) as captured:
+                self.htmx.send(editor.save)
+            [skip_render, emit] = captured
+
+        Called with no class it captures every kind of command.  The capture holds the commands of
+        the given classes in the order the handlers yielded them, and stays empty both for a block
+        whose handlers yielded nothing and for one that yielded only commands of other classes;
+        `CapturedCommands.did_yield`:attr: tells those apart.
+
+        The order of the capture commands is the same order in which they are yielded inside the
+        block.  A note of caution though.  HTMX does not process commands as soon as they are
+        yielded by components.  If several components react to the actions, you'll get all commands
+        from all components in the order as they are yielded, not processed.  Processing some
+        commands (e.g Emit) might produce event more commands and the process queue order is not the
+        same as the yield order.  Relying on this ordering might be tricky and can change based on
+        the process queue ordering.
+
+        """
         with CommandProcessor._install_recorder() as recorder:
-            captured = CapturedCommands(recorder, command_class)
-            yield None if command_class is None else captured
-            assert captured.is_satisfied(), captured.get_failure_message()
+            yield CapturedCommands(recorder, command_classes or _ALL_COMMAND_CLASSES)
 
     def drain_sse_events(self):
         """Deliver the session's pending SSE events and apply whatever they render.
@@ -390,14 +429,16 @@ class CapturedEvents[E](UserList[E]):
 class CapturedCommands[C: Command](UserList[C]):
     """The `C` commands that the handlers yielded inside a watched block.
 
-    This is what `Htmx.assertYields`:meth: hands to its block.  It is a list, and a live one: the
-    block receives it before anything has been yielded, and every read answers with what has been
-    yielded so far, which is why a test reads it after the block rather than inside it -- see the
-    note in `Htmx.assertYields`:meth:.
+    This is what `Htmx.capturing`:meth: and `Htmx.assertYields`:meth: hand to their block.  It is a
+    list, and a live one: the block receives it before anything has been yielded, and every read
+    answers with what has been yielded so far, which is why a test reads it after the block rather
+    than inside it -- see the note in `Htmx.assertYields`:meth:.
 
-    Its items are the commands the handlers yielded, so reading their attributes is checked like
-    any other attribute access.  `get_recorded`:meth: answers with everything the handlers yielded,
-    captured or not, which is what a failure reports.
+    Its items are the commands the handlers yielded, in the order they yielded them, so reading
+    their attributes is checked like any other attribute access.  An empty capture means either
+    that the handlers yielded no command of the watched classes or that they yielded nothing at
+    all; `did_yield`:attr: tells those apart.  `get_recorded`:meth: answers with everything they
+    yielded, captured or not, which is what `describe`:meth: reports.
 
     Mutating the list has no effect.
 
@@ -406,44 +447,41 @@ class CapturedCommands[C: Command](UserList[C]):
     def __init__(
         self,
         recorder: CommandRecorder,
-        command_class: type[C] | None,
+        command_classes: tuple[type[C], ...],
     ):
         self._recorder = recorder
         self._start = len(recorder.commands)
-        self._command_class = command_class
+        self._command_classes = command_classes
 
     # `UserList` declares `data` as a plain list it owns, hence the ignore: here it is derived
     # instead, which is what makes the list live -- the block is handed this object before its
     # first command exists, and `UserList` reads every operation off `data`.
     @property
     def data(self) -> list[C]:  # type: ignore[override]
-        if self._command_class is None:
-            return []
-        else:
-            return [
-                recorded.command
-                for recorded in self.get_recorded()
-                if isinstance(recorded.command, self._command_class)
-            ]
+        return [
+            recorded.command
+            for recorded in self.get_recorded()
+            if isinstance(recorded.command, self._command_classes)
+        ]
+
+    @property
+    def did_yield(self) -> bool:
+        """Whether the handlers yielded anything at all, of the watched classes or not."""
+        return bool(self.get_recorded())
 
     def get_recorded(self) -> list[RecordedCommand]:
         """Answer with everything the handlers yielded inside the block, captured or not."""
         return self._recorder.since(self._start)
 
-    def is_satisfied(self) -> bool:
-        """Whether the block kept what it promised."""
-        if self._command_class is None:
-            return not self.get_recorded()
-        else:
-            return bool(self.data)
+    def describe(self) -> str:
+        """Answer with what the handlers yielded inside the block, and which yielded each.
 
-    def get_failure_message(self) -> str:
-        """Build the message for a block that did not keep its promise."""
-        yielded = ", ".join(recorded.describe() for recorded in self.get_recorded()) or "nothing"
-        if self._command_class is None:
-            return f"Expected nothing to be yielded inside the block, but got: {yielded}"
-        else:
-            # A command lives in `djhtmx.commands`, so its module tells a reader nothing; an
-            # event's does, since two applications can name an event alike.
-            command = get_fqn(self._command_class).removeprefix("djhtmx.commands.")
-            return f"No {command} was yielded inside the block; got: {yielded}"
+        A block that yielded nothing is described as `nothing`, which is what an assertion failure
+        reports.
+
+        """
+        return ", ".join(recorded.describe() for recorded in self.get_recorded()) or "nothing"
+
+
+# The members of the `Command` union, which is what a capture naming no class watches.
+_ALL_COMMAND_CLASSES: tuple[type[Command], ...] = get_args(Command)
