@@ -122,6 +122,12 @@ class Htmx:
         return element
 
     def trigger(self, selector: str | html.HtmlElement):
+        """Fire the event bound to the element, and apply everything it produces.
+
+        Delivers the session's pending SSE events before returning, as `dispatch_event`:meth:
+        does.
+
+        """
         element = self._select(selector)
 
         # mutate in case of a checkbox and radios
@@ -164,10 +170,23 @@ class Htmx:
         self.dispatch_event(component_id, event_handler, parse_request_data(vals))
 
     def send[**P](self, method: Callable[P, Any], *args: P.args, **kwargs: P.kwargs):
+        """Run a component's event handler, and apply everything it produces.
+
+        Delivers the session's pending SSE events before returning, as `dispatch_event`:meth:
+        does.
+
+        """
         assert not args, "All parameters have to be passed by name"
         self.dispatch_event(method.__self__.id, method.__name__, kwargs)  # type: ignore
 
     def dispatch_event(self, component_id: str, event_handler: str, kwargs: dict[str, Any]):
+        """Run the named handler of the component, and apply everything it produces.
+
+        Always ends by delivering the session's pending SSE events, the way the browser receives
+        them between requests, so a component's reaction to one is applied without asking; see
+        `drain_sse_events`:meth:.
+
+        """
         commands = self.repo.dispatch_event(component_id, event_handler, kwargs)
         navigate_to_url = None
         for command in commands:
@@ -192,19 +211,13 @@ class Htmx:
                 case Focus() | ScrollIntoView() | DispatchDOMEvent():
                     pass
 
-        if sse_html := async_to_sync(self._render_sse_events)():
-            self._apply_oob_html(sse_html)
+        self.drain_sse_events()
 
         if navigate_to_url:
             self.navigate_to(navigate_to_url)
 
     @contextmanager
-    def assertEmits[E](
-        self,
-        event_class: type[E],
-        *,
-        with_sse: bool = True,
-    ) -> "Iterator[CapturedEvents[E]]":
+    def assertEmits[E](self, event_class: type[E]) -> "Iterator[CapturedEvents[E]]":
         """Assert that at least one `event_class` event is emitted inside the block.
 
         The block receives a `CapturedEvents`:class: standing for the events of that class.  If no
@@ -217,37 +230,23 @@ class Htmx:
             event = captured.get_event()
             self.assertIn("Open an item first", event.body)
 
-        The argument `with_sse` has the same meaning as in `assertYields`:meth:.
-
         """
-        with self.assertYields(Emit, with_sse=with_sse) as emits:
+        with self.assertYields(Emit) as emits:
             captured = CapturedEvents(emits, event_class)
             yield captured
-            captured.get_event()  # This is the assertion that at least some event was emitted.
+        # Outside the block above, so that everything it captures on its way out counts.
+        captured.get_event()
 
     @overload
     def assertYields[C: Command](
-        self,
-        command_class: type[C],
-        *,
-        with_sse: bool = True,
+        self, command_class: type[C]
     ) -> "AbstractContextManager[CapturedCommands[C]]": ...
 
     @overload
-    def assertYields(
-        self,
-        command_class: None,
-        *,
-        with_sse: bool = True,
-    ) -> AbstractContextManager[None]: ...
+    def assertYields(self, command_class: None) -> AbstractContextManager[None]: ...
 
     @contextmanager
-    def assertYields[C: Command](
-        self,
-        command_class: type[C] | None,
-        *,
-        with_sse: bool = True,
-    ) -> Iterator[Any]:
+    def assertYields[C: Command](self, command_class: type[C] | None) -> Iterator[Any]:
         """Assert that at least one `command_class` command is yielded inside the block.
 
         Every command of that class yielded inside the block is captured::
@@ -274,17 +273,21 @@ class Htmx:
         that yielded nothing of its own -- djhtmx's command, not the handler's -- is not what
         makes `assertYields(None)` fail.
 
-        .. rubric:: SSE emits
-
-        With `with_sse`, the default, the capture also holds what the components yield in
-        response to the session's SSE events.  Pass `with_sse=False` for a capture of only what
-        the event sent from the browser set off.
-
         """
         with CommandProcessor._install_recorder() as recorder:
-            captured = CapturedCommands(recorder, command_class, with_sse=with_sse)
+            captured = CapturedCommands(recorder, command_class)
             yield None if command_class is None else captured
             assert captured.is_satisfied(), captured.get_failure_message()
+
+    def drain_sse_events(self):
+        """Deliver the session's pending SSE events and apply whatever they render.
+
+        `dispatch_event`:meth:, and so `send`:meth: and `trigger`:meth:, always ends by doing
+        this, so a test needs it only for the events raised by something other than a handler.
+
+        """
+        if sse_html := async_to_sync(self._render_sse_events)():
+            self._apply_oob_html(sse_html)
 
     async def _render_sse_events(self):
         from .sse import render_sse_events
@@ -403,13 +406,10 @@ class CapturedCommands[C: Command](UserList[C]):
         self,
         recorder: CommandRecorder,
         command_class: type[C] | None,
-        *,
-        with_sse: bool,
     ):
         self._recorder = recorder
         self._start = len(recorder.commands)
         self._command_class = command_class
-        self._with_sse = with_sse
 
     # `UserList` declares `data` as a plain list it owns, hence the ignore: here it is derived
     # instead, which is what makes the list live -- the block is handed this object before its
@@ -427,7 +427,7 @@ class CapturedCommands[C: Command](UserList[C]):
 
     def get_recorded(self) -> list[RecordedCommand]:
         """Answer with everything the handlers yielded inside the block, captured or not."""
-        return self._recorder.since(self._start, with_sse=self._with_sse)
+        return self._recorder.since(self._start)
 
     def is_satisfied(self) -> bool:
         """Whether the block kept what it promised."""

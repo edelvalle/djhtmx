@@ -69,8 +69,6 @@ class CommandProcessor:
 
     def __init__(self, repo: Repository):
         self.repo = repo
-        # Set per run in `process`, and stamped on every recorded command.
-        self._draining_sse = False
 
     def process(self, commands: Iterable[Command | InternalCommand]) -> Generator[ProcessedCommand]:
         """Drive the command queue until exhausted, yielding processed output.
@@ -85,7 +83,6 @@ class CommandProcessor:
         from .utils import compact_hash
 
         roots = list(commands)
-        self._draining_sse = any(isinstance(command, HandleSSEEvents) for command in roots)
         queue = CommandQueue(roots)
         with tracing_span(
             "djhtmx.CommandProcessor.process",
@@ -346,25 +343,19 @@ class CommandProcessor:
         """
         if (recorder := _recorder.get()) is not None:
             source = f"{component.hx_name}.{method_name}" if method_name else component.hx_name
-            recorder.commands.append(
-                RecordedCommand(command=command, source=source, from_sse=self._draining_sse)
-            )
+            recorder.commands.append(RecordedCommand(command=command, source=source))
 
 
 @dataclass(frozen=True, slots=True)
 class RecordedCommand:
     """A command a handler yielded, and where it came from.
 
-    `source` names the handler that yielded it (`TodoItem.toggle_editing`).  `from_sse` says
-    whether the run that produced it was draining SSE events rather than handling a browser event;
-    it covers the whole cascade of such a run, not only `_handle_sse_events` itself, so a listener
-    woken by an event an SSE handler emitted is marked too.
+    `source` names the handler that yielded it (`TodoItem.toggle_editing`).
 
     """
 
     command: Command
     source: str
-    from_sse: bool
 
     def describe(self) -> str:
         """Answer with the command and the handler that yielded it, in one short piece of text.
@@ -408,9 +399,9 @@ class CommandRecorder:
     def __init__(self):
         self.commands: list[RecordedCommand] = []
 
-    def since(self, start: int, *, with_sse: bool = True) -> list[RecordedCommand]:
-        """The commands recorded after `start`, dropping the SSE ones unless `with_sse`."""
-        return [recorded for recorded in self.commands[start:] if with_sse or not recorded.from_sse]
+    def since(self, start: int) -> list[RecordedCommand]:
+        """The commands recorded after `start`."""
+        return self.commands[start:]
 
 
 _recorder: ContextVar[CommandRecorder | None] = ContextVar("djhtmx.command_recorder", default=None)

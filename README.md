@@ -1074,7 +1074,7 @@ htmx.dispatch_event("#todo-list", "new_item", {"text": "New todo item"})
 
 A component reports to the person by emitting an event, and a listener turns it into what they see.  Neither that event nor the commands a handler yields ever reach the DOM, so asserting on them means watching the dispatch itself.
 
-`htmx.assertEmits(event_class: type[E], *, with_sse: bool = True) -> AbstractContextManager[CapturedEvents[E]]`: Asserts that at least one event of that class is emitted inside the block, and hands the test the list of them.
+`htmx.assertEmits(event_class: type[E]) -> AbstractContextManager[CapturedEvents[E]]`: Asserts that at least one event of that class is emitted inside the block, and hands the test the list of them.
 
 ```python
 with self.htmx.assertEmits(FeedbackMessage) as captured:
@@ -1083,7 +1083,7 @@ event = captured.get_event()
 self.assertIn("Open an item first", event.body)
 ```
 
-`htmx.assertYields(command_class: type[C], *, with_sse: bool = True) -> AbstractContextManager[CapturedCommands[C]]`: The same one level down: it watches the commands the handlers yield instead of the events they emit, and hands the test every command of that class the block yielded.
+`htmx.assertYields(command_class: type[C]) -> AbstractContextManager[CapturedCommands[C]]`: The same one level down: it watches the commands the handlers yield instead of the events they emit, and hands the test every command of that class the block yielded.
 
 ```python
 with self.htmx.assertYields(Redirect) as commands:
@@ -1105,7 +1105,8 @@ What the block watches:
 
 - **Only what a handler yields.**  A capture holds the commands the handlers yielded and nothing else: the commands djhtmx adds on its own never appear in one, so `assertYields(None)` holds for a handler that yielded nothing of its own -- the default `Render` it gets is not its command.
 
-- **The SSE leg as well.**  With `with_sse` (the default), a capture also holds what the components yield in response to the session's SSE events.  Pass `with_sse=False` for a capture of only what the event sent from the browser set off.
+- **Reacting to SSE events.**  You can test if a component reacts to SSE events by using `emit_sse_event` and `drain_sse_events` inside the `assertYields(...)` block.  Note: Some methods of the `Htmx` helper already drain the SSE events.
+
 
 Both values are live lists, not snapshots -- `djhtmx.testing.CapturedCommands` and `djhtmx.testing.CapturedEvents` -- and the block receives them before anything has been produced, so they fill as it runs.  Assert on them **after** the block: that is where djhtmx has checked that anything was produced at all, so `[redirect] = commands` inside the block can fail on an empty list with a confusing unpacking error instead.  Watch `Emit` with `assertYields` to reach every event a block emitted rather than those of one class.  Both hold the objects the dispatch really produced, so assertions on their attributes are checked like any other attribute access; `captured.get_event()` answers with the first event and fails naming what *was* emitted, something `captured[0]` cannot do.  A failure names every command the block's handlers yielded, and which handler yielded each:
 
