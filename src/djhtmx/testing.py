@@ -278,9 +278,9 @@ class Htmx:
 
         .. rubric:: SSE emits
 
-        Sending an event also delivers the session's pending SSE events, so what the handlers
-        woken by them yield is captured as well.  Pass `with_sse=False` to capture only what the
-        event sent from the browser set off.
+        With `with_sse`, the default, the capture also holds what the components yield in
+        response to the session's SSE events.  Pass `with_sse=False` for a capture of only what
+        the event sent from the browser set off.
 
         """
         with CommandProcessor._install_recorder() as recorder:
@@ -357,7 +357,7 @@ class CapturedEvents[E](UserList[E]):
     the first one and fails with a message naming what *was* emitted, which `captured[0]` cannot
     do.
 
-    The list is derived from the recording on each read, so mutating it has no effect.
+    Mutating the list has no effect.
 
     """
 
@@ -397,7 +397,7 @@ class CapturedCommands[C](UserList[C]):
     any other attribute access.  `get_recorded`:meth: answers with everything the handlers yielded,
     captured or not, which is what a failure reports.
 
-    The list is derived from the recording on each read, so mutating it has no effect.
+    Mutating the list has no effect.
 
     """
 

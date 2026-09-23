@@ -1103,9 +1103,9 @@ What the block watches:
 
 - **The block, not one call.**  Any event or command produced inside it counts: the one from the handler under test, and any from a handler the cascade woke up on the way.  Several watchers can be open at once -- `with htmx.assertYields(Redirect) as commands, htmx.assertEmits(Saved) as captured:` -- and they share a single recording.
 
-- **Only what a handler yields.**  The default `Render` djhtmx adds for a handler that yielded nothing of its own is djhtmx's command, not the handler's, so it is not what makes `assertYields(None)` fail.  Neither is the `ReplaceURL`/`Signal` pair a query patcher produces, nor the `SendHtml` a `Render` becomes.
+- **Only what a handler yields.**  A capture holds the commands the handlers yielded and nothing else: the commands djhtmx adds on its own never appear in one, so `assertYields(None)` holds for a handler that yielded nothing of its own -- the default `Render` it gets is not its command.
 
-- **The SSE leg as well.**  `htmx.send` drains the session's SSE events before it returns, and the handlers that drain wakes are watched too.  Pass `with_sse=False` to watch only what the browser event itself set off.
+- **The SSE leg as well.**  With `with_sse` (the default), a capture also holds what the components yield in response to the session's SSE events.  Pass `with_sse=False` for a capture of only what the event sent from the browser set off.
 
 Both values are live lists, not snapshots -- `djhtmx.testing.CapturedCommands` and `djhtmx.testing.CapturedEvents` -- and the block receives them before anything has been produced, so they fill as it runs.  Assert on them **after** the block: that is where djhtmx has checked that anything was produced at all, so `[redirect] = commands` inside the block can fail on an empty list with a confusing unpacking error instead.  Watch `Emit` with `assertYields` to reach every event a block emitted rather than those of one class.  Both hold the objects the dispatch really produced, so assertions on their attributes are checked like any other attribute access; `captured.get_event()` answers with the first event and fails naming what *was* emitted, something `captured[0]` cannot do.  A failure names every command the block's handlers yielded, and which handler yielded each:
 
