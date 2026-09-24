@@ -14,14 +14,14 @@ Two rules it enforces or rewards:
 - **Every argument by name.**  `send` asserts that nothing is positional.
 - **The bound method, not a string.**  `editor.toggle_item` is a real reference, so a renamed handler or a changed signature is a type error at `make typecheck` rather than a failure three minutes into a test run.
 
-Pass instances where the handler takes rows; a pk is accepted too, and coerced the same way the browser's would be.
+Pass what the handler declares.  A handler takes the pk of a row rather than the row itself -- see the `djhtmx-components` skill -- so pass the pk, and pass an instance only where the parameter is annotated with the model class.
 
 `dispatch_event(component_id, "handler_name", {...})` does the same from an id and a string.  It is the escape hatch for a component the test has no reference to -- one built by another component's handler, say -- and it checks nothing, so prefer `send` everywhere else.
 
 ## Never call the handler yourself
 
 ```python
-editor.toggle_item(self.item)   # not a test of anything
+editor.toggle_item(item.pk)   # not a test of anything
 ```
 
 That call skips the command processor: the arguments are never coerced, the commands it yields are never processed, the new state is never stored, and nothing renders.  What remains is a method call on a detached object -- the machinery the test exists to exercise is precisely what it stepped over.

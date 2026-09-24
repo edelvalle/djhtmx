@@ -41,8 +41,8 @@ A component is subscribed to its query parameters by default: when anything chan
 class Selector(HtmxComponent):
     selected_item: Annotated[Item | None, Query("s", auto_subscribe=False)] = None
 
-    def select_item(self, item: Item):
-        self.selected_item = item
+    def select_item(self, item_id: UUID):
+        self.selected_item = Item.objects.filter(pk=item_id).first()
         yield SkipRender(self)
 ```
 

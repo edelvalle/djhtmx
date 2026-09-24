@@ -9,7 +9,8 @@ class ItemSelected:
 ```
 
 ```python
-def select(self, item: Item):
+def select(self, item_id: UUID):
+    self.item = Item.objects.filter(pk=item_id, owner=self.owner).first()
     yield Emit(ItemSelected(item))
 ```
 

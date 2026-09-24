@@ -56,15 +56,26 @@ def items(self) -> ItemQS:
 
 A handler is a plain method whose name says what it does -- `toggle_item`, `open_the_item`, `rebuild_the_items`.  A noun names state, not an action.
 
-Its parameters are coerced by pydantic from what the page sent, so annotate the narrowest type you can: a parameter annotated with a model class receives the row, with the template passing only the pk.
+Its parameters are validated by pydantic from what the page sent, so annotate the narrowest type you can.
+
+**A model class does not fetch the row here.**  A field annotated with a model class is rewritten so that the stored pk comes back as the row; a handler parameter is not.  `item: Item` means the value must already *be* an `Item`, so the pk the browser sends fails validation before the handler body runs:
 
 ```python
-def toggle_item(self, item: Item): ...
+def toggle_item(self, item: Item): ...   # raises is_instance_of on the pk the page sends
+```
+
+Take the pk, annotated as the model's pk type, and read the row:
+
+```python
+def toggle_item(self, item_id: UUID):
+    self.item = Item.objects.get(pk=item_id, owner=self.owner)
 ```
 
 ```html
-<input type="checkbox" {% on 'change' 'toggle_item' item=row.id %}>
+<input type="checkbox" {% on 'change' 'toggle_item' item_id=row.id %}>
 ```
+
+Scope that read to what the component already holds -- `owner=self.owner` above -- rather than reading by pk alone.  The pk arrives from the page, so the query is where a component decides which rows this person may touch.
 
 Never call a handler from another handler as a plain method when what you want is the whole cycle -- that skips the command processor.  Reach for `Execute` (see [events](events.md)) instead.  An `async def` handler is refused when the component registers: handlers run synchronously, so a coroutine function would never run.
 
