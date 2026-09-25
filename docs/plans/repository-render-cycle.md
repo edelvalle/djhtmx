@@ -108,6 +108,43 @@ A later design decision is how to handle `ModelConfig(select_related=...)` and `
 
 One SSE-specific caveat to document with it: the render executor closes database connections around renders, so an instance cached during one wakeup and touched during the next would lazy-load its deferred fields on a different connection.  Keeping the map strictly per repository -- one per wakeup, never reused across them -- is what makes that a non-issue.
 
+## Opting into the cache
+
+The identity map is off unless asked for.  `ModelConfig` grows `cache: bool | None = None`, where `None` defers to `settings.DEFAULT_MODEL_CACHE`, itself `getattr(settings, "DJHTMX_DEFAULT_MODEL_CACHE", False)`.  An explicit `True` or `False` on the annotation wins over the setting.
+
+The default is off for backwards compatibility: an application that never opts in keeps today's behaviour, one fetch per hydration and a distinct instance per component, and nothing it does to a component's model field can leak into another component through a shared object.  A project that wants the map everywhere flips `DJHTMX_DEFAULT_MODEL_CACHE` and overrides the exceptions per annotation.
+
+`ModelConfig` is hashed -- it keys the `@cache` on `_ModelBeforeValidator.from_modelclass` -- so the new field must stay hashable, which `bool | None` is.
+
+When the flag resolves to `False`, hydration takes the uncached path it takes today and the repository stores nothing for that model, so `InvalidateModelCache` below has nothing to do for it.
+
+## InvalidateModelCache
+
+A handler that writes to the database, or that knows better than the map, invalidates or primes it by yielding a command:
+
+```python
+@dataclass(slots=True)
+class InvalidateModelCache:
+    target: models.Model | tuple[type[models.Model], Any | Sequence[Any] | None]
+```
+
+| `target` | Effect on the repository's map |
+| --- | --- |
+| a model instance | stores it under `(type(instance), instance.pk)`, replacing whatever was there, or priming an entry that does not exist yet |
+| `(model_class, None)` | drops every entry of that model |
+| `(model_class, pk)` | drops that one entry |
+| `(model_class, [pk, ...])` | drops those entries |
+
+It joins the `Command` union so handlers can yield it, and gets a `case` in `CommandProcessor._run_command` that acts on `self.repo` and yields nothing -- it never reaches the browser, so it is not a `ProcessedCommand`.  The pks it carries are normalised the same way the cache key is, or a `str` pk from a handler's arguments misses the `UUID` the map is keyed by.
+
+Priming is the more interesting half: a handler that has just fetched or created a row can hand it to the map before the children that need it are built, and their hydration costs nothing.
+
+### What invalidation reaches
+
+Invalidation happens in the middle of a cycle, and it does not rewrite the past.  A component that already holds an instance keeps that object; dropping the entry only changes what *later* hydrations get.  This is a property of the map, not a defect to work around: the alternative -- reaching into every component that holds the row -- is what makes shared mutable state unpredictable.
+
+Lazy annotations are the exception, and deliberately so.  For `ModelConfig(lazy=...)` the map stores the `_LazyModelProxy` rather than the instance, so every component with that annotation holds the *same* proxy.  Invalidating it clears the row the proxy resolved, and the next access through any of those components fetches again.  One yield therefore refreshes every lazy holder of the row, which is what a handler that just wrote to it usually wants.
+
 ## Repository as contextvar-local
 
 A future change may make the current `Repository` available through a context variable.  That would make the repository available to code paths that cannot receive it as an explicit argument, such as the pydantic validators used by model annotations.
@@ -141,5 +178,8 @@ Repository-local caches are discarded when the repository lifecycle ends.  No ex
 2. Give `sse.register_component` a `subscriptions` argument, pass the cached set from `Repository.render_html()`, and read the same set in `{% hx-tag %}` so one computed value is reused during rendering.
 3. Add tests with a component whose `sse_subscriptions` property increments a counter, proving one framework evaluation for a component render; drive them through `Htmx` and `Htmx.drain_sse_events` so the SSE wakeup path is covered alongside the page render.
 4. Introduce current-repository activation with a context variable, scoped at the endpoint, the middleware, and `_drain_sse_session`.
-5. Add `Repository.get_model_instance(...)` and wire the tail of `_ModelBeforeValidator._get_instance` and `_LazyModelProxy.__ensure_instance` through it when a current repository is available.
-6. Add tests proving duplicate model primary-key hydration reuses the cached instance and avoids duplicate database fetches within one repository lifecycle.
+5. Add `ModelConfig.cache` and `settings.DEFAULT_MODEL_CACHE`, defaulting to off.
+6. Add `Repository.get_model_instance(...)` and wire the tail of `_ModelBeforeValidator._get_instance` and `_LazyModelProxy.__ensure_instance` through it when a current repository is available and the annotation opts in; cache the proxy, not the instance, for lazy annotations.
+7. Add tests proving duplicate model primary-key hydration reuses the cached instance and avoids duplicate database fetches within one repository lifecycle, and that an annotation left at the default keeps fetching per hydration.
+8. Add `InvalidateModelCache` to the `Command` union and to `CommandProcessor._run_command`, covering the instance, the whole model, and the one-or-many pk forms.
+9. Add tests for priming with an instance, for dropping entries mid-cycle leaving already-hydrated components untouched, and for a lazy proxy shared by two components refreshing for both after one invalidation.
