@@ -1,3 +1,6 @@
+from collections import Counter
+from unittest.mock import patch
+
 from django.test import Client, TestCase
 
 from djhtmx.commands import Emit, Focus, SkipRender
@@ -94,6 +97,41 @@ class TestNormalRendering(TestCase):
         [a, c] = self.htmx.select('[hx-name="TodoItem"] label')
         self.assertEqual(a.text_content(), "First task")
         self.assertEqual(c.text_content(), "New name")
+
+
+class TestSSESubscriptionsAreReadOncePerRender(TestCase):
+    """The consumer record and the root tag must agree on one reading of `sse_subscriptions`."""
+
+    def setUp(self):
+        self.first = Item.objects.create(text="First task")
+        Item.objects.create(text="Second task")
+        self.htmx = Htmx(Client())
+        self.reads = Counter()
+        read_subscriptions = TodoItem.sse_subscriptions.fget
+
+        def count_reads(component):
+            self.reads[component.id] += 1
+            return read_subscriptions(component)
+
+        patcher = patch.object(TodoItem, "sse_subscriptions", property(count_reads))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_page_render_reads_each_component_once(self):
+        self.htmx.navigate_to("/todo")
+
+        self.assertEqual(self.reads, {"item-id-" + item.id.hex: 1 for item in Item.objects.all()})
+
+    def test_an_sse_wakeup_reads_the_component_it_renders_once(self):
+        self.htmx.navigate_to("/todo")
+        self.reads.clear()
+
+        self.first.text = "Renamed task"
+        self.first.save()
+        self.htmx.drain_sse_events()
+
+        self.assertEqual(self.reads, {"item-id-" + self.first.id.hex: 1})
+        self.assertTrue(self.htmx.find_by_text("Renamed task"))
 
 
 class TestCapturing(TestCase):
