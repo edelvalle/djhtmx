@@ -36,6 +36,8 @@ class ItemEditor(HtmxComponent):
 
 The component then compares and filters with the rows it already holds -- `item == self.opened`, `Item.objects.filter(owner=self.owner)`.
 
+Each component reads its own rows, so two components of one request that hold the same row read it twice and get two instances.  `ModelConfig(cache=True)` makes them share one -- see [model-prefetching](model-prefetching.md#sharing-a-row-between-components).
+
 Use `Model | None` for a row someone can delete while the page is open: the field reads back as `None` when the row is gone, where a required `Model` raises a `ValidationError`.  A `QuerySet` field is state too, kept as the list of pks, so a big one is paid on every request.
 
 Annotate with `Field(exclude=True)` what the request rebuilds anyway rather than what the session should carry; `user` is the standard case, and [authentication](authentication.md) covers it.

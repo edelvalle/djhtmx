@@ -23,6 +23,20 @@ item: Annotated[
 item: Annotated[Item, ModelConfig(select_related=("owner",))]
 ```
 
+## Sharing a row between components
+
+Each component reads its own rows, so the components of one request that hold the same row -- a list and the editor of its open item, or every subscriber one `Emit` wakes -- read it once each and get an instance each.  `ModelConfig(cache=True)` makes every field annotated with it read the row once per request or SSE wakeup, and share that instance:
+
+```python
+item: Annotated[Item, ModelConfig(cache=True, prefetch_related=("attachments__uploader",))]
+```
+
+The first read decides what the shared instance carries.  A later field asking for a richer `prefetch_related` or `select_related` gets the instance already read, without them, so give every field that shares a row the same `ModelConfig`.
+
+A shared instance is one object: a component that changes it changes it for every component holding that row in the same request.
+
+`DJHTMX_DEFAULT_MODEL_CACHE = True` turns the cache on for every model field that leaves `cache` unset, and `cache=False` opts one field out.  A row passed as an instance when placing the component never goes through the cache: it is already in hand.
+
 ## ModelConfig reaches the state, and nothing else
 
 A queryset a property builds is a separate read, so it prefetches for itself:

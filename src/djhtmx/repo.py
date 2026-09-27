@@ -11,6 +11,7 @@ from dataclasses import field as Field
 from typing import TYPE_CHECKING, Any
 
 from django.core.signing import Signer
+from django.db import models
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
@@ -31,7 +32,9 @@ from .component import (
     _get_query_patchers,
 )
 from .exceptions import LoginRequired
+from .introspection import ModelConfig, normalize_pk
 from .settings import (
+    DEFAULT_MODEL_CACHE,
     KEY_SIZE_ERROR_THRESHOLD,
     KEY_SIZE_SAMPLE_PROB,
     KEY_SIZE_WARN_THRESHOLD,
@@ -182,6 +185,8 @@ class Repository:
         # consumer record and the root tag -- need the subscriptions, and this render-cycle cache
         # is what keeps them to one computation.
         self._sse_subscriptions: dict[int, tuple[HtmxComponent, set[SSESubscription]]] = {}
+        # Nested by model, so invalidating a whole model drops one entry instead of scanning them all.
+        self._model_instances: dict[type[models.Model], dict[object, models.Model]] = {}
 
     def unregister_component(self, component_id: str):
         # Delete component state recursively, then clean up the SSE consumer
@@ -337,6 +342,58 @@ class Repository:
             entry = (component, get_sse_subscriptions(component))
             self._sse_subscriptions[id(component)] = entry
         return entry[1]
+
+    @classmethod
+    def get_model_instance[M: models.Model](
+        cls, model: type[M], pk: object, model_config: ModelConfig
+    ) -> M | None:
+        """Return the `model` row with primary key `pk`, or None when the row does not exist.
+
+        The queryset applies the `select_related` and `prefetch_related` of `model_config`.
+
+        When `model_config` opts into the model cache -- `ModelConfig.cache`, or
+        `DJHTMX_DEFAULT_MODEL_CACHE` when that is None -- and a repository is `current`:meth:, the
+        row is fetched once per repository cycle: every call for it returns the same instance.  A
+        missing row is not remembered, so a row created later in the cycle is found.  The first fetch decides the instance, so a later call asking
+        for a richer fetch plan gets the instance already cached.  Otherwise every call fetches.
+
+        `pk` may arrive as the wire's string; it is coerced to the primary key's type first.
+
+        """
+        pk = normalize_pk(model, pk)
+        cache_enabled = DEFAULT_MODEL_CACHE if model_config.cache is None else model_config.cache
+        if cache_enabled and (repository := cls.current()) is not None:
+            instances = repository._model_instances.setdefault(model, {})
+            if (instance := instances.get(pk)) is None and (
+                instance := cls._fetch_model_instance(model, pk, model_config)
+            ) is not None:
+                instances[pk] = instance
+        else:
+            instance = cls._fetch_model_instance(model, pk, model_config)
+        return instance  # type: ignore[return-value]
+
+    @staticmethod
+    def _fetch_model_instance[M: models.Model](
+        model: type[M], pk: object, model_config: ModelConfig
+    ) -> M | None:
+        """Fetch the `model` row with primary key `pk`, or None when there is none.
+
+        The queryset applies the `select_related` and `prefetch_related` of `model_config`.
+
+        """
+        with tracing_span(
+            "djhtmx.model.fetch",
+            model=get_fqn(model),
+            pk=_describe_pk(pk),
+            lazy=str(model_config.lazy),
+        ):
+            manager = model.objects
+            if select_related := model_config.select_related:
+                manager = manager.select_related(*select_related)
+            if prefetch_related := model_config.prefetch_related:
+                manager = manager.prefetch_related(*prefetch_related)
+            # Use filter().first() instead of get() to avoid exceptions
+            return manager.filter(pk=pk).first()
 
     def render_html(
         self,
@@ -514,6 +571,18 @@ class Session:
                         KEY_SIZE_WARN_THRESHOLD,
                     )
             self.is_dirty = False
+
+
+def _describe_pk(value) -> str:
+    """Render the primary key `value` stands for, as a span tag.
+
+    Never `repr(value)`: `Model.__repr__` calls `__str__`, and a `__str__` that follows a relation
+    issues the very query these spans are counting.  And `str` of the pk rather than `repr`, so one
+    row tags the same whether it arrived as the wire's string or as the type the lazy proxy coerces
+    it to -- otherwise the same row counts as two.
+
+    """
+    return str(getattr(value, "pk", value))
 
 
 _current: ContextVar[Repository | HttpRequest | None] = ContextVar(

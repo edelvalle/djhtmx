@@ -34,7 +34,7 @@ Read the file for what you are about to write:
 
 - [basic](references/basic.md) -- declaring a component, what belongs in the state, handlers and the parameters they receive, the default render and `SkipRender`.
 - [authentication](references/authentication.md) -- the `user` field, and making a component refuse to exist without a logged-in one.
-- [model-prefetching](references/model-prefetching.md) -- `ModelConfig(prefetch_related=...)` and `select_related`, for a render that walks relations.
+- [model-prefetching](references/model-prefetching.md) -- `ModelConfig(prefetch_related=...)` and `select_related`, for a render that walks relations; `cache=True`, for a row several components hold.
 - [model-lazyness](references/model-lazyness.md) -- `ModelConfig(lazy=True)`, for a row most requests never read.
 - [query-string](references/query-string.md) -- `Query`, for the state that belongs in the URL and the components that share it.
 - [events](references/events.md) -- `Emit` and `_handle_event` between the components of one page, and `Execute`.

@@ -31,9 +31,6 @@ from django.db.models import Prefetch
 from django.utils.datastructures import MultiValueDict
 from pydantic import BeforeValidator, PlainSerializer, PlainValidator, TypeAdapter
 
-from djhtmx.tracing import tracing_span
-from djhtmx.utils import get_fqn
-
 M = TypeVar("M", bound=models.Model)
 
 
@@ -73,6 +70,18 @@ class ModelConfig:
     """The arguments to `model.objects.prefetch_related(*prefetch_related)`.
 
     Any sequence is accepted, and stored as a tuple; see `__post_init__`.
+
+    """
+
+    cache: bool | None = None
+    """Whether hydrating this annotation goes through the current repository's model cache.
+
+    With the cache, every hydration of the same row within one repository lifecycle (a request, an
+    SSE wakeup) returns the same instance, fetched once.  The first fetch wins: a later annotation
+    asking for a richer `select_related` or `prefetch_related` gets the instance already cached.
+    Components sharing the instance also see each other's changes to it.
+
+    None defers to the `DJHTMX_DEFAULT_MODEL_CACHE` setting, which is False unless set.
 
     """
 
@@ -128,8 +137,7 @@ class _LazyModelProxy(Generic[M]):  # noqa
     __model: type[M]
     __instance: M | None
     __pk: Any | None
-    __select_related: Sequence[str] | None
-    __prefetch_related: Sequence[str | Prefetch] | None
+    __model_config: ModelConfig
     __allow_none: bool
 
     def __init__(
@@ -141,29 +149,18 @@ class _LazyModelProxy(Generic[M]):  # noqa
     ):
         self.__model = model
         self.__allow_none = allow_none
+        self.__model_config = model_annotation or _DEFAULT_MODEL_CONFIG
         if value is None or isinstance(value, model):
             self.__instance = value
             self.__pk = getattr(value, "pk", None)
         else:
             self.__instance = None
-            pk_field = model._meta.pk
-            if pk_field is not None:
-                self.__pk = pk_field.to_python(value)
-            else:
-                self.__pk = value
-        if model_annotation:
-            self.__select_related = model_annotation.select_related
-            self.__prefetch_related = model_annotation.prefetch_related
-        else:
-            self.__select_related = None
-            self.__prefetch_related = None
+            self.__pk = normalize_pk(model, value)
 
     def __getattr__(self, name: str) -> Any:
         if name == "pk":
             return self.__pk
-        if self.__instance is None:
-            self.__ensure_instance()
-        return getattr(self.__instance, name)
+        return getattr(self.__ensure_instance(), name)
 
     def __bool__(self) -> bool:
         """Whether the row this proxy stands for exists.
@@ -180,19 +177,11 @@ class _LazyModelProxy(Generic[M]):  # noqa
 
     def __ensure_instance(self):
         if not self.__instance:
-            with tracing_span(
-                "djhtmx.model.fetch",
-                model=get_fqn(self.__model),
-                pk=_describe_pk(self.__pk),
-                lazy="True",
-            ):
-                manager = self.__model.objects
-                if select_related := self.__select_related:
-                    manager = manager.select_related(*select_related)
-                if prefetch_related := self.__prefetch_related:
-                    manager = manager.prefetch_related(*prefetch_related)
-                # Use filter().first() instead of get() to avoid exceptions
-                self.__instance = manager.filter(pk=self.__pk).first()
+            from .repo import Repository
+
+            self.__instance = Repository.get_model_instance(
+                self.__model, self.__pk, self.__model_config
+            )
             if self.__instance is None and not self.__allow_none:
                 # For Model | None, object doesn't exist - proxy becomes None-like; for required
                 # Model fields, raise error
@@ -235,19 +224,9 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
         elif isinstance(value, _LazyModelProxy):
             return value._LazyModelProxy__ensure_instance()
         else:
-            with tracing_span(
-                "djhtmx.model.fetch",
-                model=get_fqn(self.model),
-                pk=_describe_pk(value),
-                lazy="False",
-            ):
-                manager = self.model.objects
-                if select_related := self.model_config.select_related:
-                    manager = manager.select_related(*select_related)
-                if prefetch_related := self.model_config.prefetch_related:
-                    manager = manager.prefetch_related(*prefetch_related)
-                # Use filter().first() instead of get() to avoid exceptions
-                instance = manager.filter(pk=value).first()
+            from .repo import Repository
+
+            instance = Repository.get_model_instance(self.model, value, self.model_config)
             if instance is None:
                 if self.allow_none:
                     # For Model | None fields, return None when object doesn't exist
@@ -263,16 +242,10 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
         return cls(model, model_config=model_config, allow_none=allow_none)
 
 
-def _describe_pk(value) -> str:
-    """Render the primary key `value` stands for, as a span tag.
-
-    Never `repr(value)`: `Model.__repr__` calls `__str__`, and a `__str__` that follows a relation
-    issues the very query these spans are counting.  And `str` of the pk rather than `repr`, so one
-    row tags the same whether it arrived as the wire's string or as the type the lazy proxy coerces
-    it to -- otherwise the same row counts as two.
-
-    """
-    return str(getattr(value, "pk", value))
+def normalize_pk(model: type[models.Model], value: object) -> object:
+    """Coerce `value` to the Python type of `model`'s primary key, as the wire may carry a string."""
+    pk_field = model._meta.pk
+    return pk_field.to_python(value) if pk_field is not None else value
 
 
 @dataclass(slots=True)

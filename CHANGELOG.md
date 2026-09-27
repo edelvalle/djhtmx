@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in model cache**: `ModelConfig(cache=True)` makes every hydration of the same row within one request or SSE wakeup return the same instance, fetched once; lazy and eager annotations share it.  `DJHTMX_DEFAULT_MODEL_CACHE` turns it on for every annotation that leaves `cache` unset.  Off by default.
+
 ### Changed
 
 - **A component's `sse_subscriptions` is read once per render**: it used to be read twice for every component rendered, so a property that answered differently on each read could leave the component registered for one set of topics and listening for another.

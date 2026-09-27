@@ -8,6 +8,8 @@ opened: Annotated[Item | None, ModelConfig(lazy=True)] = None
 
 The field then holds a proxy, and the query happens at the first attribute access.  Everything else behaves as the eager field does: equality, the state round-trip, the `None` for a row that was deleted, and `select_related`/`prefetch_related`, which are applied to that deferred read.
 
+With `cache=True` too, the first access reads the row through the cache that eager fields share (see [model-prefetching](model-prefetching.md#sharing-a-row-between-components)), so a lazy and an eager field holding the same row cost one query between them.  The proxy keeps that instance afterwards.
+
 It pays for a row that one branch of the render or one handler reads:
 
 ```python
