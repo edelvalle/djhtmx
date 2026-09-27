@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A property that returns an iterator survives a second read**: the render-local property cache consumes generators, `map`, `filter`, `zip` and `QuerySet.iterator()` into a list before storing them, so every read in the template sees the same items.  A `QuerySet` is stored as it is, keeping its own cache and its methods.
+
 ## [1.4.0] - 2026-09-23
 
 ### Upgrading from 1.3.x
