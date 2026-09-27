@@ -21,7 +21,7 @@ from django.utils.safestring import SafeString, mark_safe
 from pydantic import ValidationError
 from uuid6 import uuid7
 
-from djhtmx.tracing import tracing_span
+from djhtmx.tracing import metric_incr, tracing_span
 
 from . import json
 from .commands import (
@@ -373,11 +373,14 @@ class Repository:
         if cache_enabled and (repository := cls.current()) is not None:
             instances = repository._model_instances.setdefault(model, {})
             if (cached := instances.get(pk)) is None:
+                metric_incr("djhtmx.model.cache.misses")
                 if (instance := cls._fetch_model_instance(model, pk, model_config)) is not None:
                     instances[pk] = _CachedInstance.from_instance(instance, model_config)
             elif cached.enrich(model_config):
+                metric_incr("djhtmx.model.cache.hits")
                 instance = cast(M, cached.instance)
             else:
+                metric_incr("djhtmx.model.cache.conflicts")
                 instance = cls._fetch_model_instance(model, pk, model_config)
         else:
             instance = cls._fetch_model_instance(model, pk, model_config)
@@ -634,6 +637,7 @@ class _CachedInstance:
                     *(model_config.prefetch_related or ()),
                 )
             self.relations |= requested
+            metric_incr("djhtmx.model.cache.enrichments")
         return compatible
 
     @staticmethod

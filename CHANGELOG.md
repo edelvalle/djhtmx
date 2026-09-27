@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Opt-in model cache**: `ModelConfig(cache=True)` makes every hydration of the same row within one request or SSE wakeup return the same instance, fetched once; lazy and eager annotations share it.  `DJHTMX_DEFAULT_MODEL_CACHE` turns it on for every annotation that leaves `cache` unset.  Off by default.
+- **Model cache metrics**: published through Sentry and Logfire under the `djhtmx.model.cache.*` namespace, all counters: `hits`, `misses`, `enrichments` and `conflicts`.
 
 ### Changed
 
