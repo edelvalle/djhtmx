@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Iterable
 from dataclasses import dataclass
 from dataclasses import field as Field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.core.signing import Signer
 from django.http import HttpRequest, QueryDict
@@ -37,6 +37,9 @@ from .settings import (
     conn,
 )
 from .utils import compact_hash, db, get_fqn, get_params
+
+if TYPE_CHECKING:
+    from .sse import SSESubscription
 
 signer = Signer()
 
@@ -134,6 +137,12 @@ class Repository:
         self.session_signed_id = signer.sign(session.id)
         self.session_hash = compact_hash(session.id)
         self.params = params
+        # SSE keeps reverse indexes, (event type, topic) -> consumer, so a wakeup finds its
+        # consumers without scanning the sessions; that is why it cannot ride the Session's single
+        # entry holding every component's state.  Both writers of a component's SSE state -- the
+        # consumer record and the root tag -- need the subscriptions, and this render-cycle cache
+        # is what keeps them to one computation.
+        self._sse_subscriptions: dict[int, tuple[HtmxComponent, set[SSESubscription]]] = {}
 
     def unregister_component(self, component_id: str):
         # Delete component state recursively, then clean up the SSE consumer
@@ -270,6 +279,26 @@ class Repository:
                 if state["hx_name"] == name:
                     yield self.build(name, {"id": state["id"]})
 
+    def get_sse_subscriptions(self, component: HtmxComponent) -> set[SSESubscription]:
+        """Return `component`'s SSE subscriptions, computing them once per repository cycle.
+
+        Framework code must read the subscriptions through this method.  `sse_subscriptions` is a
+        property, and may answer differently on each read -- one that calls `now()`, or that
+        consults a model field, is enough -- which would register the consumer for one set of
+        topics while the component's root tag advertises another.
+
+        The value is keyed by the component's identity, so a component rebuilt later in the same
+        cycle computes its own.  The entry holds the component because CPython reuses the id of a
+        collected object.
+
+        """
+        from .sse import get_sse_subscriptions
+
+        if (entry := self._sse_subscriptions.get(id(component))) is None:
+            entry = (component, get_sse_subscriptions(component))
+            self._sse_subscriptions[id(component)] = entry
+        return entry[1]
+
     def render_html(
         self,
         component: HtmxComponent,
@@ -289,7 +318,9 @@ class Repository:
             self.session.store(component)
             from .sse import register_component
 
-            register_component(self.session.id, component)
+            register_component(
+                self.session.id, component, subscriptions=self.get_sse_subscriptions(component)
+            )
 
             final_context = {
                 "htmx_repo": self,

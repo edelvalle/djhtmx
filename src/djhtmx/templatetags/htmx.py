@@ -127,9 +127,9 @@ def hx_tag(context: Context):
         "hx-swap-oob": "true" if oob else None,
         "hx-headers": json.dumps({"HX-Session": repo.session_signed_id}),
     }
-    from djhtmx.sse import consumer_id, get_sse_subscriptions
+    from djhtmx.sse import consumer_id
 
-    if get_sse_subscriptions(component):
+    if repo.get_sse_subscriptions(component):
         attrs["data-djhtmx-sse-consumer"] = consumer_id(repo.session.id, component.id)
     if context.get("hx_lazy"):
         context["hx_lazy"] = False

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A component's `sse_subscriptions` is read once per render**: it used to be read twice for every component rendered, so a property that answered differently on each read could leave the component registered for one set of topics and listening for another.
+
 ### Fixed
 
 - **A property that returns an iterator survives a second read**: the render-local property cache consumes generators, `map`, `filter`, `zip` and `QuerySet.iterator()` into a list before storing them, so every read in the template sees the same items.  A `QuerySet` is stored as it is, keeping its own cache and its methods.

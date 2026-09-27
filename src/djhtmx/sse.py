@@ -158,13 +158,26 @@ def get_sse_subscriptions(component: HtmxComponent) -> set[SSESubscription]:
         return set()
 
 
-def register_component(session_id: str, component: HtmxComponent, ttl: int = settings.SESSION_TTL):
+def register_component(
+    session_id: str,
+    component: HtmxComponent,
+    ttl: int = settings.SESSION_TTL,
+    *,
+    subscriptions: set[SSESubscription] | None = None,
+):
+    """Write `component`'s SSE consumer record, or remove it when it subscribes to nothing.
+
+    Pass `subscriptions` to reuse the set already computed for this render; leaving it out computes
+    them, which risks disagreeing with a `sse_subscriptions` that answers differently per read.
+
+    """
     with tracing_span(
         "djhtmx.sse.register_component",
         session=compact_hash(session_id),
         component=component.hx_name,
     ):
-        subscriptions = get_sse_subscriptions(component)
+        if subscriptions is None:
+            subscriptions = get_sse_subscriptions(component)
         id_ = consumer_id(session_id, component.id)
         indexes_key = consumer_indexes_key(id_)
         sync_redis_connection = get_sync_conn()
