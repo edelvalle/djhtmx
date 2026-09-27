@@ -439,6 +439,26 @@ class HandleSSEEvents:
     envelopes: tuple[SSEEventEnvelope[Any], ...]
 
 
+@dataclass(slots=True)
+class InvalidateModelCache:
+    """Drop rows from the model cache of the current request, or prime it with an instance.
+
+    Yield from a handler that wrote to the database, so that the components hydrated after it read
+    the rows again, or that holds a row the components about to be built will need:
+
+    - an instance is stored as the shared instance of its row, replacing the cached one;
+    - `(Model, None)` drops every row of `Model`;
+    - `(Model, pk)` drops that row, and `(Model, [pk, ...])` those rows.
+
+    A pk may arrive as the wire's string.  It never reaches the browser, and it does not reach the
+    components already built: they keep the instance they hold.  It only matters to the
+    annotations that opt into the cache with `ModelConfig(cache=True)`.
+    """
+
+    target: models.Model | tuple[type[models.Model], object]
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
+
+
 # ---------------------------------------------------------------------------
 # Unions.
 #
@@ -461,6 +481,7 @@ Command = (
     | PushURL
     | ReplaceURL
     | Execute
+    | InvalidateModelCache
 )
 
 InternalCommand = Signal | HandleSSEEvents
@@ -487,6 +508,7 @@ __all__ = (
     "Execute",
     "Focus",
     "HandleSSEEvents",
+    "InvalidateModelCache",
     "Open",
     "ProcessedCommand",
     "PushURL",

@@ -386,6 +386,30 @@ class Repository:
             instance = cls._fetch_model_instance(model, pk, model_config)
         return instance
 
+    def invalidate_model_cache(self, target: models.Model | tuple[type[models.Model], object]):
+        """Drop rows from this repository's model cache, or prime it with an instance.
+
+        `target` takes the forms `InvalidateModelCache`:class: documents.  A primed instance
+        records no relations as loaded, so a later hydration loads the ones it asks for onto it.
+
+        """
+        match target:
+            case models.Model() as instance:
+                model = type(instance)
+                self._model_instances.setdefault(model, {})[normalize_pk(model, instance.pk)] = (
+                    _CachedInstance.from_instance(instance, ModelConfig())
+                )
+            case (model, None):
+                self._model_instances.pop(model, None)
+            case (model, list() | tuple() | set() | frozenset() as pks):
+                instances = self._model_instances.get(model, {})
+                for pk in pks:
+                    instances.pop(normalize_pk(model, pk), None)
+            case (model, pk):
+                self._model_instances.get(model, {}).pop(normalize_pk(model, pk), None)
+            case unreachable:
+                assert_never(unreachable)
+
     @staticmethod
     def _fetch_model_instance[M: models.Model](
         model: type[M], pk: object, model_config: ModelConfig

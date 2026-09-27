@@ -35,6 +35,8 @@ A field asking for relations the shared instance lacks gets them loaded onto it,
 
 A shared instance is one object: a component that changes it changes it for every component holding that row in the same request.
 
+A handler that writes a shared row, or that already holds the one the components about to be built need, yields `InvalidateModelCache`: `InvalidateModelCache((Item, item_id))` drops the row so later components read it again, and `InvalidateModelCache(item)` hands them the instance instead.  The components already built keep the instance they hold.
+
 `DJHTMX_DEFAULT_MODEL_CACHE = True` turns the cache on for every model field that leaves `cache` unset, and `cache=False` opts one field out.  A row passed as an instance when placing the component never goes through the cache: it is already in hand.
 
 ## ModelConfig reaches the state, and nothing else

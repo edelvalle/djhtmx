@@ -153,7 +153,11 @@ Priming is the more interesting half: a handler that has just fetched or created
 
 Invalidation happens in the middle of a cycle, and it does not rewrite the past.  A component that already holds an instance keeps that object; dropping the entry only changes what *later* hydrations get.  This is a property of the map, not a defect to work around: the alternative -- reaching into every component that holds the row -- is what makes shared mutable state unpredictable.
 
-Lazy annotations are the exception, and deliberately so.  For `ModelConfig(lazy=...)` the map stores the `_LazyModelProxy` rather than the instance, so every component with that annotation holds the *same* proxy.  Invalidating it clears the row the proxy resolved, and the next access through any of those components fetches again.  One yield therefore refreshes every lazy holder of the row, which is what a handler that just wrote to it usually wants.
+Lazy annotations follow the same rule.  The map caches instances, not proxies -- a shared proxy would mix the `allow_none` and the fetch plan of every annotation holding the row -- and a proxy keeps the instance it resolved.  A proxy not resolved yet reads the map at its first access, so it sees the invalidation; one already resolved does not.
+
+A primed instance records no relations as loaded: what the handler loaded on it is unknown, and `prefetch_related_objects` skips what is already there when a later hydration asks for it.
+
+The command sorts right after the handler that yielded it and before anything that hydrates components -- `Emit`, `Signal`, `BuildAndRender` -- so every component built after the yield sees it.
 
 ## Repository as contextvar-local
 
@@ -192,5 +196,5 @@ Repository-local caches are discarded when the repository lifecycle ends.  No ex
 6. Add `Repository.get_model_instance(...)` as the one entry point of both `_ModelBeforeValidator._get_instance` and `_LazyModelProxy.__ensure_instance`: it decides whether the cache applies and fetches otherwise.  The map caches instances, nested by model, and records the relations loaded on each so that a later annotation's missing relations are loaded onto the shared instance.
 7. Add tests proving duplicate model primary-key hydration reuses the cached instance and avoids duplicate database fetches within one repository lifecycle, and that an annotation left at the default keeps fetching per hydration.
 8. Add `InvalidateModelCache` to the `Command` union and to `CommandProcessor._run_command`, covering the instance, the whole model, and the one-or-many pk forms.
-9. Add tests for priming with an instance, for dropping entries mid-cycle leaving already-hydrated components untouched, and for a lazy proxy shared by two components refreshing for both after one invalidation.
+9. Add tests for priming with an instance, for dropping entries mid-cycle leaving already-hydrated components untouched, for dropping a whole model and a list of pks, and for a resolved lazy proxy keeping its instance.
 10. Count model cache hits and misses as metrics through `tracing.metric_incr`, which publishes to Sentry and to Logfire: a hit, a miss, an enrichment that loaded missing relations, and a conflict that fell back to a fetch of its own.

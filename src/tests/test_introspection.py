@@ -9,6 +9,9 @@ from django.utils.datastructures import MultiValueDict
 from fision.todo.models import Item, ItemQS
 from pydantic import ValidationError
 
+from djhtmx.command_processor import CommandProcessor
+from djhtmx.command_queue import CommandQueue
+from djhtmx.commands import InvalidateModelCache
 from djhtmx.component import HtmxComponent
 from djhtmx.introspection import (
     ModelConfig,
@@ -715,6 +718,90 @@ class TestModelCache(TestCase):
             )
 
         self.assertIsNot(first.item, second.item)
+
+
+class TestInvalidateModelCache(TestCase):
+    """`InvalidateModelCache` changes what later hydrations get, never what components hold."""
+
+    def setUp(self):
+        self.item = Item.objects.create(text="Cached")
+        self.repository = Repository(
+            user=AnonymousUser(),
+            session=Session(Repository.new_session_id()),
+            params=get_params(None),
+        )
+
+    def test_an_instance_primes_the_cache(self):
+        class PrimedModel(HtmxComponent):
+            _template_name = "PrimedModel.html"
+            item: Annotated[Item, ModelConfig(cache=True)]
+
+        item = Item.objects.get(pk=self.item.pk)
+        self.invalidate(item)
+
+        with Repository.activate(self.repository), self.assertNumQueries(0):
+            primed = PrimedModel(id="primed", hx_name="PrimedModel", user=None, item=item.pk)
+
+        self.assertIs(primed.item, item)
+
+    def test_dropping_a_row_leaves_the_components_already_built_untouched(self):
+        class DroppedModel(HtmxComponent):
+            _template_name = "DroppedModel.html"
+            item: Annotated[Item, ModelConfig(cache=True)]
+
+        with Repository.activate(self.repository):
+            before = DroppedModel(id="before", hx_name="DroppedModel", user=None, item=self.item.pk)
+            held = before.item
+            # The pk as the wire carries it must drop the entry the UUID keys.
+            self.invalidate((Item, str(self.item.pk)))
+            with self.assertNumQueries(1):
+                after = DroppedModel(
+                    id="after", hx_name="DroppedModel", user=None, item=self.item.pk
+                )
+
+        self.assertIs(before.item, held)
+        self.assertIsNot(after.item, held)
+
+    def test_dropping_a_model_or_a_list_of_its_rows(self):
+        class ModelDroppedModel(HtmxComponent):
+            _template_name = "ModelDroppedModel.html"
+            item: Annotated[Item, ModelConfig(cache=True)]
+
+        other = Item.objects.create(text="Other")
+
+        def hydrate_both():
+            for item in (self.item, other):
+                ModelDroppedModel(
+                    id=f"item-{item.pk}", hx_name="ModelDroppedModel", user=None, item=item.pk
+                )
+
+        for target in [(Item, None), (Item, [self.item.pk, str(other.pk)])]:
+            with self.subTest(target=target), Repository.activate(self.repository):
+                hydrate_both()
+                self.invalidate(target)
+                with self.assertNumQueries(2):
+                    hydrate_both()
+
+    def test_a_resolved_lazy_proxy_keeps_its_instance(self):
+        class LazyDroppedModel(HtmxComponent):
+            _template_name = "LazyDroppedModel.html"
+            item: Annotated[Item, ModelConfig(lazy=True, cache=True)]
+
+        with Repository.activate(self.repository):
+            lazy = LazyDroppedModel(
+                id="lazy", hx_name="LazyDroppedModel", user=None, item=self.item.pk
+            )
+            self.assertEqual(lazy.item.text, "Cached")
+            self.invalidate((Item, self.item.pk))
+            with self.assertNumQueries(0):
+                self.assertEqual(lazy.item.text, "Cached")
+
+    def invalidate(self, target: Item | tuple[type[Item], object]) -> None:
+        list(
+            CommandProcessor(self.repository)._run_command(
+                CommandQueue([InvalidateModelCache(target)])
+            )
+        )
 
 
 class TestQuerySetInComponent(TestCase):

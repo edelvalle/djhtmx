@@ -34,6 +34,7 @@ from .commands import (
     Focus,
     HandleSSEEvents,
     InternalCommand,
+    InvalidateModelCache,
     Open,
     ProcessedCommand,
     PushURL,
@@ -206,6 +207,10 @@ class CommandProcessor:
                             logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                             commands_to_append.append(Render(component))
 
+            case InvalidateModelCache(target):
+                commands.processing_component_id = ""
+                repo.invalidate_model_cache(target)
+
             case (
                 Open()
                 | ReplaceURL()
@@ -359,7 +364,8 @@ class RecordedCommand:
                 | DispatchDOMEvent()
                 | PushURL()
                 | ReplaceURL()
-                | Execute() as command
+                | Execute()
+                | InvalidateModelCache() as command
             ):
                 described = repr(command)
             case unreachable:
