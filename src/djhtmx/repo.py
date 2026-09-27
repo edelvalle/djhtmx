@@ -8,10 +8,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as Field
-from typing import TYPE_CHECKING, Any
+from itertools import accumulate
+from typing import TYPE_CHECKING, Any, assert_never, cast
 
 from django.core.signing import Signer
 from django.db import models
+from django.db.models import Prefetch, QuerySet, prefetch_related_objects
+from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
@@ -186,7 +189,7 @@ class Repository:
         # is what keeps them to one computation.
         self._sse_subscriptions: dict[int, tuple[HtmxComponent, set[SSESubscription]]] = {}
         # Nested by model, so invalidating a whole model drops one entry instead of scanning them all.
-        self._model_instances: dict[type[models.Model], dict[object, models.Model]] = {}
+        self._model_instances: dict[type[models.Model], dict[object, _CachedInstance]] = {}
 
     def unregister_component(self, component_id: str):
         # Delete component state recursively, then clean up the SSE consumer
@@ -354,8 +357,13 @@ class Repository:
         When `model_config` opts into the model cache -- `ModelConfig.cache`, or
         `DJHTMX_DEFAULT_MODEL_CACHE` when that is None -- and a repository is `current`:meth:, the
         row is fetched once per repository cycle: every call for it returns the same instance.  A
-        missing row is not remembered, so a row created later in the cycle is found.  The first fetch decides the instance, so a later call asking
-        for a richer fetch plan gets the instance already cached.  Otherwise every call fetches.
+        missing row is not remembered, so a row created later in the cycle is found.  Otherwise
+        every call fetches.
+
+        A cached instance is enriched with the relations a later call asks for and it lacks, so every
+        caller gets its `select_related` and `prefetch_related`.  A relation that conflicts with one
+        already loaded -- the same path, prefetched through a different queryset object -- cannot
+        share the instance, and that call gets a fetch of its own, not cached.
 
         `pk` may arrive as the wire's string; it is coerced to the primary key's type first.
 
@@ -364,13 +372,16 @@ class Repository:
         cache_enabled = DEFAULT_MODEL_CACHE if model_config.cache is None else model_config.cache
         if cache_enabled and (repository := cls.current()) is not None:
             instances = repository._model_instances.setdefault(model, {})
-            if (instance := instances.get(pk)) is None and (
-                instance := cls._fetch_model_instance(model, pk, model_config)
-            ) is not None:
-                instances[pk] = instance
+            if (cached := instances.get(pk)) is None:
+                if (instance := cls._fetch_model_instance(model, pk, model_config)) is not None:
+                    instances[pk] = _CachedInstance.from_instance(instance, model_config)
+            elif cached.enrich(model_config):
+                instance = cast(M, cached.instance)
+            else:
+                instance = cls._fetch_model_instance(model, pk, model_config)
         else:
             instance = cls._fetch_model_instance(model, pk, model_config)
-        return instance  # type: ignore[return-value]
+        return instance
 
     @staticmethod
     def _fetch_model_instance[M: models.Model](
@@ -583,6 +594,74 @@ def _describe_pk(value) -> str:
 
     """
     return str(getattr(value, "pk", value))
+
+
+@dataclass(slots=True)
+class _CachedInstance:
+    """A model instance shared through the repository cache, and the relations loaded on it."""
+
+    instance: models.Model
+    relations: dict[str, QuerySet | None]
+    """The relation paths already loaded on `instance`, each with the queryset of its `Prefetch`;
+    None for the default one."""
+
+    @classmethod
+    def from_instance(cls, instance: models.Model, model_config: ModelConfig) -> _CachedInstance:
+        """Cache `instance`, fetched with the relations `model_config` asks for."""
+        return cls(instance, cls.get_relations(model_config))
+
+    def enrich(self, model_config: ModelConfig) -> bool:
+        """Load the relations `model_config` asks for and `instance` lacks.
+
+        Answer False, loading nothing, when one of them conflicts with a relation already loaded.
+
+        """
+        requested = self.get_relations(model_config)
+        compatible = all(
+            self.relations.get(path, queryset) is queryset for path, queryset in requested.items()
+        )
+        if compatible and requested.keys() - self.relations.keys():
+            with tracing_span(
+                "djhtmx.model.prefetch",
+                model=get_fqn(type(self.instance)),
+                pk=_describe_pk(self.instance),
+            ):
+                # Django skips the paths already loaded, and a forward relation is loaded as
+                # `select_related` would have.
+                prefetch_related_objects(
+                    [self.instance],
+                    *(model_config.select_related or ()),
+                    *(model_config.prefetch_related or ()),
+                )
+            self.relations |= requested
+        return compatible
+
+    @staticmethod
+    def get_relations(model_config: ModelConfig) -> dict[str, QuerySet | None]:
+        """Map every relation path `model_config` loads to the queryset its `Prefetch` supplies.
+
+        A path traversed on the way to a deeper one is loaded with the default queryset, None.
+
+        """
+        relations: dict[str, QuerySet | None] = {}
+        for relation in (
+            *(model_config.select_related or ()),
+            *(model_config.prefetch_related or ()),
+        ):
+            match relation:
+                case Prefetch(prefetch_through=through, prefetch_to=to, queryset=queryset):
+                    pass
+                case str():
+                    through = to = relation
+                    queryset = None
+                case unreachable:
+                    assert_never(unreachable)
+            *prefixes, _ = accumulate(
+                through.split(LOOKUP_SEP), lambda prefix, part: f"{prefix}{LOOKUP_SEP}{part}"
+            )
+            relations = dict.fromkeys(prefixes) | relations
+            relations[to] = queryset
+        return relations
 
 
 _current: ContextVar[Repository | HttpRequest | None] = ContextVar(

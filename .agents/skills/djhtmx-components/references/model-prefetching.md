@@ -31,7 +31,7 @@ Each component reads its own rows, so the components of one request that hold th
 item: Annotated[Item, ModelConfig(cache=True, prefetch_related=("attachments__uploader",))]
 ```
 
-The first read decides what the shared instance carries.  A later field asking for a richer `prefetch_related` or `select_related` gets the instance already read, without them, so give every field that shares a row the same `ModelConfig`.
+A field asking for relations the shared instance lacks gets them loaded onto it, so every field gets its `select_related` and `prefetch_related`, and the relations already loaded are not read again.  A `Prefetch` with its own queryset only shares when it is the same `Prefetch` object: a field asking for the same relation through a different queryset -- or through none, where another field filtered it -- gets a row of its own, read separately.  Declare a shared `Prefetch` once, as a module constant, when several components use it.
 
 A shared instance is one object: a component that changes it changes it for every component holding that row in the same request.
 

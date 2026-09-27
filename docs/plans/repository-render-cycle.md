@@ -104,7 +104,17 @@ This is the tail of `_get_instance`, after its two short-circuits: a value that 
 
 `_ModelBeforeValidator.from_modelclass` is `@cache`d per `(model, model_config, allow_none)`, so the validator objects are shared across repositories and must stay stateless: the map belongs to the repository the validator looks up at call time, never to the validator.
 
-A later design decision is how to handle `ModelConfig(select_related=...)` and `ModelConfig(prefetch_related=...)`.  A strict identity map means `(model, pk)` wins and later requests return the existing instance, even if a richer fetch plan is requested.  A fetch-plan-aware cache can avoid exact duplicate queries but may return different Python instances for the same row.  The first implementation should prefer identity-map behaviour and document the fetch-plan tradeoff.
+### Relations on a shared instance
+
+A strict identity map where the first fetch wins surprises the second component: it asked for `prefetch_related` and got an instance without it.  Each cached entry therefore records the relations already loaded on its instance, as a map from relation path to the queryset of its `Prefetch`, `None` for the default one.  A string relation, a `select_related` path and a `Prefetch` without a queryset all record `None`; every intermediate path a relation traverses is recorded with `None` too, because Django loads it with the default queryset.
+
+On a hit, the relations the annotation asks for are compared with the ones recorded:
+
+- a path not loaded yet is missing, and `prefetch_related_objects([instance], ...)` loads it onto the shared instance -- Django skips the paths already there, and loads a forward relation as `select_related` would have;
+- a path loaded with the same queryset -- both `None`, or the very same queryset object -- is already there;
+- a path loaded with another queryset is a conflict, and that hydration gets a fetch of its own, not cached.
+
+Equivalent querysets built as different objects count as a conflict: comparing querysets for equivalence is not reliable, and a database read is the safe answer.  A `Prefetch` shared by several annotations is declared once, as a module constant, so they share the instance.
 
 One SSE-specific caveat to document with it: the render executor closes database connections around renders, so an instance cached during one wakeup and touched during the next would lazy-load its deferred fields on a different connection.  Keeping the map strictly per repository -- one per wakeup, never reused across them -- is what makes that a non-issue.
 
@@ -179,7 +189,8 @@ Repository-local caches are discarded when the repository lifecycle ends.  No ex
 3. Add tests with a component whose `sse_subscriptions` property increments a counter, proving one framework evaluation for a component render; drive them through `Htmx` and `Htmx.drain_sse_events` so the SSE wakeup path is covered alongside the page render.
 4. Introduce current-repository activation with a context variable, scoped at the endpoint, the middleware, and `_drain_sse_session`.
 5. Add `ModelConfig.cache` and `settings.DEFAULT_MODEL_CACHE`, defaulting to off.
-6. Add `Repository.get_model_instance(...)` and wire the tail of `_ModelBeforeValidator._get_instance` and `_LazyModelProxy.__ensure_instance` through it when a current repository is available and the annotation opts in; cache the proxy, not the instance, for lazy annotations.
+6. Add `Repository.get_model_instance(...)` as the one entry point of both `_ModelBeforeValidator._get_instance` and `_LazyModelProxy.__ensure_instance`: it decides whether the cache applies and fetches otherwise.  The map caches instances, nested by model, and records the relations loaded on each so that a later annotation's missing relations are loaded onto the shared instance.
 7. Add tests proving duplicate model primary-key hydration reuses the cached instance and avoids duplicate database fetches within one repository lifecycle, and that an annotation left at the default keeps fetching per hydration.
 8. Add `InvalidateModelCache` to the `Command` union and to `CommandProcessor._run_command`, covering the instance, the whole model, and the one-or-many pk forms.
 9. Add tests for priming with an instance, for dropping entries mid-cycle leaving already-hydrated components untouched, and for a lazy proxy shared by two components refreshing for both after one invalidation.
+10. Count model cache hits and misses as metrics through `tracing.metric_incr`, which publishes to Sentry and to Logfire: a hit, a miss, an enrichment that loaded missing relations, and a conflict that fell back to a fetch of its own.

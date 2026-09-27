@@ -77,9 +77,10 @@ class ModelConfig:
     """Whether hydrating this annotation goes through the current repository's model cache.
 
     With the cache, every hydration of the same row within one repository lifecycle (a request, an
-    SSE wakeup) returns the same instance, fetched once.  The first fetch wins: a later annotation
-    asking for a richer `select_related` or `prefetch_related` gets the instance already cached.
-    Components sharing the instance also see each other's changes to it.
+    SSE wakeup) returns the same instance, fetched once.  A later annotation asking for relations
+    the instance lacks gets them loaded onto it.  One whose `Prefetch` conflicts with a relation
+    already loaded -- the same path through a different queryset object -- gets a fetch of its own,
+    not shared.  Components sharing the instance also see each other's changes to it.
 
     None defers to the `DJHTMX_DEFAULT_MODEL_CACHE` setting, which is False unless set.
 
