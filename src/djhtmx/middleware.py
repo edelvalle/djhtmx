@@ -22,10 +22,16 @@ def middleware(
     page; see `process_exception`.
     """
 
+    # Imported here: `djhtmx/__init__.py` imports this module before the app registry is ready.
+    from .repo import Repository
+
+    # The request, not a repository: building one here would miss the user of a middleware placed
+    # before authentication.
     if iscoroutinefunction(get_response):
         # Async version
         async def middleware(request: HttpRequest) -> HttpResponse:
-            response = await get_response(request)
+            with Repository.activate(request):
+                response = await get_response(request)
             if repo := getattr(request, "htmx_repo", None):
                 await sync_to_async(repo.session.flush)()
                 delattr(request, "htmx_repo")
@@ -34,7 +40,8 @@ def middleware(
     else:
         # Sync version
         def middleware(request: HttpRequest) -> HttpResponse:  # type: ignore
-            response = get_response(request)
+            with Repository.activate(request):
+                response = get_response(request)
             if repo := getattr(request, "htmx_repo", None):
                 repo.session.flush()
                 delattr(request, "htmx_repo")

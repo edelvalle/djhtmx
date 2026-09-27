@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 import random
 from collections import defaultdict
-from collections.abc import AsyncIterable, Iterable
+from collections.abc import AsyncIterable, Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as Field
 from typing import TYPE_CHECKING, Any
@@ -108,6 +110,43 @@ class Repository:
             session=Session(cls.new_session_id()),  # TODO: take the session from the websocket url
             params=get_params(None),
         )
+
+    @staticmethod
+    def current() -> Repository | None:
+        """Return the repository of the lifecycle running in this context, or None outside any.
+
+        This is how code that cannot be handed the repository -- a pydantic validator, for one --
+        reaches the render-cycle caches.  None is the normal answer for a component built outside
+        any request, SSE wakeup or test dispatch, and callers must keep working without the caches.
+
+        """
+        match _current.get():
+            case Repository() as repo:
+                return repo
+            case HttpRequest() as request:
+                return getattr(request, "htmx_repo", None)
+            case None:
+                return None
+
+    @staticmethod
+    @contextmanager
+    def activate(locator: Repository | HttpRequest) -> Iterator[None]:
+        """Make `locator` what `current`:meth: answers with while the block runs.
+
+        Pass the repository itself when it already exists.  Pass the request when the repository is
+        built lazily inside the block, as a page render does through `from_request`:meth:; it is
+        looked up on the request at each call of `current`:meth:.
+
+        Activations nest, and each one restores the previous value on exit, so a worker thread
+        reused by the next request never sees a stale repository.  The value travels with the
+        `contextvars` context, into `sync_to_async` threads and the SSE render executor alike.
+
+        """
+        token = _current.set(locator)
+        try:
+            yield
+        finally:
+            _current.reset(token)
 
     @staticmethod
     def load_states_by_id(states: list[str]) -> dict[str, dict[str, Any]]:
@@ -475,3 +514,8 @@ class Session:
                         KEY_SIZE_WARN_THRESHOLD,
                     )
             self.is_dirty = False
+
+
+_current: ContextVar[Repository | HttpRequest | None] = ContextVar(
+    "djhtmx.current_repository", default=None
+)

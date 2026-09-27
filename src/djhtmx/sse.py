@@ -557,8 +557,8 @@ def _drain_sse_session(session_id: str, user, handle_commands: list) -> list[str
     repo = Repository(
         user=user or AnonymousUser(), session=Session(session_id), params=get_params(None)
     )
-    processor = CommandProcessor(repo)
-    batch = CommandBatch.from_processed(processor.process(handle_commands))
+    with Repository.activate(repo):
+        batch = CommandBatch.from_processed(CommandProcessor(repo).process(handle_commands))
     return to_sse_fragments(batch, session_id)
 
 

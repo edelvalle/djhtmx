@@ -33,18 +33,19 @@ def endpoint(request: HttpRequest, component_name: str, component_id: str, event
 
     with sentry_tags(**tags), tracing_span(f"{component_name}.{event_handler}", **tags):
         repo = Repository.from_request(request)
-        batch = CommandBatch.from_processed(
-            repo.dispatch_event(
-                component_id,
-                event_handler,
-                parse_request_data(request.POST | request.FILES)  # type: ignore
-                | (
-                    {"prompt": prompt}
-                    if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
-                    else {}
-                ),
+        with Repository.activate(repo):
+            batch = CommandBatch.from_processed(
+                repo.dispatch_event(
+                    component_id,
+                    event_handler,
+                    parse_request_data(request.POST | request.FILES)  # type: ignore
+                    | (
+                        {"prompt": prompt}
+                        if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
+                        else {}
+                    ),
+                )
             )
-        )
         return to_http_response(batch)
 
 

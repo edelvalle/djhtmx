@@ -188,7 +188,8 @@ class Htmx:
         `drain_sse_events`:meth:.
 
         """
-        commands = self.repo.dispatch_event(component_id, event_handler, kwargs)
+        with Repository.activate(self.repo):
+            commands = list(self.repo.dispatch_event(component_id, event_handler, kwargs))
         navigate_to_url = None
         for command in commands:
             match command:
