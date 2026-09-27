@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as Field
 from itertools import accumulate
-from typing import TYPE_CHECKING, Any, assert_never, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 from django.core.signing import Signer
 from django.db import models
@@ -44,7 +44,7 @@ from .settings import (
     SESSION_TTL,
     conn,
 )
-from .utils import compact_hash, db, get_fqn, get_params
+from .utils import compact_hash, db, get_fqn, get_model_full_label, get_params
 
 if TYPE_CHECKING:
     from .sse import SSESubscription
@@ -373,14 +373,14 @@ class Repository:
         if cache_enabled and (repository := cls.current()) is not None:
             instances = repository._model_instances.setdefault(model, {})
             if (cached := instances.get(pk)) is None:
-                metric_incr("djhtmx.model.cache.misses")
+                _CachedInstance.count(model, "misses")
                 if (instance := cls._fetch_model_instance(model, pk, model_config)) is not None:
                     instances[pk] = _CachedInstance.from_instance(instance, model_config)
             elif cached.enrich(model_config):
-                metric_incr("djhtmx.model.cache.hits")
+                _CachedInstance.count(model, "hits")
                 instance = cast(M, cached.instance)
             else:
-                metric_incr("djhtmx.model.cache.conflicts")
+                _CachedInstance.count(model, "conflicts")
                 instance = cls._fetch_model_instance(model, pk, model_config)
         else:
             instance = cls._fetch_model_instance(model, pk, model_config)
@@ -637,8 +637,16 @@ class _CachedInstance:
                     *(model_config.prefetch_related or ()),
                 )
             self.relations |= requested
-            metric_incr("djhtmx.model.cache.enrichments")
+            self.count(type(self.instance), "enrichments")
         return compatible
+
+    @staticmethod
+    def count(
+        model: type[models.Model], entry: Literal["hits", "misses", "enrichments", "conflicts"]
+    ) -> None:
+        """Count a model cache `entry`, in the totals and in `model`'s own metric."""
+        metric_incr(f"djhtmx.model.cache.{entry}")
+        metric_incr(f"djhtmx.model.{get_model_full_label(model)}.cache.{entry}")
 
     @staticmethod
     def get_relations(model_config: ModelConfig) -> dict[str, QuerySet | None]:
