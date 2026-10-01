@@ -18,6 +18,7 @@ from typing import (
     TypeGuard,
     TypeVar,
     Union,
+    assert_never,
     get_args,
     get_origin,
     get_type_hints,
@@ -26,6 +27,7 @@ from typing import (
 from uuid import UUID
 
 from django.apps import apps
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
 from django.db.models import Prefetch
 from django.utils.datastructures import MultiValueDict
@@ -78,9 +80,12 @@ class ModelConfig:
 
     With the cache, every hydration of the same row within one repository lifecycle (a request, an
     SSE wakeup) returns the same instance, fetched once.  A later annotation asking for relations
-    the instance lacks gets them loaded onto it.  One whose `Prefetch` conflicts with a relation
-    already loaded -- the same path through a different queryset object -- gets a fetch of its own,
-    not shared.  Components sharing the instance also see each other's changes to it.
+    the instance lacks gets them loaded onto it.  Components sharing the instance also see each
+    other's changes to it.
+
+    An annotation whose `prefetch_related` holds a `Prefetch` object never uses the cache, whatever
+    this says: one instance holds a single result per relation, so the queryset of a `Prefetch`
+    would reach every other annotation sharing the row.
 
     None defers to the `DJHTMX_DEFAULT_MODEL_CACHE` setting, which is False unless set.
 
@@ -244,9 +249,30 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
 
 
 def normalize_pk(model: type[models.Model], value: object) -> object:
-    """Coerce `value` to the Python type of `model`'s primary key, as the wire may carry a string."""
+    """Coerce `value` to the Python type of `model`'s primary key, as the wire may carry a string.
+
+    A composite primary key becomes a tuple of its parts, each coerced by its own field, whether it
+    arrives as that tuple, as the list JSON turns it into, or as Django's JSON string.  A value
+    that cannot be coerced raises `ValueError`, which pydantic reports as a validation error.
+
+    """
     pk_field = model._meta.pk
-    return pk_field.to_python(value) if pk_field is not None else value
+    try:
+        match pk_field:
+            case models.CompositePrimaryKey(fields=fields):
+                return tuple(
+                    # The stubs type a part as any `get_field` result; a pk part is always a Field.
+                    field.to_python(part)  # type: ignore[union-attr]
+                    for field, part in zip(fields, pk_field.to_python(value), strict=True)
+                )
+            case models.Field():
+                return pk_field.to_python(value)
+            case None:
+                return value
+            case unreachable:
+                assert_never(unreachable)
+    except DjangoValidationError as error:
+        raise ValueError("; ".join(error.messages)) from error
 
 
 @dataclass(slots=True)

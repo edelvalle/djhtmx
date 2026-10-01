@@ -106,15 +106,9 @@ This is the tail of `_get_instance`, after its two short-circuits: a value that 
 
 ### Relations on a shared instance
 
-A strict identity map where the first fetch wins surprises the second component: it asked for `prefetch_related` and got an instance without it.  Each cached entry therefore records the relations already loaded on its instance, as a map from relation path to the queryset of its `Prefetch`, `None` for the default one.  A string relation, a `select_related` path and a `Prefetch` without a queryset all record `None`; every intermediate path a relation traverses is recorded with `None` too, because Django loads it with the default queryset.
+A strict identity map where the first fetch wins surprises the second component: it asked for `prefetch_related` and got an instance without it.  Each cached entry therefore records the relation paths already loaded on its instance, with every intermediate path a relation traverses.  On a hit, the paths the annotation asks for and the instance lacks are loaded onto it with `prefetch_related_objects([instance], ...)`: Django skips the paths already there, and loads a forward relation as `select_related` would have.
 
-On a hit, the relations the annotation asks for are compared with the ones recorded:
-
-- a path not loaded yet is missing, and `prefetch_related_objects([instance], ...)` loads it onto the shared instance -- Django skips the paths already there, and loads a forward relation as `select_related` would have;
-- a path loaded with the same queryset -- both `None`, or the very same queryset object -- is already there;
-- a path loaded with another queryset is a conflict, and that hydration gets a fetch of its own, not cached.
-
-Equivalent querysets built as different objects count as a conflict: comparing querysets for equivalence is not reliable, and a database read is the safe answer.  A `Prefetch` shared by several annotations is declared once, as a module constant, so they share the instance.
+An annotation whose `prefetch_related` holds a `Prefetch` object never uses the cache.  One instance holds a single result per relation, so a filtered or ordered `Prefetch` would reach every other annotation sharing the row -- even one that never asked for the relation -- and an earlier unfiltered load would silently win over it.  Comparing querysets for equivalence is not reliable, so these annotations fetch on their own.
 
 One SSE-specific caveat to document with it: the render executor closes database connections around renders, so an instance cached during one wakeup and touched during the next would lazy-load its deferred fields on a different connection.  Keeping the map strictly per repository -- one per wakeup, never reused across them -- is what makes that a non-issue.
 
@@ -130,7 +124,7 @@ When the flag resolves to `False`, hydration takes the uncached path it takes to
 
 ## InvalidateModelCache
 
-A handler that writes to the database, or that knows better than the map, invalidates or primes it by yielding a command:
+A handler that deletes a row other components may hold, or writes to it without going through the shared instance -- `QuerySet.update()`, another instance of the row -- invalidates the map by yielding a command.  Saving the shared instance itself needs nothing: it already holds what was written.  djhtmx does not invalidate on its own: a component rehydrated earlier in the same dispatch already holds the row a later handler deletes, with or without the map, so it is the writing handler's job.
 
 ```python
 @dataclass(slots=True)
@@ -140,14 +134,14 @@ class InvalidateModelCache:
 
 | `target` | Effect on the repository's map |
 | --- | --- |
-| a model instance | stores it under `(type(instance), instance.pk)`, replacing whatever was there, or priming an entry that does not exist yet |
+| a model instance | drops that row under its concrete model and every proxy of it |
 | `(model_class, None)` | drops every entry of that model |
 | `(model_class, pk)` | drops that one entry |
 | `(model_class, [pk, ...])` | drops those entries |
 
 It joins the `Command` union so handlers can yield it, and gets a `case` in `CommandProcessor._run_command` that acts on `self.repo` and yields nothing -- it never reaches the browser, so it is not a `ProcessedCommand`.  The pks it carries are normalised the same way the cache key is, or a `str` pk from a handler's arguments misses the `UUID` the map is keyed by.
 
-Priming is the more interesting half: a handler that has just fetched or created a row can hand it to the map before the children that need it are built, and their hydration costs nothing.
+The tuple forms name the model the annotation uses: a multi-table child, `Restaurant(Place)`, has its own table and its own entries, and is dropped with `(Restaurant, pk)`.  For a model with a composite primary key a tuple is one pk, and a list or set holds several.
 
 ### What invalidation reaches
 
@@ -155,9 +149,7 @@ Invalidation happens in the middle of a cycle, and it does not rewrite the past.
 
 Lazy annotations follow the same rule.  The map caches instances, not proxies -- a shared proxy would mix the `allow_none` and the fetch plan of every annotation holding the row -- and a proxy keeps the instance it resolved.  A proxy not resolved yet reads the map at its first access, so it sees the invalidation; one already resolved does not.
 
-A primed instance records no relations as loaded: what the handler loaded on it is unknown, and `prefetch_related_objects` skips what is already there when a later hydration asks for it.
-
-The command sorts right after the handler that yielded it and before anything that hydrates components -- `Emit`, `Signal`, `BuildAndRender` -- so every component built after the yield sees it.
+The command takes effect as soon as the handler yields it, in `_process_emitted_commands`, rather than through the queue: the other listeners of the same `Emit` and the other consumers of the same SSE wakeup are hydrated before the queue would reach it.
 
 ## Repository as contextvar-local
 
@@ -196,5 +188,5 @@ Repository-local caches are discarded when the repository lifecycle ends.  No ex
 6. Add `Repository.get_model_instance(...)` as the one entry point of both `_ModelBeforeValidator._get_instance` and `_LazyModelProxy.__ensure_instance`: it decides whether the cache applies and fetches otherwise.  The map caches instances, nested by model, and records the relations loaded on each so that a later annotation's missing relations are loaded onto the shared instance.
 7. Add tests proving duplicate model primary-key hydration reuses the cached instance and avoids duplicate database fetches within one repository lifecycle, and that an annotation left at the default keeps fetching per hydration.
 8. Add `InvalidateModelCache` to the `Command` union and to `CommandProcessor._run_command`, covering the instance, the whole model, and the one-or-many pk forms.
-9. Add tests for priming with an instance, for dropping entries mid-cycle leaving already-hydrated components untouched, for dropping a whole model and a list of pks, and for a resolved lazy proxy keeping its instance.
+9. Add tests for dropping a row by instance, for dropping entries mid-cycle leaving already-hydrated components untouched, for dropping a whole model and a list of pks, and for a resolved lazy proxy keeping its instance.
 10. Count model cache hits and misses as metrics through `tracing.metric_incr`, which publishes to Sentry and to Logfire: a hit, a miss, an enrichment that loaded missing relations, and a conflict that fell back to a fetch of its own.

@@ -273,7 +273,12 @@ class CommandProcessor:
             ):
                 # make partial updates not lazy during_execute
                 command.lazy = False
-            commands_to_add.append(command)
+            if isinstance(command, InvalidateModelCache):
+                # Not queued: the other listeners of the same Emit, and the other consumers of the
+                # same SSE wakeup, are hydrated before the queue would reach it.
+                repo.invalidate_model_cache(command.target)
+            else:
+                commands_to_add.append(command)
 
         if not component_was_rendered:
             commands_to_add.append(

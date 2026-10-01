@@ -441,17 +441,24 @@ class HandleSSEEvents:
 
 @dataclass(slots=True)
 class InvalidateModelCache:
-    """Drop rows from the model cache of the current request, or prime it with an instance.
+    """Drop rows from the model cache of the current request.
 
-    Yield from a handler that wrote to the database, so that the components hydrated after it read
-    the rows again, or that holds a row the components about to be built will need:
+    Yield from a handler that deleted a row other components may hold, or that wrote to it without
+    going through the shared instance -- `QuerySet.update()`, another instance of the row -- so that
+    the components hydrated after it read the row again.  Saving the shared instance itself needs
+    nothing: it already holds what was written.  djhtmx never invalidates on its own: without it the
+    components get the deleted instance, or the one from before the write.
 
-    - an instance is stored as the shared instance of its row, replacing the cached one;
-    - `(Model, None)` drops every row of `Model`;
+    - an instance drops its row, wherever it is cached under its model or one of its proxies;
+    - `(Model, None)` drops every row cached under `Model`;
     - `(Model, pk)` drops that row, and `(Model, [pk, ...])` those rows.
 
-    A pk may arrive as the wire's string.  It never reaches the browser, and it does not reach the
-    components already built: they keep the instance they hold.  It only matters to the
+    The model of the tuple forms is the one the annotation names: a field annotated with a
+    multi-table child, `Restaurant(Place)`, is dropped with `(Restaurant, pk)`, not with
+    `(Place, pk)`.  A pk may arrive as the wire's string, and a composite pk is a tuple.
+
+    It takes effect as soon as the handler yields it, never reaches the browser, and does not reach
+    the components already built: they keep the instance they hold.  It only matters to the
     annotations that opt into the cache with `ModelConfig(cache=True)`.
     """
 

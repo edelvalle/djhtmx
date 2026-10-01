@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 from django.core.signing import Signer
 from django.db import models
-from django.db.models import Prefetch, QuerySet, prefetch_related_objects
+from django.db.models import Prefetch, prefetch_related_objects
 from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
@@ -361,54 +361,66 @@ class Repository:
         every call fetches.
 
         A cached instance is enriched with the relations a later call asks for and it lacks, so every
-        caller gets its `select_related` and `prefetch_related`.  A relation that conflicts with one
-        already loaded -- the same path, prefetched through a different queryset object -- cannot
-        share the instance, and that call gets a fetch of its own, not cached.
+        caller gets its `select_related` and `prefetch_related`.  A `model_config` whose
+        `prefetch_related` holds a `Prefetch` object never uses the cache: one instance can hold a
+        single result per relation, and the queryset of one `Prefetch` would leak into every other
+        caller.
 
-        `pk` may arrive as the wire's string; it is coerced to the primary key's type first.
+        `pk` may arrive as the wire's string, or a composite pk as a list; it is coerced to the
+        primary key's type first.
 
         """
         pk = normalize_pk(model, pk)
-        cache_enabled = DEFAULT_MODEL_CACHE if model_config.cache is None else model_config.cache
+        cache_enabled = (
+            DEFAULT_MODEL_CACHE if model_config.cache is None else model_config.cache
+        ) and not any(
+            isinstance(relation, Prefetch) for relation in model_config.prefetch_related or ()
+        )
         if cache_enabled and (repository := cls.current()) is not None:
             instances = repository._model_instances.setdefault(model, {})
             if (cached := instances.get(pk)) is None:
                 _CachedInstance.count(model, "misses")
                 if (instance := cls._fetch_model_instance(model, pk, model_config)) is not None:
                     instances[pk] = _CachedInstance.from_instance(instance, model_config)
-            elif cached.enrich(model_config):
-                _CachedInstance.count(model, "hits")
-                instance = cast(M, cached.instance)
             else:
-                _CachedInstance.count(model, "conflicts")
-                instance = cls._fetch_model_instance(model, pk, model_config)
+                _CachedInstance.count(model, "hits")
+                cached.enrich(model_config)
+                instance = cast(M, cached.instance)
         else:
             instance = cls._fetch_model_instance(model, pk, model_config)
         return instance
 
     def invalidate_model_cache(self, target: models.Model | tuple[type[models.Model], object]):
-        """Drop rows from this repository's model cache, or prime it with an instance.
+        """Drop rows from this repository's model cache.
 
-        `target` takes the forms `InvalidateModelCache`:class: documents.  A primed instance
-        records no relations as loaded, so a later hydration loads the ones it asks for onto it.
+        `target` takes the forms `InvalidateModelCache`:class: documents.
 
         """
         match target:
             case models.Model() as instance:
-                model = type(instance)
-                self._model_instances.setdefault(model, {})[normalize_pk(model, instance.pk)] = (
-                    _CachedInstance.from_instance(instance, ModelConfig())
-                )
+                # Only an abstract model has no concrete model, and it has no instances.
+                concrete_model = cast(type[models.Model], instance._meta.concrete_model)
+                pk = normalize_pk(concrete_model, instance.pk)
+                for model, instances in self._model_instances.items():
+                    if model._meta.concrete_model is concrete_model:
+                        instances.pop(pk, None)
             case (model, None):
                 self._model_instances.pop(model, None)
-            case (model, list() | tuple() | set() | frozenset() as pks):
-                instances = self._model_instances.get(model, {})
-                for pk in pks:
-                    instances.pop(normalize_pk(model, pk), None)
+            case (model, list() | set() | frozenset() as pks):
+                self._drop_model_instances(model, pks)
+            case (model, tuple() as pks) if not isinstance(
+                model._meta.pk, models.CompositePrimaryKey
+            ):
+                self._drop_model_instances(model, pks)
             case (model, pk):
-                self._model_instances.get(model, {}).pop(normalize_pk(model, pk), None)
+                self._drop_model_instances(model, (pk,))
             case unreachable:
                 assert_never(unreachable)
+
+    def _drop_model_instances(self, model: type[models.Model], pks: Iterable[object]) -> None:
+        instances = self._model_instances.get(model, {})
+        for pk in pks:
+            instances.pop(normalize_pk(model, pk), None)
 
     @staticmethod
     def _fetch_model_instance[M: models.Model](
@@ -628,26 +640,17 @@ class _CachedInstance:
     """A model instance shared through the repository cache, and the relations loaded on it."""
 
     instance: models.Model
-    relations: dict[str, QuerySet | None]
-    """The relation paths already loaded on `instance`, each with the queryset of its `Prefetch`;
-    None for the default one."""
+    relations: set[str]
+    """The relation paths loaded on `instance`, with every path traversed to reach a deeper one."""
 
     @classmethod
     def from_instance(cls, instance: models.Model, model_config: ModelConfig) -> _CachedInstance:
         """Cache `instance`, fetched with the relations `model_config` asks for."""
         return cls(instance, cls.get_relations(model_config))
 
-    def enrich(self, model_config: ModelConfig) -> bool:
-        """Load the relations `model_config` asks for and `instance` lacks.
-
-        Answer False, loading nothing, when one of them conflicts with a relation already loaded.
-
-        """
-        requested = self.get_relations(model_config)
-        compatible = all(
-            self.relations.get(path, queryset) is queryset for path, queryset in requested.items()
-        )
-        if compatible and requested.keys() - self.relations.keys():
+    def enrich(self, model_config: ModelConfig) -> None:
+        """Load onto `instance` the relations `model_config` asks for and it lacks."""
+        if missing := self.get_relations(model_config) - self.relations:
             with tracing_span(
                 "djhtmx.model.prefetch",
                 model=get_fqn(type(self.instance)),
@@ -660,43 +663,33 @@ class _CachedInstance:
                     *(model_config.select_related or ()),
                     *(model_config.prefetch_related or ()),
                 )
-            self.relations |= requested
+            self.relations |= missing
             self.count(type(self.instance), "enrichments")
-        return compatible
 
     @staticmethod
-    def count(
-        model: type[models.Model], entry: Literal["hits", "misses", "enrichments", "conflicts"]
-    ) -> None:
+    def count(model: type[models.Model], entry: Literal["hits", "misses", "enrichments"]) -> None:
         """Count a model cache `entry`, in the totals and in `model`'s own metric."""
         metric_incr(f"djhtmx.model.cache.{entry}")
         metric_incr(f"djhtmx.model.{get_model_full_label(model)}.cache.{entry}")
 
     @staticmethod
-    def get_relations(model_config: ModelConfig) -> dict[str, QuerySet | None]:
-        """Map every relation path `model_config` loads to the queryset its `Prefetch` supplies.
-
-        A path traversed on the way to a deeper one is loaded with the default queryset, None.
-
-        """
-        relations: dict[str, QuerySet | None] = {}
+    def get_relations(model_config: ModelConfig) -> set[str]:
+        """Return the relation paths `model_config` loads, with every path traversed on the way."""
+        relations: set[str] = set()
         for relation in (
             *(model_config.select_related or ()),
             *(model_config.prefetch_related or ()),
         ):
             match relation:
-                case Prefetch(prefetch_through=through, prefetch_to=to, queryset=queryset):
-                    pass
-                case str():
-                    through = to = relation
-                    queryset = None
+                case Prefetch(prefetch_to=path) | (str() as path):
+                    relations.update(
+                        accumulate(
+                            path.split(LOOKUP_SEP),
+                            lambda prefix, part: f"{prefix}{LOOKUP_SEP}{part}",
+                        )
+                    )
                 case unreachable:
                     assert_never(unreachable)
-            *prefixes, _ = accumulate(
-                through.split(LOOKUP_SEP), lambda prefix, part: f"{prefix}{LOOKUP_SEP}{part}"
-            )
-            relations = dict.fromkeys(prefixes) | relations
-            relations[to] = queryset
         return relations
 
 

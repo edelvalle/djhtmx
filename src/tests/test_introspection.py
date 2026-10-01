@@ -731,18 +731,22 @@ class TestInvalidateModelCache(TestCase):
             params=get_params(None),
         )
 
-    def test_an_instance_primes_the_cache(self):
-        class PrimedModel(HtmxComponent):
-            _template_name = "PrimedModel.html"
+    def test_an_instance_drops_its_row(self):
+        class InstanceDroppedModel(HtmxComponent):
+            _template_name = "InstanceDroppedModel.html"
             item: Annotated[Item, ModelConfig(cache=True)]
 
-        item = Item.objects.get(pk=self.item.pk)
-        self.invalidate(item)
+        with Repository.activate(self.repository):
+            before = InstanceDroppedModel(
+                id="before", hx_name="InstanceDroppedModel", user=None, item=self.item.pk
+            )
+            self.invalidate(Item.objects.get(pk=self.item.pk))
+            with self.assertNumQueries(1):
+                after = InstanceDroppedModel(
+                    id="after", hx_name="InstanceDroppedModel", user=None, item=self.item.pk
+                )
 
-        with Repository.activate(self.repository), self.assertNumQueries(0):
-            primed = PrimedModel(id="primed", hx_name="PrimedModel", user=None, item=item.pk)
-
-        self.assertIs(primed.item, item)
+        self.assertIsNot(after.item, before.item)
 
     def test_dropping_a_row_leaves_the_components_already_built_untouched(self):
         class DroppedModel(HtmxComponent):

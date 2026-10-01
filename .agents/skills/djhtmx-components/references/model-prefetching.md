@@ -31,11 +31,11 @@ Each component reads its own rows, so the components of one request that hold th
 item: Annotated[Item, ModelConfig(cache=True, prefetch_related=("attachments__uploader",))]
 ```
 
-A field asking for relations the shared instance lacks gets them loaded onto it, so every field gets its `select_related` and `prefetch_related`, and the relations already loaded are not read again.  A `Prefetch` with its own queryset only shares when it is the same `Prefetch` object: a field asking for the same relation through a different queryset -- or through none, where another field filtered it -- gets a row of its own, read separately.  Declare a shared `Prefetch` once, as a module constant, when several components use it.
+A field asking for relations the shared instance lacks gets them loaded onto it, so every field gets its `select_related` and `prefetch_related`, and the relations already loaded are not read again.  A field whose `prefetch_related` holds a `Prefetch` object never shares the model: it reads its row on its own, because the queryset of its `Prefetch` would reach every other field holding the instance.
 
 A shared instance is one object: a component that changes it changes it for every component holding that row in the same request.
 
-A handler that writes a shared row, or that already holds the one the components about to be built need, yields `InvalidateModelCache`: `InvalidateModelCache((Item, item_id))` drops the row so later components read it again, and `InvalidateModelCache(item)` hands them the instance instead.  The components already built keep the instance they hold.
+A handler that deletes a shared row, or writes to it without going through the shared instance -- `Item.objects.filter(...).update(...)`, another instance of the row -- yields `InvalidateModelCache(item)`, or `InvalidateModelCache((Item, item_id))`, so the components built after it read the row again.  Changing the field's instance and calling `save()` needs nothing: the shared instance already holds the change.  djhtmx does not invalidate on its own, and without it the components get the deleted instance, or the one from before the write.  The components already built keep the instance they hold.  The model of `(Model, pk)` is the one the field is annotated with, so a field annotated with a multi-table child is dropped through the child.
 
 `DJHTMX_DEFAULT_MODEL_CACHE = True` turns the cache on for every model field that leaves `cache` unset, and `cache=False` opts one field out.  A row passed as an instance when placing the component never goes through the cache: it is already in hand.
 
