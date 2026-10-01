@@ -446,8 +446,11 @@ class InvalidateModelCache:
     Yield from a handler that deleted a row other components may hold, or that wrote to it without
     going through the shared instance -- `QuerySet.update()`, another instance of the row -- so that
     the components hydrated after it read the row again.  Saving the shared instance itself needs
-    nothing: it already holds what was written.  djhtmx never invalidates on its own: without it the
-    components get the deleted instance, or the one from before the write.
+    nothing: it already holds what was written.  The same goes for a change to the row's relations
+    made from the other side -- `Attachment.objects.create(item=item)`, `group.user_set.add(user)`:
+    the shared instance keeps the related rows it already loaded.  djhtmx never invalidates on its
+    own: without it the components get the deleted instance, the one from before the write, or the
+    related rows from before the change.
 
     - `(Model, None)` drops every row cached under `Model`;
     - `(Model, pk)` drops that row, and `(Model, [pk, ...])` those rows.
