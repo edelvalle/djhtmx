@@ -452,13 +452,14 @@ class InvalidateModelCache:
     own: without it the components get the deleted instance, the one from before the write, or the
     related rows from before the change.
 
-    - `(Model, None)` drops every row cached under `Model`;
-    - `(Model, pk)` drops that row, and `(Model, [pk, ...])` those rows.
+    - `InvalidateModelCache(Item)` drops every row cached under `Item`;
+    - `InvalidateModelCache(Item, pk)` drops that row, and `InvalidateModelCache(Item, [pk, ...])`
+      those rows.
 
-    Read the pk before deleting the row: `delete()` sets the instance's pk to None.  `Model` is
-    the one the annotation names: a field annotated with a proxy, or with a multi-table child such
-    as `Restaurant(Place)`, is dropped through that model, not through its concrete or parent one.
-    A pk may arrive as the wire's string, and a composite pk is a tuple.
+    Read the pk before deleting the row: `delete()` sets the instance's pk to None.  `model_class`
+    is the one the annotation names: a field annotated with a proxy, or with a multi-table child
+    such as `Restaurant(Place)`, is dropped through that model, not through its concrete or parent
+    one.  A pk may arrive as the wire's string, and a composite pk is a tuple.
 
     It takes effect once the handler returns, before any other component is hydrated; it never
     reaches the browser, and does not reach the components already built: they keep the instance
@@ -466,7 +467,8 @@ class InvalidateModelCache:
     `ModelConfig(cache=True)`.
     """
 
-    target: tuple[type[models.Model], object]
+    model_class: type[models.Model]
+    pk: object = None
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 

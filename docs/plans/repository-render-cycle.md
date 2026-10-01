@@ -129,18 +129,19 @@ A handler that deletes a row other components may hold, or writes to it without 
 ```python
 @dataclass(slots=True)
 class InvalidateModelCache:
-    target: tuple[type[models.Model], Any | Sequence[Any] | None]
+    model_class: type[models.Model]
+    pk: object = None
 ```
 
-| `target` | Effect on the repository's map |
+| Command | Effect on the repository's map |
 | --- | --- |
-| `(model_class, None)` | drops every entry of that model |
-| `(model_class, pk)` | drops that one entry |
-| `(model_class, [pk, ...])` | drops those entries |
+| `InvalidateModelCache(Item)` | drops every entry of that model |
+| `InvalidateModelCache(Item, pk)` | drops that one entry |
+| `InvalidateModelCache(Item, [pk, ...])` | drops those entries |
 
 It joins the `Command` union so handlers can yield it, and gets a `case` in `CommandProcessor._run_command` that acts on `self.repo` and yields nothing -- it never reaches the browser, so it is not a `ProcessedCommand`.  The pks it carries are normalised the same way the cache key is, or a `str` pk from a handler's arguments misses the `UUID` the map is keyed by.
 
-There is no instance form: `delete()` clears the instance's pk, and the command is applied only once the handler returns, so an instance yielded around a delete would drop nothing.  The tuple names the model the annotation uses: a proxy or a multi-table child, `Restaurant(Place)`, has its own entries, and is dropped with `(Restaurant, pk)`.  For a model with a composite primary key a tuple is one pk, and a list or set holds several.
+There is no instance form: `delete()` clears the instance's pk, and the command is applied only once the handler returns, so an instance yielded around a delete would drop nothing.  The model class is the one the annotation uses: a proxy or a multi-table child, `Restaurant(Place)`, has its own entries, and is dropped with `InvalidateModelCache(Restaurant, pk)`.  For a model with a composite primary key a tuple is one pk, and a list or set holds several.
 
 ### What invalidation reaches
 
@@ -186,6 +187,6 @@ Repository-local caches are discarded when the repository lifecycle ends.  No ex
 5. Add `ModelConfig.cache` and `settings.DEFAULT_MODEL_CACHE`, defaulting to off.
 6. Add `Repository.get_model_instance(...)` as the one entry point of both `_ModelBeforeValidator._get_instance` and `_LazyModelProxy.__ensure_instance`: it decides whether the cache applies and fetches otherwise.  The map caches instances, nested by model, and records the relations loaded on each so that a later annotation's missing relations are loaded onto the shared instance.
 7. Add tests proving duplicate model primary-key hydration reuses the cached instance and avoids duplicate database fetches within one repository lifecycle, and that an annotation left at the default keeps fetching per hydration.
-8. Add `InvalidateModelCache` to the `Command` union and to `CommandProcessor._run_command`, covering the instance, the whole model, and the one-or-many pk forms.
+8. Add `InvalidateModelCache` to the `Command` union and to `CommandProcessor._run_command`, covering the whole model and the one-or-many pk forms.
 9. Add tests for dropping entries mid-cycle leaving already-hydrated components untouched, for dropping a whole model and a list of pks, and for a resolved lazy proxy keeping its instance.
 10. Count model cache hits and misses as metrics through `tracing.metric_incr`, which publishes to Sentry and to Logfire: a hit, a miss, and an enrichment that loaded missing relations.

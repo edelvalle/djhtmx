@@ -390,25 +390,21 @@ class Repository:
             instance = cls._fetch_model_instance(model, pk, model_config)
         return instance
 
-    def invalidate_model_cache(self, target: tuple[type[models.Model], object]):
-        """Drop rows from this repository's model cache.
+    def invalidate_model_cache(self, model_class: type[models.Model], pk: object = None):
+        """Drop rows of `model_class` from this repository's model cache.
 
-        `target` takes the forms `InvalidateModelCache`:class: documents.
+        `pk` is None, a pk, or a list of them, as `InvalidateModelCache`:class: documents.
 
         """
-        match target:
-            case (model, None):
-                self._model_instances.pop(model, None)
-            case (model, list() | set() | frozenset() as pks):
-                self._drop_model_instances(model, pks)
-            case (model, tuple() as pks) if not isinstance(
-                model._meta.pk, models.CompositePrimaryKey
-            ):
-                self._drop_model_instances(model, pks)
-            case (model, pk):
-                self._drop_model_instances(model, (pk,))
-            case unreachable:
-                assert_never(unreachable)
+        match pk:
+            case None:
+                self._model_instances.pop(model_class, None)
+            case list() | set() | frozenset() as pks:
+                self._drop_model_instances(model_class, pks)
+            case tuple() as pks if not isinstance(model_class._meta.pk, models.CompositePrimaryKey):
+                self._drop_model_instances(model_class, pks)
+            case single_pk:
+                self._drop_model_instances(model_class, (single_pk,))
 
     def _drop_model_instances(self, model: type[models.Model], pks: Iterable[object]) -> None:
         instances = self._model_instances.get(model, {})

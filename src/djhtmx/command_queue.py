@@ -149,7 +149,7 @@ class CommandQueue:
         match command:
             case Execute() | HandleSSEEvents():
                 return CommandPriority(bucket=0, key="", timestamp=0)
-            case InvalidateModelCache(_, timestamp):
+            case InvalidateModelCache(_, _, timestamp):
                 # Before anything that hydrates components: Emit, Signal, BuildAndRender.
                 return CommandPriority(bucket=5, key="", timestamp=timestamp)
             case Destroy(component_id):

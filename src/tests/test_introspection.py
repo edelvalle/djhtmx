@@ -740,7 +740,7 @@ class TestInvalidateModelCache(TestCase):
             before = DroppedModel(id="before", hx_name="DroppedModel", user=None, item=self.item.pk)
             held = before.item
             # The pk as the wire carries it must drop the entry the UUID keys.
-            self.invalidate((Item, str(self.item.pk)))
+            self.invalidate(Item, str(self.item.pk))
             with self.assertNumQueries(1):
                 after = DroppedModel(
                     id="after", hx_name="DroppedModel", user=None, item=self.item.pk
@@ -762,10 +762,10 @@ class TestInvalidateModelCache(TestCase):
                     id=f"item-{item.pk}", hx_name="ModelDroppedModel", user=None, item=item.pk
                 )
 
-        for target in [(Item, None), (Item, [self.item.pk, str(other.pk)])]:
-            with self.subTest(target=target), Repository.activate(self.repository):
+        for pk in [None, [self.item.pk, str(other.pk)]]:
+            with self.subTest(pk=pk), Repository.activate(self.repository):
                 hydrate_both()
-                self.invalidate(target)
+                self.invalidate(Item, pk)
                 with self.assertNumQueries(2):
                     hydrate_both()
 
@@ -779,14 +779,14 @@ class TestInvalidateModelCache(TestCase):
                 id="lazy", hx_name="LazyDroppedModel", user=None, item=self.item.pk
             )
             self.assertEqual(lazy.item.text, "Cached")
-            self.invalidate((Item, self.item.pk))
+            self.invalidate(Item, self.item.pk)
             with self.assertNumQueries(0):
                 self.assertEqual(lazy.item.text, "Cached")
 
-    def invalidate(self, target: tuple[type[Item], object]) -> None:
+    def invalidate(self, model_class: type[Item], pk: object = None) -> None:
         list(
             CommandProcessor(self.repository)._run_command(
-                CommandQueue([InvalidateModelCache(target)])
+                CommandQueue([InvalidateModelCache(model_class, pk)])
             )
         )
 
