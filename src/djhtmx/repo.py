@@ -4,7 +4,7 @@ import logging
 import random
 from collections import defaultdict
 from collections.abc import AsyncIterable, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as Field
@@ -413,7 +413,9 @@ class Repository:
     def _drop_model_instances(self, model: type[models.Model], pks: Iterable[object]) -> None:
         instances = self._model_instances.get(model, {})
         for pk in pks:
-            instances.pop(normalize_pk(model, pk), None)
+            # A pk that cannot be coerced keys no cached row, so there is nothing to drop.
+            with suppress(ValueError):
+                instances.pop(normalize_pk(model, pk), None)
 
     @staticmethod
     def _fetch_model_instance[M: models.Model](
