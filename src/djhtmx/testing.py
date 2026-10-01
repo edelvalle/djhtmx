@@ -1,5 +1,5 @@
 from collections import UserList, defaultdict
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from functools import reduce
 from typing import Any, get_args, overload
@@ -45,9 +45,37 @@ class Htmx:
     def url(self) -> str:
         return f"{self.path}?{self.query_string}".rstrip("?")
 
-    def navigate_to(self, url: str, *args, **kwargs):
-        kwargs.setdefault("follow", True)
-        response = self.client.get(url, *args, **kwargs)
+    def navigate_to(
+        self,
+        path: str,
+        data: Mapping[str, object] | None = None,
+        follow: bool = True,
+        secure: bool = False,
+        *,
+        headers: Mapping[str, str] | None = None,
+        query_params: Mapping[str, object] | None = None,
+        **extra: str,
+    ):
+        """Load the page at `path`, as a browser would, and make it the page under test.
+
+        The arguments are those of Django's `Client.get`:meth:, except that `follow` defaults to
+        True, so a redirect lands on the page it points to.  The page must answer with a 2xx
+        status and carry a djhtmx session, or this fails with an `AssertionError`.
+
+        Afterwards `dom` holds the rendered HTML, `path` and `query_string` the page's URL, and the
+        components it placed can be looked up.  Whatever a previous page held is gone.
+
+        """
+        response = self.client.get(
+            path,
+            data,
+            follow,
+            secure,
+            headers=headers,
+            # The stubs predate `query_params`, added in Django 5.1.
+            query_params=query_params,  # type: ignore[arg-type]
+            **extra,
+        )
         assert 200 <= response.status_code < 300
         self.path = response.request["PATH_INFO"]
         self.query_string = response.request["QUERY_STRING"]
@@ -64,11 +92,7 @@ class Htmx:
         session_id = signer.unsign(session_id)
 
         self.user = response.context.get("user") or AnonymousUser()
-        self.repo = Repository(
-            user=self.user,
-            session=Session(session_id),
-            params=get_params(self.query_string),
-        )
+        self.repo = self._build_repository(session_id)
 
     def get_component_by_type[C: HtmxComponent](self, component_type: type[C]) -> C:
         [component] = self.repo.get_components_by_names(component_type.__name__)
@@ -188,6 +212,9 @@ class Htmx:
         `drain_sse_events`:meth:.
 
         """
+        # One repository per send, as each request in production gets its own: the render-cycle
+        # caches must not outlive the send.
+        self.repo = self._build_repository(self.repo.session.id)
         with Repository.activate(self.repo):
             commands = list(self.repo.dispatch_event(component_id, event_handler, kwargs))
         navigate_to_url = None
@@ -329,6 +356,9 @@ class Htmx:
         """
         if sse_html := async_to_sync(self._render_sse_events)():
             self._apply_oob_html(sse_html)
+
+    def _build_repository(self, session_id: str) -> Repository:
+        return Repository(user=self.user, session=Session(session_id), params=get_params(self.url))
 
     async def _render_sse_events(self):
         from .sse import render_sse_events

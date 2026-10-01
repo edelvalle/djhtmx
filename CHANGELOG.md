@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`Htmx` reads the page's query parameters**: a page opened with a query string started its components with no params.
 - **A property that returns an iterator survives a second read**: the render-local property cache consumes generators, `map`, `filter`, `zip` and `QuerySet.iterator()` into a list before storing them, so every read in the template sees the same items.  A `QuerySet` is stored as it is, keeping its own cache and its methods.
 
 ## [1.4.0] - 2026-09-23
