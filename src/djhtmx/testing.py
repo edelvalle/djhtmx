@@ -235,7 +235,9 @@ class Htmx:
 
                 case PushURL(url) | ReplaceURL(url):
                     parsed_url = urlparse(url)
-                    self.path = parsed_url.path
+                    # As the browser does, a bare `?query` keeps the current path.  Not `urljoin`:
+                    # it resolves an empty `?` to the current query instead of clearing it.
+                    self.path = parsed_url.path or self.path
                     self.query_string = parsed_url.query
 
                 case Focus() | ScrollIntoView() | DispatchDOMEvent():
