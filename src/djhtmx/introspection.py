@@ -273,6 +273,9 @@ def normalize_pk(model: type[models.Model], value: object) -> object:
                 assert_never(unreachable)
     except DjangoValidationError as error:
         raise ValueError("; ".join(error.messages)) from error
+    except TypeError as error:
+        # A composite pk given a scalar, which cannot be split into its parts.
+        raise ValueError(str(error)) from error
 
 
 @dataclass(slots=True)
