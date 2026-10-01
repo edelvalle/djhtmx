@@ -5,7 +5,6 @@ from asgiref.sync import iscoroutinefunction, sync_to_async
 from django.http import HttpRequest, HttpResponse
 
 from .exceptions import LoginRequired
-from .repo import Repository
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +21,11 @@ def middleware(
     It also answers a `LoginRequired` raised while rendering a page with a redirect to the login
     page; see `process_exception`.
     """
+
+    # Imported here, not at the top: `djhtmx/__init__.py` imports this module, and `.repo` reads
+    # Django settings when imported, so a top-level import makes `import djhtmx` fail before
+    # settings are configured.
+    from .repo import Repository
 
     # The request, not a repository: building one here would miss the user of a middleware placed
     # before authentication.
