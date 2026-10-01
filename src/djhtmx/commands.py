@@ -449,20 +449,21 @@ class InvalidateModelCache:
     nothing: it already holds what was written.  djhtmx never invalidates on its own: without it the
     components get the deleted instance, or the one from before the write.
 
-    - an instance drops its row, wherever it is cached under its model or one of its proxies;
     - `(Model, None)` drops every row cached under `Model`;
     - `(Model, pk)` drops that row, and `(Model, [pk, ...])` those rows.
 
-    The model of the tuple forms is the one the annotation names: a field annotated with a
-    multi-table child, `Restaurant(Place)`, is dropped with `(Restaurant, pk)`, not with
-    `(Place, pk)`.  A pk may arrive as the wire's string, and a composite pk is a tuple.
+    Read the pk before deleting the row: `delete()` sets the instance's pk to None.  `Model` is
+    the one the annotation names: a field annotated with a proxy, or with a multi-table child such
+    as `Restaurant(Place)`, is dropped through that model, not through its concrete or parent one.
+    A pk may arrive as the wire's string, and a composite pk is a tuple.
 
-    It takes effect as soon as the handler yields it, never reaches the browser, and does not reach
-    the components already built: they keep the instance they hold.  It only matters to the
-    annotations that opt into the cache with `ModelConfig(cache=True)`.
+    It takes effect once the handler returns, before any other component is hydrated; it never
+    reaches the browser, and does not reach the components already built: they keep the instance
+    they hold.  It only matters to the annotations that opt into the cache with
+    `ModelConfig(cache=True)`.
     """
 
-    target: models.Model | tuple[type[models.Model], object]
+    target: tuple[type[models.Model], object]
     timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
 
 

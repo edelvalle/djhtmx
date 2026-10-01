@@ -731,23 +731,6 @@ class TestInvalidateModelCache(TestCase):
             params=get_params(None),
         )
 
-    def test_an_instance_drops_its_row(self):
-        class InstanceDroppedModel(HtmxComponent):
-            _template_name = "InstanceDroppedModel.html"
-            item: Annotated[Item, ModelConfig(cache=True)]
-
-        with Repository.activate(self.repository):
-            before = InstanceDroppedModel(
-                id="before", hx_name="InstanceDroppedModel", user=None, item=self.item.pk
-            )
-            self.invalidate(Item.objects.get(pk=self.item.pk))
-            with self.assertNumQueries(1):
-                after = InstanceDroppedModel(
-                    id="after", hx_name="InstanceDroppedModel", user=None, item=self.item.pk
-                )
-
-        self.assertIsNot(after.item, before.item)
-
     def test_dropping_a_row_leaves_the_components_already_built_untouched(self):
         class DroppedModel(HtmxComponent):
             _template_name = "DroppedModel.html"
@@ -800,7 +783,7 @@ class TestInvalidateModelCache(TestCase):
             with self.assertNumQueries(0):
                 self.assertEqual(lazy.item.text, "Cached")
 
-    def invalidate(self, target: Item | tuple[type[Item], object]) -> None:
+    def invalidate(self, target: tuple[type[Item], object]) -> None:
         list(
             CommandProcessor(self.repository)._run_command(
                 CommandQueue([InvalidateModelCache(target)])

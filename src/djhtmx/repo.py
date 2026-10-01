@@ -390,20 +390,13 @@ class Repository:
             instance = cls._fetch_model_instance(model, pk, model_config)
         return instance
 
-    def invalidate_model_cache(self, target: models.Model | tuple[type[models.Model], object]):
+    def invalidate_model_cache(self, target: tuple[type[models.Model], object]):
         """Drop rows from this repository's model cache.
 
         `target` takes the forms `InvalidateModelCache`:class: documents.
 
         """
         match target:
-            case models.Model() as instance:
-                # Only an abstract model has no concrete model, and it has no instances.
-                concrete_model = cast(type[models.Model], instance._meta.concrete_model)
-                pk = normalize_pk(concrete_model, instance.pk)
-                for model, instances in self._model_instances.items():
-                    if model._meta.concrete_model is concrete_model:
-                        instances.pop(pk, None)
             case (model, None):
                 self._model_instances.pop(model, None)
             case (model, list() | set() | frozenset() as pks):
