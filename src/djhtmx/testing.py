@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from warnings import deprecated
 
 from asgiref.sync import async_to_sync
+from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.models import AnonymousUser
 from django.test import Client
 from lxml import html
@@ -39,7 +40,7 @@ __all__ = ("CapturedCommands", "CapturedEvents", "Htmx")
 
 class Htmx:
     def __init__(self, client: Client):
-        self.client = client
+        self._client = client
 
     @property
     def url(self) -> str:
@@ -66,7 +67,7 @@ class Htmx:
         components it placed can be looked up.  Whatever a previous page held is gone.
 
         """
-        response = self.client.get(
+        response = self._client.get(
             path,
             data,
             follow,
@@ -91,19 +92,19 @@ class Htmx:
         assert session_id, "Can't find djhtmx session id"
         session_id = signer.unsign(session_id)
 
-        self.user = response.context.get("user") or AnonymousUser()
-        self.repo = self._build_repository(session_id)
+        self._user = response.context.get("user") or AnonymousUser()
+        self._repo = self._build_repository(session_id)
 
     def get_component_by_type[C: HtmxComponent](self, component_type: type[C]) -> C:
-        [component] = self.repo.get_components_by_names(component_type.__name__)
+        [component] = self._repo.get_components_by_names(component_type.__name__)
         assert isinstance(component, component_type)
         return component
 
     def get_components_by_type[C: HtmxComponent](self, component_type: type[C]) -> Iterable[C]:
-        return self.repo.get_components_by_names(component_type.__name__)  # type: ignore
+        return self._repo.get_components_by_names(component_type.__name__)  # type: ignore
 
     def get_component_by_id(self, component_id: str):
-        component = self.repo.get_component_by_id(component_id)
+        component = self._repo.get_component_by_id(component_id)
         assert isinstance(component, HtmxComponent)
         return component
 
@@ -214,9 +215,9 @@ class Htmx:
         """
         # One repository per send, as each request in production gets its own: the render-cycle
         # caches must not outlive the send.
-        self.repo = self._build_repository(self.repo.session.id)
-        with Repository.activate(self.repo):
-            commands = list(self.repo.dispatch_event(component_id, event_handler, kwargs))
+        self._repo = self._build_repository(self._repo.session.id)
+        with Repository.activate(self._repo):
+            commands = list(self._repo.dispatch_event(component_id, event_handler, kwargs))
         navigate_to_url = None
         for command in commands:
             match command:
@@ -358,12 +359,12 @@ class Htmx:
             self._apply_oob_html(sse_html)
 
     def _build_repository(self, session_id: str) -> Repository:
-        return Repository(user=self.user, session=Session(session_id), params=get_params(self.url))
+        return Repository(user=self._user, session=Session(session_id), params=get_params(self.url))
 
     async def _render_sse_events(self):
         from .sse import render_sse_events
 
-        return await render_sse_events(self.repo.session.id, self.user)
+        return await render_sse_events(self._repo.session.id, self._user)
 
     def _apply_oob_html(self, content: str):
         fragments = [
@@ -401,6 +402,27 @@ class Htmx:
                     parent.remove(target)
             else:
                 assert False, "Unknown swap strategy, please define it here"
+
+    @property
+    @deprecated("Htmx.client is deprecated, use the client passed to Htmx instead")
+    def client(self) -> Client:
+        """Deprecated: the client this helper was built with."""
+        return self._client
+
+    @property
+    @deprecated("Htmx.user is deprecated, use the user the test logged in instead")
+    def user(self) -> AbstractBaseUser | AnonymousUser:
+        """Deprecated: the user the page rendered with."""
+        return self._user
+
+    @property
+    @deprecated(
+        "Htmx.repo is deprecated, use get_component_by_type, get_components_by_type or "
+        "get_component_by_id instead"
+    )
+    def repo(self) -> Repository:
+        """Deprecated: the repository of the last navigation or send."""
+        return self._repo
 
     # Keep this last.  A method named `type` shadows the builtin for every annotation that
     # follows it in the class body, and those annotations are evaluated when their method is

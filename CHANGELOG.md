@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A component's `sse_subscriptions` is read once per render**: it used to be read twice for every component rendered, so a property that answered differently on each read could leave the component registered for one set of topics and listening for another.
 
+### Deprecated
+
+- **`Htmx.client`, `Htmx.user` and `Htmx.repo`**: they will become private.
+
 ### Fixed
 
 - **`Htmx` reads the page's query parameters**: a page opened with a query string started its components with no params.
