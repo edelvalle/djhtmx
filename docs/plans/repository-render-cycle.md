@@ -188,4 +188,4 @@ Repository-local caches are discarded when the repository lifecycle ends.  No ex
 7. Add tests proving duplicate model primary-key hydration reuses the cached instance and avoids duplicate database fetches within one repository lifecycle, and that an annotation left at the default keeps fetching per hydration.
 8. Add `InvalidateModelCache` to the `Command` union and to `CommandProcessor._run_command`, covering the instance, the whole model, and the one-or-many pk forms.
 9. Add tests for dropping entries mid-cycle leaving already-hydrated components untouched, for dropping a whole model and a list of pks, and for a resolved lazy proxy keeping its instance.
-10. Count model cache hits and misses as metrics through `tracing.metric_incr`, which publishes to Sentry and to Logfire: a hit, a miss, an enrichment that loaded missing relations, and a conflict that fell back to a fetch of its own.
+10. Count model cache hits and misses as metrics through `tracing.metric_incr`, which publishes to Sentry and to Logfire: a hit, a miss, and an enrichment that loaded missing relations.
