@@ -312,7 +312,7 @@ requires-dist = [
     { name = "pydantic", marker = "python_full_version < '3.14'", specifier = ">=2.10,<3" },
     { name = "pydantic", marker = "python_full_version >= '3.14'", specifier = ">=2.13,<3" },
     { name = "redis", extras = ["hiredis"], specifier = ">=7.4.0" },
-    { name = "sentry-sdk", marker = "extra == 'sentry'", specifier = ">=2.62.0,<2.63" },
+    { name = "sentry-sdk", marker = "extra == 'sentry'", specifier = ">=2.62.0,<3.0" },
     { name = "uuid6", specifier = ">=2024.7.10" },
     { name = "xotl-tools", specifier = ">=3.1.1" },
 ]
