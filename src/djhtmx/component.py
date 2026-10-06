@@ -387,8 +387,18 @@ class HtmxComponent(BaseModel):
                     # kind of iterator in a property since the templates gets a single one and not
                     # different iterators every time.
                     return infinite
-                case Iterator():
-                    return [materialize(v) for v in value]
+                case tuple() as named if hasattr(named, "_make") and hasattr(named, "_fields"):
+                    # DO NOT go defensive.  Imagine someone that subclasses `tuple` and adds a
+                    # `_make` that is not what we expect; it will likely fail and it's on them.
+                    return named._make(materialize(v) for v in named)
+                case tuple() as items:
+                    # This branch covers the special case of tuples because of `itertools.groupby`;
+                    # it returns an Iterator (caught below) that yields tuples of `(key, iterator)`;
+                    # the tuple itself is not an Iterator.  This branch ensures we materialize the
+                    # inner iterator.
+                    return tuple(materialize(v) for v in items)
+                case Iterator() as iterator:
+                    return [materialize(v) for v in iterator]
                 case other:
                     return other
 
