@@ -1,8 +1,9 @@
 from collections import UserList, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from copy import deepcopy
 from functools import reduce
-from typing import Any, get_args, overload
+from typing import Any, Literal, assert_never, get_args, overload
 from urllib.parse import urlparse
 from warnings import deprecated
 
@@ -369,41 +370,129 @@ class Htmx:
         return await render_sse_events(self._repo.session.id, self._user)
 
     def _apply_oob_html(self, content: str):
+        """Apply the out-of-band swaps in `content` to `dom`, as htmx 2.0.4 does in the browser.
+
+        Every element carrying `hx-swap-oob` (or `data-hx-swap-oob`) is swapped, at any depth of
+        `content`.  Those inside a `<template>` are swapped after all the others, unless the
+        template is itself inside a swapped element; then they are left as they are.  The rest of
+        `content` is discarded, as `hx-swap="none"` does.
+
+        The value is `true` (replace the element with the same id), a strategy alone (applied to
+        the element with the same id), or `<strategy>:<selector>`, applied to every element the
+        selector designates (see `_select_oob_targets`:meth:).  An unknown strategy falls back to
+        `innerHTML`, and a swap without target changes nothing.
+
+        """
         fragments = [
             fragment
             for fragment in html.fragments_fromstring(content)
             if isinstance(fragment, html.HtmlElement)
         ]
-        for incoming in fragments:
-            oob: str = incoming.attrib["hx-swap-oob"]
-            if oob == "true":
-                target = self.dom.get_element_by_id(incoming.attrib["id"])
-                parent = target.getparent()
-                if parent is not None:
+        # Both passes are collected before swapping: the first one strips the attributes the
+        # second one looks for.
+        oob_elements = [
+            element for fragment in fragments for element in fragment.xpath(_OOB_OUTSIDE_TEMPLATES)
+        ]
+        oob_elements_in_templates = [
+            element
+            for fragment in fragments
+            for template in fragment.xpath(_TEMPLATES_LEFT_IN_THE_RESPONSE)
+            for element in template.xpath(_OOB_IN_THIS_TEMPLATE)
+        ]
+        for element in oob_elements + oob_elements_in_templates:
+            self._swap_oob_element(element)
+
+    def _swap_oob_element(self, element: html.HtmlElement):
+        oob = element.attrib.pop("hx-swap-oob", "") or element.attrib.pop("data-hx-swap-oob")
+        element.attrib.pop("data-hx-swap-oob", None)
+        strategy, selector = _parse_oob_value(oob)
+        if selector is not None:
+            targets = self._select_oob_targets(selector)
+        elif (target_id := element.get("id")) is not None:
+            targets = self.dom.xpath("//*[@id=$id]", id=target_id)
+        else:
+            targets = []
+        for target in targets:
+            # Each target gets its own copy, as in htmx, so that a selector matching several
+            # elements fills all of them.
+            incoming = deepcopy(element)
+            incoming.tail = None
+            parent = target.getparent()
+            assert parent is not None, "The root of the page can't be swapped out of band"
+            match strategy:
+                case "outerHTML" if target.tag == "body":
+                    # As in htmx, which can't put a <body> in a document fragment.
+                    _replace_content(target, [incoming])
+                case "outerHTML":
+                    incoming.tail = target.tail
                     parent.replace(target, incoming)
-            elif oob.startswith("beforeend: "):
-                target_selector = oob.removeprefix("beforeend: ")
-                [target] = self.dom.cssselect(target_selector)
-                target.append(incoming.getchildren()[0])
-            elif oob.startswith("afterbegin: "):
-                target_selector = oob.removeprefix("afterbegin: ")
-                [target] = self.dom.cssselect(target_selector)
-                target.insert(0, incoming.getchildren()[0])
-            elif oob.startswith("afterend: "):
-                target_selector = oob.removeprefix("afterend: ")
-                [target] = self.dom.cssselect(target_selector)
-                target.addnext(incoming.getchildren()[0])
-            elif oob.startswith("beforebegin: "):
-                target_selector = oob.removeprefix("afterend: ")
-                [target] = self.dom.cssselect(target_selector)
-                target.addprevious(incoming.getchildren()[0])
-            elif oob == "delete":
-                target = self.dom.get_element_by_id(incoming.attrib["id"])
-                parent = target.getparent()
-                if parent is not None:
-                    parent.remove(target)
-            else:
-                assert False, "Unknown swap strategy, please define it here"
+                case "afterbegin":
+                    _insert_content(target, 0, incoming, before_text=True)
+                case "beforeend":
+                    _insert_content(target, len(target), incoming, before_text=False)
+                case "beforebegin":
+                    _insert_content(parent, parent.index(target), incoming, before_text=False)
+                case "afterend":
+                    _insert_content(parent, parent.index(target) + 1, incoming, before_text=True)
+                case "delete":
+                    _remove_element(parent, target)
+                case "none":
+                    pass
+                case "innerHTML":
+                    _replace_content(target, [])
+                    _insert_content(target, 0, incoming, before_text=False)
+                case unreachable:
+                    assert_never(unreachable)
+
+    def _select_oob_targets(self, selector: str) -> list[html.HtmlElement]:
+        """Answer with the elements `selector` designates, as htmx 2.0.4 resolves it for an OOB swap.
+
+        htmx resolves it from the document, as a comma-separated list (commas inside `<X/>` don't
+        count) of CSS selectors and its extended selectors:
+
+        - `find X` designates the first `X` only, `body` the body, and `<X/>` is `X`.
+        - `closest X`, `next X`, `previous X` and `host` are relative to an element, and designate
+          nothing from the document.
+        - `next`, `previous`, `document`, `window` and `root` raise `AssertionError`.
+        - A leading `global ` is dropped; it only matters inside a shadow DOM.  As in htmx, it
+          must come right after the colon of `hx-swap-oob`, without a space.
+
+        The elements of the extended selectors come first, then those of the CSS selectors in
+        document order.
+
+        """
+        parts = [
+            _normalize_selector(part)
+            for part in _split_selector_list(selector.removeprefix("global "))
+        ]
+        resolved = [self._resolve_selector_part(part) for part in parts]
+        css_selector = ",".join(part for _, part in resolved if part is not None)
+        css_targets = self.dom.cssselect(css_selector) if css_selector else []
+        return [target for targets, _ in resolved for target in targets] + css_targets
+
+    def _resolve_selector_part(self, part: str) -> tuple[list[html.HtmlElement], str | None]:
+        """Answer with the elements an extended selector designates, or the CSS selector `part` is."""
+        match part.partition(" "):
+            case ("find", " ", argument):
+                return self.dom.cssselect(_normalize_selector(argument))[:1], None
+            case ("closest" | "next" | "previous", " ", str()) | ("host", "", ""):
+                return [], None
+            case ("body", "", ""):
+                return [self.dom.body], None
+            case (
+                "next"
+                | "nextElementSibling"
+                | "previous"
+                | "previousElementSibling"
+                | "document"
+                | "window"
+                | "root",
+                "",
+                "",
+            ):
+                raise AssertionError(f"htmx fails to swap out of band into {part!r}")
+            case (str(), str(), str()):
+                return [], part
 
     @property
     @deprecated("Htmx.client is deprecated, use the client passed to Htmx instead")
@@ -540,3 +629,106 @@ class CapturedCommands[C: Command](UserList[C]):
 
 # The members of the `Command` union, which is what a capture naming no class watches.
 _ALL_COMMAND_CLASSES: tuple[type[Command], ...] = get_args(Command)
+
+
+def _insert_content(
+    parent: html.HtmlElement, index: int, source: html.HtmlElement, *, before_text: bool
+):
+    """Move the content of `source`, its text and children, to position `index` of `parent`.
+
+    The text that precedes the child at `index` (the tail of the previous child, or the text of
+    `parent`) stays before the moved content, unless `before_text` is true: then it follows it.
+
+    """
+    children = list(source)
+    preceding = parent[index - 1] if index else None
+    slot_text = (parent.text if preceding is None else preceding.tail) or ""
+    if before_text:
+        leading_text, trailing_text = source.text or "", slot_text
+    else:
+        leading_text, trailing_text = slot_text + (source.text or ""), ""
+    for offset, child in enumerate(children):
+        parent.insert(index + offset, child)
+    if children:
+        children[-1].tail = (children[-1].tail or "") + trailing_text
+    else:
+        leading_text += trailing_text
+    if preceding is None:
+        parent.text = leading_text or None
+    else:
+        preceding.tail = leading_text or None
+
+
+def _replace_content(element: html.HtmlElement, children: list[html.HtmlElement]):
+    """Make `children` the whole content of `element`, text included."""
+    element.text = None
+    element[:] = children
+
+
+def _remove_element(parent: html.HtmlElement, element: html.HtmlElement):
+    """Remove `element` from `parent`, keeping the text that follows it."""
+    preceding = element.getprevious()
+    if element.tail:
+        if preceding is None:
+            parent.text = (parent.text or "") + element.tail
+        else:
+            preceding.tail = (preceding.tail or "") + element.tail
+    parent.remove(element)
+
+
+# htmx ignores an empty `hx-swap-oob`, and doesn't look inside a <template> until the second pass.
+_OOB = "@hx-swap-oob != '' or @data-hx-swap-oob != ''"
+_OOB_OUTSIDE_TEMPLATES = f"descendant-or-self::*[{_OOB}][not(ancestor::template)]"
+_TEMPLATES_LEFT_IN_THE_RESPONSE = (
+    f"descendant-or-self::template[not(ancestor::template)][not(ancestor-or-self::*[{_OOB}])]"
+)
+_OOB_IN_THIS_TEMPLATE = f"descendant::*[{_OOB}][count(ancestor::template) = 1]"
+
+
+def _split_selector_list(selector: str) -> list[str]:
+    """Split `selector` at its commas outside `<…/>`, dropping an empty last part, as htmx does."""
+    depth = 0
+    commas = []
+    for index, char in enumerate(selector):
+        if char == "," and depth == 0:
+            commas.append(index)
+        elif char == "<":
+            depth += 1
+        elif char == "/" and selector[index + 1 : index + 2] == ">":
+            depth -= 1
+    parts = [
+        selector[start + 1 : end]
+        for start, end in zip([-1, *commas], [*commas, len(selector)], strict=False)
+    ]
+    return parts if parts[-1] else parts[:-1]
+
+
+def _normalize_selector(selector: str) -> str:
+    """Strip `selector`, and unwrap it from `<…/>`, as htmx does."""
+    stripped = selector.strip()
+    if stripped.startswith("<") and stripped.endswith("/>"):
+        return stripped[1:-2]
+    else:
+        return stripped
+
+
+def _parse_oob_value(oob: str) -> "tuple[_SwapStrategy, str | None]":
+    """Split the value of `hx-swap-oob` into a swap strategy and a selector, as htmx does.
+
+    The selector is None when the target is the element with the id of the swapped one.  A
+    strategy htmx doesn't know is `innerHTML`, its default.
+
+    """
+    if oob == "true":
+        return "outerHTML", None
+    else:
+        strategy, selector = oob.split(":", 1) if oob.find(":") > 0 else (oob, None)
+        return _SWAP_STRATEGIES.get(strategy, "innerHTML"), selector
+
+
+type _SwapStrategy = Literal[
+    "outerHTML", "innerHTML", "afterbegin", "beforeend", "beforebegin", "afterend", "delete", "none"
+]
+_SWAP_STRATEGIES: Mapping[str, _SwapStrategy] = {
+    strategy: strategy for strategy in get_args(_SwapStrategy.__value__)
+}
