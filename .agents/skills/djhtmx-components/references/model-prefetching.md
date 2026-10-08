@@ -37,7 +37,7 @@ A shared instance is one object: a component that changes it changes it for ever
 
 A handler that deletes a shared row, or writes to it without going through the shared instance -- `Item.objects.filter(...).update(...)`, another instance of the row -- yields `InvalidateModelCache(Item, item_id)`, so the components built after it read the row again; `InvalidateModelCache(Item)` drops every cached `Item`.  Read the pk before deleting: `delete()` sets it to None.  Changing the field's instance and calling `save()` needs nothing: the shared instance already holds the change.  Changing its relations from the other side does need it -- creating an `Attachment` for the item, adding the user to a group -- because the shared instance keeps the related rows it already loaded.  djhtmx does not invalidate on its own, and without it the components get the deleted instance, or the one from before the write.  The components already built keep the instance they hold.  The model class is the one the field is annotated with, so a field annotated with a proxy or a multi-table child is dropped through that model.
 
-`DJHTMX_DEFAULT_MODEL_CACHE = True` turns the cache on for every model field that leaves `cache` unset, and `cache=False` opts one field out.  A row passed as an instance when placing the component never goes through the cache: it is already in hand.
+`DJHTMX_DEFAULT_MODEL_CACHE = True` turns the cache on for every model field that leaves `cache` unset, and `cache=False` opts one field out.  `DJHTMX_DISABLE_MODEL_CACHE = True` turns it off for every field, `cache=True` included.  A row passed as an instance when placing the component never goes through the cache: it is already in hand.
 
 ## ModelConfig reaches the state, and nothing else
 

@@ -14,6 +14,8 @@ Every setting is read once, at import time, from `django.conf.settings`.  Changi
 
 **`DJHTMX_DEFAULT_MODEL_CACHE`** (`False`) -- the default for `ModelConfig(cache=...)` on every model annotation that leaves it unset.  On, the components of one request or SSE wakeup that hold the same row share one instance, fetched once, and see each other's changes to it; an annotation opts out with `cache=False`.
 
+**`DJHTMX_DISABLE_MODEL_CACHE`** (`False`) -- on, no annotation uses the model cache, not even one with `ModelConfig(cache=True)`: every component fetches its own rows.
+
 **`DJHTMX_DEFAULT_LAZY_TEMPLATE`** (`"htmx/lazy.html"`) -- the placeholder for a component placed with `lazy=True` that does not name its own `_template_name_lazy`.  djhtmx's own is the word "Loading...".  Point it at a skeleton of your own to set the project's default; whatever you write must carry `{% hx-tag %}` or nothing ever loads.
 
 ## Strictness

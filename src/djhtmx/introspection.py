@@ -87,7 +87,8 @@ class ModelConfig:
     this says: one instance holds a single result per relation, so the queryset of a `Prefetch`
     would reach every other annotation sharing the row.
 
-    None defers to the `DJHTMX_DEFAULT_MODEL_CACHE` setting, which is False unless set.
+    None defers to the `DJHTMX_DEFAULT_MODEL_CACHE` setting, which is False unless set.  The
+    `DJHTMX_DISABLE_MODEL_CACHE` setting, when True, turns the cache off whatever this says.
 
     """
 

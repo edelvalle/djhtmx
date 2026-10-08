@@ -38,6 +38,7 @@ from .exceptions import LoginRequired
 from .introspection import ModelConfig, normalize_pk
 from .settings import (
     DEFAULT_MODEL_CACHE,
+    DISABLE_MODEL_CACHE,
     KEY_SIZE_ERROR_THRESHOLD,
     KEY_SIZE_SAMPLE_PROB,
     KEY_SIZE_WARN_THRESHOLD,
@@ -358,7 +359,7 @@ class Repository:
         `DJHTMX_DEFAULT_MODEL_CACHE` when that is None -- and a repository is `current`:meth:, the
         row is fetched once per repository cycle: every call for it returns the same instance.  A
         missing row is not remembered, so a row created later in the cycle is found.  Otherwise
-        every call fetches.
+        every call fetches, as it always does when `DJHTMX_DISABLE_MODEL_CACHE` is True.
 
         A cached instance is enriched with the relations a later call asks for and it lacks, so every
         caller gets its `select_related` and `prefetch_related`.  A `model_config` whose
@@ -372,9 +373,11 @@ class Repository:
         """
         pk = normalize_pk(model, pk)
         cache_enabled = (
-            DEFAULT_MODEL_CACHE if model_config.cache is None else model_config.cache
-        ) and not any(
-            isinstance(relation, Prefetch) for relation in model_config.prefetch_related or ()
+            not DISABLE_MODEL_CACHE
+            and (DEFAULT_MODEL_CACHE if model_config.cache is None else model_config.cache)
+            and not any(
+                isinstance(relation, Prefetch) for relation in model_config.prefetch_related or ()
+            )
         )
         if cache_enabled and (repository := cls.current()) is not None:
             instances = repository._model_instances.setdefault(model, {})
