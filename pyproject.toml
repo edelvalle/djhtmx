@@ -140,7 +140,6 @@ line-length = 100
 target-version = "py313"
 fix = true
 
-
 [tool.ruff.lint]
 preview = true
 ignore = [
@@ -183,6 +182,9 @@ select = [
   "W293",   # Blank line contains whitespace
   "TID251", # enable: tool.ruff.lint.flake8-tidy-imports.banned-api
   "DTZ003", # Disable utcnow: https://docs.astral.sh/ruff/rules/call-datetime-utcnow/#call-datetime-utcnow-dtz003
+]
+allowed-confusables = [
+  "\u00A0",  # NO-BREAK SPACE
 ]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]

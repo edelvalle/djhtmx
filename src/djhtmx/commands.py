@@ -439,6 +439,39 @@ class HandleSSEEvents:
     envelopes: tuple[SSEEventEnvelope[Any], ...]
 
 
+@dataclass(slots=True)
+class InvalidateModelCache:
+    """Drop rows from the model cache of the current request.
+
+    Yield from a handler that deleted a row other components may hold, or that wrote to it without
+    going through the shared instance -- `QuerySet.update()`, another instance of the row -- so that
+    the components hydrated after it read the row again.  Saving the shared instance itself needs
+    nothing: it already holds what was written.  The same goes for a change to the row's relations
+    made from the other side -- `Attachment.objects.create(item=item)`, `group.user_set.add(user)`:
+    the shared instance keeps the related rows it already loaded.  djhtmx never invalidates on its
+    own: without it the components get the deleted instance, the one from before the write, or the
+    related rows from before the change.
+
+    - `InvalidateModelCache(Item)` drops every row cached under `Item`;
+    - `InvalidateModelCache(Item, pk)` drops that row, and `InvalidateModelCache(Item, [pk, ...])`
+      those rows.
+
+    Read the pk before deleting the row: `delete()` sets the instance's pk to None.  `model_class`
+    is the one the annotation names: a field annotated with a proxy, or with a multi-table child
+    such as `Restaurant(Place)`, is dropped through that model, not through its concrete or parent
+    one.  A pk may arrive as the wire's string, and a composite pk is a tuple.
+
+    It takes effect once the handler returns, before any other component is hydrated; it never
+    reaches the browser, and does not reach the components already built: they keep the instance
+    they hold.  It only matters to the annotations that opt into the cache with
+    `ModelConfig(cache=True)`.
+    """
+
+    model_class: type[models.Model]
+    pk: object = None
+    timestamp: int = dataclass_field(default_factory=time.monotonic_ns)
+
+
 # ---------------------------------------------------------------------------
 # Unions.
 #
@@ -461,6 +494,7 @@ Command = (
     | PushURL
     | ReplaceURL
     | Execute
+    | InvalidateModelCache
 )
 
 InternalCommand = Signal | HandleSSEEvents
@@ -487,6 +521,7 @@ __all__ = (
     "Execute",
     "Focus",
     "HandleSSEEvents",
+    "InvalidateModelCache",
     "Open",
     "ProcessedCommand",
     "PushURL",

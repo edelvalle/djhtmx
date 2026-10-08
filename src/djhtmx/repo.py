@@ -3,19 +3,25 @@ from __future__ import annotations
 import logging
 import random
 from collections import defaultdict
-from collections.abc import AsyncIterable, Iterable
+from collections.abc import AsyncIterable, Iterable, Iterator
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from dataclasses import field as Field
-from typing import Any
+from itertools import accumulate
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 from django.core.signing import Signer
+from django.db import models
+from django.db.models import Prefetch, prefetch_related_objects
+from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpRequest, QueryDict
 from django.utils.html import format_html
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import ValidationError
 from uuid6 import uuid7
 
-from djhtmx.tracing import tracing_span
+from djhtmx.tracing import metric_incr, tracing_span
 
 from . import json
 from .commands import (
@@ -29,14 +35,20 @@ from .component import (
     _get_query_patchers,
 )
 from .exceptions import LoginRequired
+from .introspection import ModelConfig, normalize_pk
 from .settings import (
+    DEFAULT_MODEL_CACHE,
+    DISABLE_MODEL_CACHE,
     KEY_SIZE_ERROR_THRESHOLD,
     KEY_SIZE_SAMPLE_PROB,
     KEY_SIZE_WARN_THRESHOLD,
     SESSION_TTL,
     conn,
 )
-from .utils import compact_hash, db, get_fqn, get_params
+from .utils import compact_hash, db, get_fqn, get_model_full_label, get_params
+
+if TYPE_CHECKING:
+    from .sse import SSESubscription
 
 signer = Signer()
 
@@ -107,6 +119,43 @@ class Repository:
         )
 
     @staticmethod
+    def current() -> Repository | None:
+        """Return the repository of the lifecycle running in this context, or None outside any.
+
+        This is how code that cannot be handed the repository -- a pydantic validator, for one --
+        reaches the render-cycle caches.  None is the normal answer for a component built outside
+        any request, SSE wakeup or test dispatch, and callers must keep working without the caches.
+
+        """
+        match _current.get():
+            case Repository() as repo:
+                return repo
+            case HttpRequest() as request:
+                return getattr(request, "htmx_repo", None)
+            case None:
+                return None
+
+    @staticmethod
+    @contextmanager
+    def activate(locator: Repository | HttpRequest) -> Iterator[None]:
+        """Make `locator` what `current`:meth: answers with while the block runs.
+
+        Pass the repository itself when it already exists.  Pass the request when the repository is
+        built lazily inside the block, as a page render does through `from_request`:meth:; it is
+        looked up on the request at each call of `current`:meth:.
+
+        Activations nest, and each one restores the previous value on exit, so a worker thread
+        reused by the next request never sees a stale repository.  The value travels with the
+        `contextvars` context, into `sync_to_async` threads and the SSE render executor alike.
+
+        """
+        token = _current.set(locator)
+        try:
+            yield
+        finally:
+            _current.reset(token)
+
+    @staticmethod
     def load_states_by_id(states: list[str]) -> dict[str, dict[str, Any]]:
         return {
             state["id"]: state for state in [json.loads(signer.unsign(state)) for state in states]
@@ -134,6 +183,14 @@ class Repository:
         self.session_signed_id = signer.sign(session.id)
         self.session_hash = compact_hash(session.id)
         self.params = params
+        # SSE keeps reverse indexes, (event type, topic) -> consumer, so a wakeup finds its
+        # consumers without scanning the sessions; that is why it cannot ride the Session's single
+        # entry holding every component's state.  Both writers of a component's SSE state -- the
+        # consumer record and the root tag -- need the subscriptions, and this render-cycle cache
+        # is what keeps them to one computation.
+        self._sse_subscriptions: dict[int, tuple[HtmxComponent, set[SSESubscription]]] = {}
+        # Nested by model, so invalidating a whole model drops one entry instead of scanning them all.
+        self._model_instances: dict[type[models.Model], dict[object, _CachedInstance]] = {}
 
     def unregister_component(self, component_id: str):
         # Delete component state recursively, then clean up the SSE consumer
@@ -270,6 +327,118 @@ class Repository:
                 if state["hx_name"] == name:
                     yield self.build(name, {"id": state["id"]})
 
+    def get_sse_subscriptions(self, component: HtmxComponent) -> set[SSESubscription]:
+        """Return `component`'s SSE subscriptions, computing them once per repository cycle.
+
+        Framework code must read the subscriptions through this method.  `sse_subscriptions` is a
+        property, and may answer differently on each read -- one that calls `now()`, or that
+        consults a model field, is enough -- which would register the consumer for one set of
+        topics while the component's root tag advertises another.
+
+        The value is keyed by the component's identity, so a component rebuilt later in the same
+        cycle computes its own.  The entry holds the component because CPython reuses the id of a
+        collected object.
+
+        """
+        from .sse import get_sse_subscriptions
+
+        if (entry := self._sse_subscriptions.get(id(component))) is None:
+            entry = (component, get_sse_subscriptions(component))
+            self._sse_subscriptions[id(component)] = entry
+        return entry[1]
+
+    @classmethod
+    def get_model_instance[M: models.Model](
+        cls, model: type[M], pk: object, model_config: ModelConfig
+    ) -> M | None:
+        """Return the `model` row with primary key `pk`, or None when the row does not exist.
+
+        The queryset applies the `select_related` and `prefetch_related` of `model_config`.
+
+        When `model_config` opts into the model cache -- `ModelConfig.cache`, or
+        `DJHTMX_DEFAULT_MODEL_CACHE` when that is None -- and a repository is `current`:meth:, the
+        row is fetched once per repository cycle: every call for it returns the same instance.  A
+        missing row is not remembered, so a row created later in the cycle is found.  Otherwise
+        every call fetches, as it always does when `DJHTMX_DISABLE_MODEL_CACHE` is True.
+
+        A cached instance is enriched with the relations a later call asks for and it lacks, so every
+        caller gets its `select_related` and `prefetch_related`.  A `model_config` whose
+        `prefetch_related` holds a `Prefetch` object never uses the cache: one instance can hold a
+        single result per relation, and the queryset of one `Prefetch` would leak into every other
+        caller.
+
+        `pk` may arrive as the wire's string, or a composite pk as a list; it is coerced to the
+        primary key's type first.
+
+        """
+        pk = normalize_pk(model, pk)
+        cache_enabled = (
+            not DISABLE_MODEL_CACHE
+            and (DEFAULT_MODEL_CACHE if model_config.cache is None else model_config.cache)
+            and not any(
+                isinstance(relation, Prefetch) for relation in model_config.prefetch_related or ()
+            )
+        )
+        if cache_enabled and (repository := cls.current()) is not None:
+            instances = repository._model_instances.setdefault(model, {})
+            if (cached := instances.get(pk)) is None:
+                _CachedInstance.count(model, "misses")
+                if (instance := cls._fetch_model_instance(model, pk, model_config)) is not None:
+                    instances[pk] = _CachedInstance.from_instance(instance, model_config)
+            else:
+                _CachedInstance.count(model, "hits")
+                cached.enrich(model_config)
+                instance = cast(M, cached.instance)
+        else:
+            instance = cls._fetch_model_instance(model, pk, model_config)
+        return instance
+
+    def invalidate_model_cache(self, model_class: type[models.Model], pk: object = None):
+        """Drop rows of `model_class` from this repository's model cache.
+
+        `pk` is None, a pk, or a list of them, as `InvalidateModelCache`:class: documents.
+
+        """
+        match pk:
+            case None:
+                self._model_instances.pop(model_class, None)
+            case list() | set() | frozenset() as pks:
+                self._drop_model_instances(model_class, pks)
+            case tuple() as pks if not isinstance(model_class._meta.pk, models.CompositePrimaryKey):
+                self._drop_model_instances(model_class, pks)
+            case single_pk:
+                self._drop_model_instances(model_class, (single_pk,))
+
+    def _drop_model_instances(self, model: type[models.Model], pks: Iterable[object]) -> None:
+        instances = self._model_instances.get(model, {})
+        for pk in pks:
+            # A pk that cannot be coerced keys no cached row, so there is nothing to drop.
+            with suppress(ValueError):
+                instances.pop(normalize_pk(model, pk), None)
+
+    @staticmethod
+    def _fetch_model_instance[M: models.Model](
+        model: type[M], pk: object, model_config: ModelConfig
+    ) -> M | None:
+        """Fetch the `model` row with primary key `pk`, or None when there is none.
+
+        The queryset applies the `select_related` and `prefetch_related` of `model_config`.
+
+        """
+        with tracing_span(
+            "djhtmx.model.fetch",
+            model=get_fqn(model),
+            pk=_describe_pk(pk),
+            lazy=str(model_config.lazy),
+        ):
+            manager = model.objects
+            if select_related := model_config.select_related:
+                manager = manager.select_related(*select_related)
+            if prefetch_related := model_config.prefetch_related:
+                manager = manager.prefetch_related(*prefetch_related)
+            # Use filter().first() instead of get() to avoid exceptions
+            return manager.filter(pk=pk).first()
+
     def render_html(
         self,
         component: HtmxComponent,
@@ -289,7 +458,9 @@ class Repository:
             self.session.store(component)
             from .sse import register_component
 
-            register_component(self.session.id, component)
+            register_component(
+                self.session.id, component, subscriptions=self.get_sse_subscriptions(component)
+            )
 
             final_context = {
                 "htmx_repo": self,
@@ -444,3 +615,78 @@ class Session:
                         KEY_SIZE_WARN_THRESHOLD,
                     )
             self.is_dirty = False
+
+
+def _describe_pk(value) -> str:
+    """Render the primary key `value` stands for, as a span tag.
+
+    Never `repr(value)`: `Model.__repr__` calls `__str__`, and a `__str__` that follows a relation
+    issues the very query these spans are counting.  And `str` of the pk rather than `repr`, so one
+    row tags the same whether it arrived as the wire's string or as the type the lazy proxy coerces
+    it to -- otherwise the same row counts as two.
+
+    """
+    return str(getattr(value, "pk", value))
+
+
+@dataclass(slots=True)
+class _CachedInstance:
+    """A model instance shared through the repository cache, and the relations loaded on it."""
+
+    instance: models.Model
+    relations: set[str]
+    """The relation paths loaded on `instance`, with every path traversed to reach a deeper one."""
+
+    @classmethod
+    def from_instance(cls, instance: models.Model, model_config: ModelConfig) -> _CachedInstance:
+        """Cache `instance`, fetched with the relations `model_config` asks for."""
+        return cls(instance, cls.get_relations(model_config))
+
+    def enrich(self, model_config: ModelConfig) -> None:
+        """Load onto `instance` the relations `model_config` asks for and it lacks."""
+        if missing := self.get_relations(model_config) - self.relations:
+            with tracing_span(
+                "djhtmx.model.prefetch",
+                model=get_fqn(type(self.instance)),
+                pk=_describe_pk(self.instance),
+            ):
+                # Django skips the paths already loaded, and a forward relation is loaded as
+                # `select_related` would have.
+                prefetch_related_objects(
+                    [self.instance],
+                    *(model_config.select_related or ()),
+                    *(model_config.prefetch_related or ()),
+                )
+            self.relations |= missing
+            self.count(type(self.instance), "enrichments")
+
+    @staticmethod
+    def count(model: type[models.Model], entry: Literal["hits", "misses", "enrichments"]) -> None:
+        """Count a model cache `entry`, in the totals and in `model`'s own metric."""
+        metric_incr(f"djhtmx.model.cache.{entry}")
+        metric_incr(f"djhtmx.model.{get_model_full_label(model)}.cache.{entry}")
+
+    @staticmethod
+    def get_relations(model_config: ModelConfig) -> set[str]:
+        """Return the relation paths `model_config` loads, with every path traversed on the way."""
+        relations: set[str] = set()
+        for relation in (
+            *(model_config.select_related or ()),
+            *(model_config.prefetch_related or ()),
+        ):
+            match relation:
+                case Prefetch(prefetch_to=path) | (str() as path):
+                    relations.update(
+                        accumulate(
+                            path.split(LOOKUP_SEP),
+                            lambda prefix, part: f"{prefix}{LOOKUP_SEP}{part}",
+                        )
+                    )
+                case unreachable:
+                    assert_never(unreachable)
+        return relations
+
+
+_current: ContextVar[Repository | HttpRequest | None] = ContextVar(
+    "djhtmx.current_repository", default=None
+)

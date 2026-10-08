@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Opt-in model cache**: ORM annotations can now be cached during a single render cycle.
+- **`DJHTMX_DISABLE_MODEL_CACHE` setting**: turns the model cache off, even for annotations that opt into it.
+- **`InvalidateModelCache` command**: drops rows from the opt-in model cache.
+- **Model cache metrics**: published through Sentry and Logfire under `djhtmx.model.cache.*` and per model.
+
+### Changed
+
+- **A model field given a primary key it cannot coerce raises pydantic's `ValidationError`**: it used to raise Django's.
+- **A component's `sse_subscriptions` is read once per render**: it used to be read twice for every component rendered, so a property that answered differently on each read could leave the component registered for one set of topics and listening for another.
+
+### Deprecated
+
+- **`Htmx.client`, `Htmx.user` and `Htmx.repo`**: they will become private.
+
+### Fixed
+
+- **A model field no longer accepts an instance of its parent model**: a field annotated with a multi-table child, or with any model whose primary key is a relation, took an instance of the related model and resolved its own row from it.
+- **`Htmx` reads the page's query parameters**: a page opened with a query string started its components with no params.
+- **`Htmx` keeps the path when a handler replaces only the query string**: `Htmx.path` became empty.
+- **A property that returns an iterator survives a second read**: the render-local property cache consumes generators, `map`, `filter`, `zip` and `QuerySet.iterator()` into a list before storing them, so every read in the template sees the same items.  A `QuerySet` is stored as it is, keeping its own cache and its methods.
+
 ## [1.4.0] - 2026-09-23
 
 ### Upgrading from 1.3.x

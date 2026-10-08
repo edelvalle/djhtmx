@@ -14,6 +14,7 @@ from .commands import (
     Focus,
     HandleSSEEvents,
     InternalCommand,
+    InvalidateModelCache,
     Open,
     PushURL,
     Redirect,
@@ -103,6 +104,7 @@ class CommandQueue:
             match command:
                 case (
                     Execute()
+                    | InvalidateModelCache()
                     | Signal()
                     | HandleSSEEvents()
                     | Emit()
@@ -147,6 +149,9 @@ class CommandQueue:
         match command:
             case Execute() | HandleSSEEvents():
                 return CommandPriority(bucket=0, key="", timestamp=0)
+            case InvalidateModelCache(_, _, timestamp):
+                # Before anything that hydrates components: Emit, Signal, BuildAndRender.
+                return CommandPriority(bucket=5, key="", timestamp=timestamp)
             case Destroy(component_id):
                 return CommandPriority(bucket=10, key=component_id, timestamp=0)
             case Signal(_, timestamp):

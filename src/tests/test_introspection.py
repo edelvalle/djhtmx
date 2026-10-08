@@ -1,11 +1,18 @@
-from typing import Literal
-from uuid import UUID
+from collections.abc import Sequence
+from typing import Annotated, Literal
+from uuid import UUID, uuid4
 
+from django.contrib.auth.models import AnonymousUser, Group, Permission, User
 from django.http import QueryDict
 from django.test import TestCase
 from django.utils.datastructures import MultiValueDict
-from fision.todo.models import Item  # type: ignore[import-untyped]
+from fision.todo.models import Item, ItemQS
+from pydantic import ValidationError
 
+from djhtmx.command_processor import CommandProcessor
+from djhtmx.command_queue import CommandQueue
+from djhtmx.commands import InvalidateModelCache
+from djhtmx.component import HtmxComponent
 from djhtmx.introspection import (
     ModelConfig,
     ModelRelatedField,
@@ -20,6 +27,8 @@ from djhtmx.introspection import (
     issubclass_safe,
     parse_request_data,
 )
+from djhtmx.repo import Repository, Session
+from djhtmx.utils import get_params
 
 # PEP 695 type aliases (the `type` statement) wrap the real type in a
 # ``TypeAliasType``; ``_unwrap_annotated`` must peel them, including when nested.
@@ -116,7 +125,6 @@ class TestModelConfig(TestCase):
 
     def test_model_config_accepts_any_sequence(self):
         """Any sequence of field names is accepted, and stored as a tuple."""
-        from collections.abc import Sequence
 
         class Pair(Sequence):
             """A sequence that is neither a list nor a tuple, for the general contract."""
@@ -168,10 +176,6 @@ class TestModelConfig(TestCase):
         type: 'list'` while its annotation was being built -- at class-definition time, so importing
         the module was enough to bring the application down.
         """
-        from typing import Annotated
-
-        from djhtmx.component import HtmxComponent
-
         config = ModelConfig(lazy=True, select_related=["a"], prefetch_related=["b"])
         self.assertEqual(
             hash(config),
@@ -331,9 +335,6 @@ class TestOptionalModelInComponent(TestCase):
 
     def test_component_with_optional_model_nonexistent_id(self):
         """Test that component with Model | None sets field to None when ID doesn't exist."""
-        from uuid import uuid4
-
-        from djhtmx.component import HtmxComponent
 
         # Create a test component with optional Item field
         class OptionalModelNonexistent(HtmxComponent):
@@ -356,8 +357,6 @@ class TestOptionalModelInComponent(TestCase):
 
     def test_component_with_optional_model_deleted_id(self):
         """Test that component with Model | None sets field to None when object is deleted."""
-        from djhtmx.component import HtmxComponent
-
         # Create an item and then delete it
         item = Item.objects.create(text="To be deleted")
         item_id = item.id
@@ -381,8 +380,6 @@ class TestOptionalModelInComponent(TestCase):
 
     def test_component_with_optional_model_existing_id(self):
         """Test that component with Model | None loads existing objects correctly."""
-        from djhtmx.component import HtmxComponent
-
         # Create a real item
         item = Item.objects.create(text="Test item")
 
@@ -406,11 +403,6 @@ class TestOptionalModelInComponent(TestCase):
 
     def test_component_with_required_model_nonexistent_id(self):
         """Test that component with required Model raises ValidationError for non-existent ID."""
-        from uuid import uuid4
-
-        from pydantic import ValidationError
-
-        from djhtmx.component import HtmxComponent
 
         # Create a test component with required Item field
         class RequiredModelNonexistent(HtmxComponent):
@@ -442,9 +434,6 @@ class TestOptionalModelInComponent(TestCase):
         would hold the None it returned unchanged -- a component reading `self.item` in a handler
         then fails far from the cause.
         """
-        from pydantic import ValidationError
-
-        from djhtmx.component import HtmxComponent
 
         class RequiredModelNone(HtmxComponent):
             _template_name = "RequiredModelNone.html"
@@ -465,8 +454,6 @@ class TestOptionalModelInComponent(TestCase):
 
     def test_component_with_required_model_accepts_a_pk_and_an_instance(self):
         """The control: enforcing the annotation must not reject what a component legitimately gets."""
-        from djhtmx.component import HtmxComponent
-
         item = Item.objects.create(text="Test item")
 
         class RequiredModelAccepts(HtmxComponent):
@@ -489,11 +476,6 @@ class TestOptionalLazyModelInComponent(TestCase):
 
     def test_component_with_optional_lazy_model_nonexistent_id(self):
         """Test that component with lazy Model | None sets field to None when ID doesn't exist."""
-        from typing import Annotated
-        from uuid import uuid4
-
-        from djhtmx.component import HtmxComponent
-        from djhtmx.introspection import ModelConfig
 
         # Create a test component with optional lazy Item field
         class OptionalLazyModelNonexistent(HtmxComponent):
@@ -522,11 +504,6 @@ class TestOptionalLazyModelInComponent(TestCase):
 
     def test_component_with_optional_lazy_model_deleted_id(self):
         """Test that component with lazy Model | None handles deleted objects."""
-        from typing import Annotated
-
-        from djhtmx.component import HtmxComponent
-        from djhtmx.introspection import ModelConfig
-
         # Create an item and then delete it
         item = Item.objects.create(text="To be deleted")
         item_id = item.id
@@ -553,11 +530,6 @@ class TestOptionalLazyModelInComponent(TestCase):
 
     def test_component_with_optional_lazy_model_existing_id(self):
         """Test that component with lazy Model | None loads existing objects correctly."""
-        from typing import Annotated
-
-        from djhtmx.component import HtmxComponent
-        from djhtmx.introspection import ModelConfig
-
         # Create a real item
         item = Item.objects.create(text="Test lazy item")
 
@@ -583,11 +555,6 @@ class TestOptionalLazyModelInComponent(TestCase):
 
     def test_component_with_required_lazy_model_nonexistent_id(self):
         """Test that component with required lazy Model raises error when accessing non-existent object."""
-        from typing import Annotated
-        from uuid import uuid4
-
-        from djhtmx.component import HtmxComponent
-        from djhtmx.introspection import ModelConfig
 
         # Create a test component with required lazy Item field
         class RequiredLazyModelNonexistent(HtmxComponent):
@@ -628,10 +595,6 @@ class TestOptionalLazyModelInComponent(TestCase):
         Without `__bool__` a proxy was truthy no matter what it wrapped, so the one question the
         check exists to ask -- is this thing there? -- always answered yes, deleted rows included.
         """
-        from typing import Annotated
-
-        from djhtmx.component import HtmxComponent
-        from djhtmx.introspection import ModelConfig
 
         class TruthinessLazyModel(HtmxComponent):
             _template_name = "TruthinessLazyModel.html"
@@ -657,12 +620,6 @@ class TestLazyModelRelatedFields(TestCase):
 
     def test_select_related_saves_the_query_for_the_related_object(self):
         """The proxy fetches the row; if the config never reaches it, the JOIN never happens."""
-        from typing import Annotated
-
-        from django.contrib.auth.models import Permission
-
-        from djhtmx.component import HtmxComponent
-        from djhtmx.introspection import ModelConfig
 
         class SelectRelatedLazyModel(HtmxComponent):
             _template_name = "SelectRelatedLazyModel.html"
@@ -688,13 +645,6 @@ class TestLazyModelRelatedFields(TestCase):
             self.assertEqual(component.permission.content_type.app_label, expected_app_label)
 
     def test_prefetch_related_is_applied_when_the_row_is_fetched(self):
-        from typing import Annotated
-
-        from django.contrib.auth.models import Group, User
-
-        from djhtmx.component import HtmxComponent
-        from djhtmx.introspection import ModelConfig
-
         class PrefetchRelatedLazyModel(HtmxComponent):
             _template_name = "PrefetchRelatedLazyModel.html"
             member: Annotated[User, ModelConfig(lazy=True, prefetch_related=("groups",))]
@@ -713,16 +663,139 @@ class TestLazyModelRelatedFields(TestCase):
             self.assertEqual([group.name for group in component.member.groups.all()], ["crew"])
 
 
+class TestModelCache(TestCase):
+    """Hydrating one row twice in a repository cycle fetches it once, when the annotation opts in."""
+
+    def setUp(self):
+        self.item = Item.objects.create(text="Cached")
+        self.repository = Repository(
+            user=AnonymousUser(),
+            session=Session(Repository.new_session_id()),
+            params=get_params(None),
+        )
+
+    def test_an_opted_in_annotation_reuses_the_instance(self):
+        class CachedModel(HtmxComponent):
+            _template_name = "CachedModel.html"
+            item: Annotated[Item, ModelConfig(cache=True)]
+
+        with Repository.activate(self.repository), self.assertNumQueries(1):
+            # The wire carries the pk as a string; it must key the same entry as the UUID.
+            first = CachedModel(
+                id="first", hx_name="CachedModel", user=None, item=str(self.item.pk)
+            )
+            second = CachedModel(id="second", hx_name="CachedModel", user=None, item=self.item.pk)
+
+        self.assertIs(first.item, second.item)
+
+    def test_a_lazy_and_an_eager_annotation_share_the_fetch(self):
+        class CachedLazyModel(HtmxComponent):
+            _template_name = "CachedLazyModel.html"
+            item: Annotated[Item, ModelConfig(lazy=True, cache=True)]
+
+        class CachedEagerModel(HtmxComponent):
+            _template_name = "CachedEagerModel.html"
+            item: Annotated[Item, ModelConfig(cache=True)]
+
+        with Repository.activate(self.repository), self.assertNumQueries(1):
+            lazy = CachedLazyModel(
+                id="lazy", hx_name="CachedLazyModel", user=None, item=self.item.pk
+            )
+            eager = CachedEagerModel(
+                id="eager", hx_name="CachedEagerModel", user=None, item=self.item.pk
+            )
+            self.assertEqual(lazy.item.text, eager.item.text)
+
+    def test_an_annotation_left_at_the_default_fetches_per_hydration(self):
+        class UncachedModel(HtmxComponent):
+            _template_name = "UncachedModel.html"
+            item: Item
+
+        with Repository.activate(self.repository), self.assertNumQueries(2):
+            first = UncachedModel(id="first", hx_name="UncachedModel", user=None, item=self.item.pk)
+            second = UncachedModel(
+                id="second", hx_name="UncachedModel", user=None, item=self.item.pk
+            )
+
+        self.assertIsNot(first.item, second.item)
+
+
+class TestInvalidateModelCache(TestCase):
+    """`InvalidateModelCache` changes what later hydrations get, never what components hold."""
+
+    def setUp(self):
+        self.item = Item.objects.create(text="Cached")
+        self.repository = Repository(
+            user=AnonymousUser(),
+            session=Session(Repository.new_session_id()),
+            params=get_params(None),
+        )
+
+    def test_dropping_a_row_leaves_the_components_already_built_untouched(self):
+        class DroppedModel(HtmxComponent):
+            _template_name = "DroppedModel.html"
+            item: Annotated[Item, ModelConfig(cache=True)]
+
+        with Repository.activate(self.repository):
+            before = DroppedModel(id="before", hx_name="DroppedModel", user=None, item=self.item.pk)
+            held = before.item
+            # The pk as the wire carries it must drop the entry the UUID keys.
+            self.invalidate(Item, str(self.item.pk))
+            with self.assertNumQueries(1):
+                after = DroppedModel(
+                    id="after", hx_name="DroppedModel", user=None, item=self.item.pk
+                )
+
+        self.assertIs(before.item, held)
+        self.assertIsNot(after.item, held)
+
+    def test_dropping_a_model_or_a_list_of_its_rows(self):
+        class ModelDroppedModel(HtmxComponent):
+            _template_name = "ModelDroppedModel.html"
+            item: Annotated[Item, ModelConfig(cache=True)]
+
+        other = Item.objects.create(text="Other")
+
+        def hydrate_both():
+            for item in (self.item, other):
+                ModelDroppedModel(
+                    id=f"item-{item.pk}", hx_name="ModelDroppedModel", user=None, item=item.pk
+                )
+
+        for pk in [None, [self.item.pk, str(other.pk)]]:
+            with self.subTest(pk=pk), Repository.activate(self.repository):
+                hydrate_both()
+                self.invalidate(Item, pk)
+                with self.assertNumQueries(2):
+                    hydrate_both()
+
+    def test_a_resolved_lazy_proxy_keeps_its_instance(self):
+        class LazyDroppedModel(HtmxComponent):
+            _template_name = "LazyDroppedModel.html"
+            item: Annotated[Item, ModelConfig(lazy=True, cache=True)]
+
+        with Repository.activate(self.repository):
+            lazy = LazyDroppedModel(
+                id="lazy", hx_name="LazyDroppedModel", user=None, item=self.item.pk
+            )
+            self.assertEqual(lazy.item.text, "Cached")
+            self.invalidate(Item, self.item.pk)
+            with self.assertNumQueries(0):
+                self.assertEqual(lazy.item.text, "Cached")
+
+    def invalidate(self, model_class: type[Item], pk: object = None) -> None:
+        list(
+            CommandProcessor(self.repository)._run_command(
+                CommandQueue([InvalidateModelCache(model_class, pk)])
+            )
+        )
+
+
 class TestQuerySetInComponent(TestCase):
     """Test that HtmxComponent with QuerySet handles non-existent IDs correctly."""
 
     def test_component_with_queryset_nonexistent_ids(self):
         """Test that component with QuerySet returns empty queryset for non-existent IDs."""
-        from uuid import uuid4
-
-        from fision.todo.models import ItemQS
-
-        from djhtmx.component import HtmxComponent
 
         # Create a test component with QuerySet field
         class QuerysetNonexistent(HtmxComponent):
@@ -747,12 +820,6 @@ class TestQuerySetInComponent(TestCase):
 
     def test_component_with_queryset_mixed_ids(self):
         """Test that component with QuerySet filters out non-existent IDs."""
-        from uuid import uuid4
-
-        from fision.todo.models import ItemQS
-
-        from djhtmx.component import HtmxComponent
-
         # Create some real items
         item1 = Item.objects.create(text="Item 1")
         item2 = Item.objects.create(text="Item 2")
@@ -781,10 +848,6 @@ class TestQuerySetInComponent(TestCase):
 
     def test_component_with_queryset_deleted_ids(self):
         """Test that component with QuerySet excludes deleted items."""
-        from fision.todo.models import ItemQS
-
-        from djhtmx.component import HtmxComponent
-
         # Create items and then delete some
         item1 = Item.objects.create(text="Item 1")
         item2 = Item.objects.create(text="To be deleted")
@@ -817,10 +880,6 @@ class TestQuerySetInComponent(TestCase):
 
     def test_component_with_queryset_existing_ids(self):
         """Test that component with QuerySet loads all existing items correctly."""
-        from fision.todo.models import ItemQS
-
-        from djhtmx.component import HtmxComponent
-
         # Create real items
         item1 = Item.objects.create(text="Item 1")
         item2 = Item.objects.create(text="Item 2")

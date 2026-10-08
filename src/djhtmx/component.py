@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 import types
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
@@ -23,6 +24,7 @@ from typing import (
 )
 
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import QuerySet
 from django.template import Context, loader
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, model_validator, validate_call
@@ -372,11 +374,38 @@ class HtmxComponent(BaseModel):
         # This render-local cache, supports lazy properties but avoids the same property to be
         # computed more than once.  It doesn't survive several renders which is good, because it
         # doesn't require invalidation.
+        def materialize(value):
+            # Don't put a generator/iterator in the cache, consume it and put the result.
+            match value:
+                case QuerySet() as query:
+                    # queryset has its own cache, we exposed it because the template might use
+                    # methods like `exists`, `first`, etc.
+                    return query
+                case itertools.count() as infinite:
+                    # We avoid a hung render for this case only; but we cannot really protect from
+                    # infinite iterators in general.  In any case, our cache already affected any
+                    # kind of iterator in a property since the templates gets a single one and not
+                    # different iterators every time.
+                    return infinite
+                case tuple() as named if hasattr(named, "_make") and hasattr(named, "_fields"):
+                    # DO NOT go defensive.  Imagine someone that subclasses `tuple` and adds a
+                    # `_make` that is not what we expect; it will likely fail and it's on them.
+                    return named._make(materialize(v) for v in named)
+                case tuple() as items:
+                    # This branch covers the special case of tuples because of `itertools.groupby`;
+                    # it returns an Iterator (caught below) that yields tuples of `(key, iterator)`;
+                    # the tuple itself is not an Iterator.  This branch ensures we materialize the
+                    # inner iterator.
+                    return tuple(materialize(v) for v in items)
+                case Iterator() as iterator:
+                    return [materialize(v) for v in iterator]
+                case other:
+                    return other
+
         def get_property(cache, attr):
             result = cache.get(attr, Unset)
             if result is Unset:
-                result = getattr(self, attr)
-                cache[attr] = result
+                result = cache[attr] = materialize(getattr(self, attr))
             return result
 
         with tracing_span(f"{FQN[type(self)]}._get_context"):

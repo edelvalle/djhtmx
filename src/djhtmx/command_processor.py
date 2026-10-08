@@ -34,6 +34,7 @@ from .commands import (
     Focus,
     HandleSSEEvents,
     InternalCommand,
+    InvalidateModelCache,
     Open,
     ProcessedCommand,
     PushURL,
@@ -206,6 +207,10 @@ class CommandProcessor:
                             logger.debug("< AWAKED: %s id=%s", component.hx_name, component.id)
                             commands_to_append.append(Render(component))
 
+            case InvalidateModelCache(model_class, pk):
+                commands.processing_component_id = ""
+                repo.invalidate_model_cache(model_class, pk)
+
             case (
                 Open()
                 | ReplaceURL()
@@ -268,7 +273,12 @@ class CommandProcessor:
             ):
                 # make partial updates not lazy during_execute
                 command.lazy = False
-            commands_to_add.append(command)
+            if isinstance(command, InvalidateModelCache):
+                # Not queued: the other listeners of the same Emit, and the other consumers of the
+                # same SSE wakeup, are hydrated before the queue would reach it.
+                repo.invalidate_model_cache(command.model_class, command.pk)
+            else:
+                commands_to_add.append(command)
 
         if not component_was_rendered:
             commands_to_add.append(
@@ -359,7 +369,8 @@ class RecordedCommand:
                 | DispatchDOMEvent()
                 | PushURL()
                 | ReplaceURL()
-                | Execute() as command
+                | Execute()
+                | InvalidateModelCache() as command
             ):
                 described = repr(command)
             case unreachable:

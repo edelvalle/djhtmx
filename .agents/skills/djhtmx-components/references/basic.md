@@ -36,13 +36,15 @@ class ItemEditor(HtmxComponent):
 
 The component then compares and filters with the rows it already holds -- `item == self.opened`, `Item.objects.filter(owner=self.owner)`.
 
+Each component reads its own rows, so two components of one request that hold the same row read it twice and get two instances.  `ModelConfig(cache=True)` makes them share one -- see [model-prefetching](model-prefetching.md#sharing-a-row-between-components).
+
 Use `Model | None` for a row someone can delete while the page is open: the field reads back as `None` when the row is gone, where a required `Model` raises a `ValidationError`.  A `QuerySet` field is state too, kept as the list of pks, so a big one is paid on every request.
 
 Annotate with `Field(exclude=True)` what the request rebuilds anyway rather than what the session should carry; `user` is the standard case, and [authentication](authentication.md) covers it.
 
 ## Properties are the template's context
 
-Every attribute that does not start with `_` reaches the template, and a `property` is evaluated only if the template asks for it, at most once per render.  A `cached_property` also survives within the same Python instance, which matters when a handler and the render that follows it both read the same expensive value.
+Every attribute that does not start with `_` reaches the template, and a `property` is evaluated only if the template asks for it, at most once per render.  A property that returns an iterator is consumed into a list on that first read, so every later read in the same render sees the same items; a `QuerySet` is kept as it is, with its own row cache and methods like `exists` and `first`.  A `cached_property` also survives within the same Python instance, which matters when a handler and the render that follows it both read the same expensive value, or when the same property is read within Python several times -- djhtmx's cache is local to the render.
 
 Put the reading of rows in a property, not in a field, when the answer depends on state the component already holds:
 
@@ -51,6 +53,21 @@ Put the reading of rows in a property, not in a field, when the answer depends o
 def items(self) -> ItemQS:
     return Item.objects.filter(owner=self.owner).order_by("name")
 ```
+
+Don't write a property that only turns another property into a `bool` or a simple computation that could be done in the template:
+
+```python
+@property
+def missing_fields(self) -> list[str]:
+    ...
+
+# BAD: `self.missing_fields` is a Python read, which bypasses the render cache.
+@property
+def has_missing_fields(self) -> bool:
+    return bool(self.missing_fields)
+```
+
+The render cache only serves the template's lookups, so `{% if has_missing_fields %}...{% for field in missing_fields %}` computes `missing_fields` twice.  Test the property itself instead: `{% if missing_fields %}` is computed once and the `{% for %}` inside it reuses the value, or use `{% for ... %}{% empty %}` when nothing has to wrap the loop.  The same goes for any shallow derivation: `{{ missing_fields|join:", " }}`, not a `missing_fields_str` property.  A separate property pays off only when the template never reads the full value and the yes/no is cheaper to get, like `.exists()` instead of loading the rows.
 
 ## Handlers
 
