@@ -453,8 +453,7 @@ class Htmx:
         - `find X` designates the first `X` only, `body` the body, and `<X/>` is `X`.
         - `closest X`, `next X`, `previous X` and `host` are relative to an element, and designate
           nothing from the document.
-        - `next`, `previous`, `document`, `window` and `root` make htmx throw, so they raise
-          `AssertionError`.
+        - `next`, `previous`, `document`, `window` and `root` raise `AssertionError`.
         - A leading `global ` is dropped; it only matters inside a shadow DOM.  As in htmx, it
           must come right after the colon of `hx-swap-oob`, without a space.
 

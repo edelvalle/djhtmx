@@ -1,6 +1,8 @@
 # Reading the page
 
-`htmx.dom` is the parsed page, kept up to date: every `send` and `trigger` applies what the dispatch produced to it, the way a browser would.  A full render replaces the component's element by id, an append or a prepend inserts the new fragment into the target, and a `Destroy` removes the element.
+`htmx.dom` is the parsed page, kept up to date: every `send` and `trigger` applies what the dispatch produced to it, the way a browser would.  A full render replaces the component's element by id, an append or a prepend inserts the new fragment into the target, and a `Destroy` removes the element.  An `hx-swap-oob` written in a template is applied as htmx 2 applies it, at any depth of the response.
+
+The one exception is an out-of-band swap whose selector is `next`, `nextElementSibling`, `previous`, `previousElementSibling`, `document`, `window` or `root`: the send raises `AssertionError`.  htmx throws on them too, except for `document`, `window` and `root` with `outerHTML`, `delete` or `none`, which it ignores.  Point the swap at a real element instead.
 
 ```python
 [count] = self.htmx.select(".todo-count")
