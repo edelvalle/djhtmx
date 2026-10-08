@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A model field given a primary key it cannot coerce raises pydantic's `ValidationError`**: it used to raise Django's.
 - **A component's `sse_subscriptions` is read once per render**: it used to be read twice for every component rendered, so a property that answered differently on each read could leave the component registered for one set of topics and listening for another.
 
 ### Deprecated
