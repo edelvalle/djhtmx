@@ -11,7 +11,7 @@ from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from pydantic import BaseModel, Field
 
-from djhtmx.commands import BuildAndRender, Destroy, Emit, Focus, SkipRender
+from djhtmx.commands import BuildAndRender, Destroy, Emit, Focus, Render, SkipRender
 from djhtmx.component import HtmxComponent, Query
 from djhtmx.sse import SSEEventEnvelope, SSESubscription, emit_sse_event
 from djhtmx.utils import run_on_commit
@@ -266,6 +266,22 @@ class LoggedUserCounter(HtmxComponent):
 
     def inc(self, amount: int = 1):
         self.counter += amount
+
+
+class Board(HtmxComponent):
+    """A component whose handlers answer with out-of-band swaps only."""
+
+    _template_name = "todo/Board.html"
+
+    def show_new_list(self):
+        yield Render(self, template="todo/Board-list.html")
+
+    def add_note_before_anchor(self):
+        yield BuildAndRender.before("#anchor", Note)
+
+
+class Note(HtmxComponent):
+    _template_name = "todo/Note.html"
 
 
 def todo_item_topic(item_id: UUID):

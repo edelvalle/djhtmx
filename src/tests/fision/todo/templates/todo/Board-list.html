@@ -1,0 +1,6 @@
+{% load htmx %}
+
+{# The root is not the component's tag, so the OOB element is nested in it. #}
+<div class="wrapper">
+  <div {% oob "list" %}><p>new</p></div>
+</div>
