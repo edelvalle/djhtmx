@@ -9,6 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `aemit_sse_event`: async counterpart of `emit_sse_event` for publishing SSE events from `async def` handlers without blocking the event loop on the synchronous Redis client.
+
+### Changed
+
+- **The HTTP and SSE endpoints are `async` views, but the dispatch runs as one synchronous job on a bounded worker pool.**  Each request (and each SSE drain, and each WebSocket message) submits the whole dispatch — component build, event handlers, query patching, template render, session flush — to the `DJHTMX_SYNC_WORKERS` pool, where it runs on a single thread that owns one Django DB connection.  Nothing in the request path touches the ORM on the event loop.  As a result **the process-wide Postgres connection count is bounded by `DJHTMX_SYNC_WORKERS`, independent of request or SSE-stream concurrency**, and an idle SSE stream holds *no* DB connection (it borrows one from the pool only while a drain is actually rendering).
+
+- **Components may define `async def` event handlers** (including async generators that `yield` commands).  Sync and async handlers can be mixed freely, even across a single event cascade: handlers communicate through the command/event bus, never by calling each other directly.  The synchronous dispatcher runs sync handlers directly and wraps async handlers with `async_to_sync` on the pool thread, so any Django async ORM an async handler awaits runs on that same thread and shares its single bounded connection.  Sharing that thread is also what keeps them inside the dispatch's transaction, so under `ATOMIC_REQUESTS` a cascade of mixed handlers still commits or rolls back as one unit.
+
+  A handler that is an **async generator** is the exception: it streams for as long as its source produces, so the dispatch it enters is left unwrapped rather than hold a transaction for the length of the stream.  For the same reason, declaring `_handle_event` or `_handle_sse_events` as an async generator is refused at import time where a database asks for `ATOMIC_REQUESTS` -- a listener runs inside the transaction of whatever dispatch woke it.
+
+- **`DJHTMX_SSE_RENDER_WORKERS` is renamed to `DJHTMX_SYNC_WORKERS`** (old name still honoured as a deprecated alias).  The pool that formerly served only SSE renders now bounds *all* synchronous, ORM-touching work — full HTTP/SSE/WS dispatches, component construction, and rendering — so it is the single knob for the Django DB connection budget.  Size it together with your app's process count so that `DJHTMX_SYNC_WORKERS × processes` stays under Postgres `max_connections` (and any pgbouncer pool).
+
+- **Model-typed component fields keep their pre-2.0 loading semantics.**  The `models.Model` field validator resolves a bare pk to an instance (an existing pk → instance, a missing pk → `None` for optional fields, or an error for required ones), and `ModelConfig(lazy=True)` still defers the query to first access via a proxy.  What changed is *where* it runs: because the whole dispatch runs on the sync-work pool thread, the resolution query is on a pooled connection, never the event loop.  (Constructing a component directly from a pk works as before — no pre-resolution step required.)
+
+- Model-typed `Query` fields carry the pk in the URL via a pk adapter, with the instance resolved during build by the field validator like any other Model field.
+
+- The minimum `orjson` is now `>=3.11.0` (was `>=3.10.7`).  3.11 is the current release line: it ships prebuilt cp314 wheels and newer serialization fixes, whereas the old floor only provided wheels through cp313 and forced a source build on Python 3.14.
+
+### Fixed
+
+- **Postgres connections no longer scale with concurrency.**  Earlier async iterations of this work resolved the user and Model fields with Django async ORM on the event loop; because `django.db.connections` is per-async-task, each in-flight request/stream acquired its own connection (held for the whole stream lifetime for SSE), exhausting `max_connections` under load.  Routing the entire dispatch through the bounded sync-work pool confines every ORM touch to a pooled, thread-affine connection.
+
+- The SSE drain no longer risks a pool re-entrancy deadlock: each drain is a single synchronous job that never re-submits to the pool, so concurrent drains beyond the worker count simply queue.
+
+- **`Htmx` applies out-of-band swaps as htmx 2 does in the browser**: a test no longer crashes on `BuildAndRender.before` or on a partial that wraps an `{% oob %}` element.
+
+## [1.5.0] - 2026-10-08
+
+### Added
+
+- **Opt-in model cache**: ORM annotations can now be cached during a single render cycle.
+- **`DJHTMX_DISABLE_MODEL_CACHE` setting**: turns the model cache off, even for annotations that opt into it.
+- **`InvalidateModelCache` command**: drops rows from the opt-in model cache.
+- **Model cache metrics**: published through Sentry and Logfire under `djhtmx.model.cache.*` and per model.
+- **`HtmxComponent.sse_subscriptions`**: Defaults to no subscriptions.
+
+### Changed
+
+- **A model field given a primary key it cannot coerce raises pydantic's `ValidationError`**: it used to raise Django's.
+- **A component's `sse_subscriptions` is read once per render**: it used to be read twice for every component rendered, so a property that answered differently on each read could leave the component registered for one set of topics and listening for another.
+
+### Deprecated
+
+- **`Htmx.client`, `Htmx.user` and `Htmx.repo`**: they will become private.
+
+### Fixed
+
+- **A model field no longer accepts an instance of its parent model**: a field annotated with a multi-table child, or with any model whose primary key is a relation, took an instance of the related model and resolved its own row from it.
+- **`Htmx` reads the page's query parameters**: a page opened with a query string started its components with no params.
+- **`Htmx` keeps the path when a handler replaces only the query string**: `Htmx.path` became empty.
+- **A property that returns an iterator survives a second read**: the render-local property cache consumes generators, `map`, `filter`, `zip` and `QuerySet.iterator()` into a list before storing them, so every read in the template sees the same items.  A `QuerySet` is stored as it is, keeping its own cache and its methods.
+
+## [1.4.0] - 2026-09-23
+
+### Upgrading from 1.3.x
+
+Three changes can break a project that worked on 1.3.13.
+
+- **A component with a non-optional `user` refuses to be built without a logged-in user.**  Review every component that declares `user: Annotated[User, Field(exclude=True)]`, directly or through a base, and is mounted on a page anonymous visitors can reach: it now sends them to the login page instead of rendering with `user=None`.  Annotate it `user: Annotated[User | None, Field(exclude=True)]` to keep the previous behavior.  `djhtmx.component.requires_logged_user(component_class)` reports which of the two a component is.
+
+- **A public `async def` method on a component raises `TypeError` at import.**  The front-end names the handler it calls, so every public method of a component is reachable as one.  Rename a helper that is not a handler to start with `_`, or move it off the component.
+
+- **Type checkers now read djhtmx's own annotations** (the package ships `py.typed`).  A project that type-checks its own code may see new errors, and indirect imports of names djhtmx merely re-imports (`from djhtmx.sse import Iterable`) stop resolving.  Import public names from their documented modules.
+
+Nothing was removed or renamed: `djhtmx.testing.Htmx.type` keeps working as a deprecated alias of `type_into`, and no public name changed module.  The `django>=5.2` and `pydantic>=2.10` floors drop only releases that are end-of-life upstream.
+
+### Added
+
+- **`Htmx.assertEmits` and `Htmx.assertYields`**: two context managers on `djhtmx.testing.Htmx` that assert on a dispatch.  `assertEmits(EventClass)` watches the events emitted inside the block and hands the test a `djhtmx.testing.CapturedEvents` list of them, `assertYields(CommandClass)` watches the commands the handlers yielded and hands the test all of them, and `assertYields(None)` asserts they yielded none.
+
+- **`Htmx.capturing`**: the capture behind those assertions.
+
 - **A non-optional `user` annotation is now enforced as a login requirement**: a component that declares `user: Annotated[User, Field(exclude=True)]` (instead of the optional annotation inherited from `HtmxComponent`) refuses to be built without a logged-in user.
 
   Until now the annotation documented an intention that nothing checked: Django model fields are validated with a `PlainValidator` that returns `None` unchanged, so a component annotated with a required user still ran its handlers with `self.user` set to `None` whenever the session had died (an expired session on an open page, a logout in another tab, a POST without cookies to the `csrf_exempt` endpoints), and failed deep in whatever it wrote -- typically a NOT NULL violation on a `created_by` column, losing the user's edit with no feedback on screen.
@@ -25,29 +97,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Python 3.14 support**: djhtmx is now tested on a Python 3.13 + 3.14 matrix.  On 3.14 the dependency floors rise to the first releases shipping 3.14 wheels (`pydantic>=2.13`, `orjson>=3.11`, `lxml>=6`); 3.13 installs are unaffected.
 
-- `aemit_sse_event`: async counterpart of `emit_sse_event` for publishing SSE events from `async def` handlers without blocking the event loop on the synchronous Redis client.
-
 ### Changed
+
+- **`djhtmx.testing.Htmx.type` is renamed to `type_into`**: to avoid shadowing the builtin.  The old name remains as a `@deprecated` alias that forwards to `type_into`.
+
+- **An `async def` event handler is now refused when its component registers**: djhtmx calls event handlers synchronously, so an `async def` handler -- a coroutine function or an async generator function -- never ran: calling it only handed the dispatcher a coroutine to iterate.  The call itself sits inside the unhandled-error guard, but the iteration that raises `TypeError: 'coroutine' object is not iterable` happens after that guard in every dispatch path, and no layer up to the view catches it: the interaction failed with a server error, the handler's body never ran, and Python warned that the coroutine was never awaited.  Declaring one now raises a `TypeError` at import naming the component and the handler, so the mistake surfaces where it is made instead of as a 500 at run time.  The check covers every handler of a public component, `_handle_event` and `_handle_sse_events` included.
+
+- **Minimum pydantic is now 2.10 on Python 3.13**: djhtmx requires `pydantic>=2.10` (was `>=2`); Python 3.14 already required `>=2.13`, and 2.10 covers the whole 3.8-3.13 range.
 
 - **Minimum Django is now 5.2**: djhtmx requires `django>=5.2` (was `>=4.1`).  Django releases before 5.2 are end-of-life upstream and were neither tested nor supported; 5.2 is the LTS line djhtmx is developed against and the first to support Python 3.14.
 
-- **The HTTP and SSE endpoints are `async` views, but the dispatch runs as one synchronous job on a bounded worker pool.**  Each request (and each SSE drain, and each WebSocket message) submits the whole dispatch — component build, event handlers, query patching, template render, session flush — to the `DJHTMX_SYNC_WORKERS` pool, where it runs on a single thread that owns one Django DB connection.  Nothing in the request path touches the ORM on the event loop.  As a result **the process-wide Postgres connection count is bounded by `DJHTMX_SYNC_WORKERS`, independent of request or SSE-stream concurrency**, and an idle SSE stream holds *no* DB connection (it borrows one from the pool only while a drain is actually rendering).
-
-- **Components may define `async def` event handlers** (including async generators that `yield` commands).  Sync and async handlers can be mixed freely, even across a single event cascade: handlers communicate through the command/event bus, never by calling each other directly.  The synchronous dispatcher runs sync handlers directly and wraps async handlers with `async_to_sync` on the pool thread, so any Django async ORM an async handler awaits runs on that same thread and shares its single bounded connection.  Sharing that thread is also what keeps them inside the dispatch's transaction, so under `ATOMIC_REQUESTS` a cascade of mixed handlers still commits or rolls back as one unit.
-
-  A handler that is an **async generator** is the exception: it streams for as long as its source produces, so the dispatch it enters is left unwrapped rather than hold a transaction for the length of the stream.  For the same reason, declaring `_handle_event` or `_handle_sse_events` as an async generator is refused at import time where a database asks for `ATOMIC_REQUESTS` -- a listener runs inside the transaction of whatever dispatch woke it.
-
-- **`DJHTMX_SSE_RENDER_WORKERS` is renamed to `DJHTMX_SYNC_WORKERS`** (old name still honoured as a deprecated alias).  The pool that formerly served only SSE renders now bounds *all* synchronous, ORM-touching work — full HTTP/SSE/WS dispatches, component construction, and rendering — so it is the single knob for the Django DB connection budget.  Size it together with your app's process count so that `DJHTMX_SYNC_WORKERS × processes` stays under Postgres `max_connections` (and any pgbouncer pool).
-
-- **Model-typed component fields keep their pre-2.0 loading semantics.**  The `models.Model` field validator resolves a bare pk to an instance (an existing pk → instance, a missing pk → `None` for optional fields, or an error for required ones), and `ModelConfig(lazy=True)` still defers the query to first access via a proxy.  What changed is *where* it runs: because the whole dispatch runs on the sync-work pool thread, the resolution query is on a pooled connection, never the event loop.  (Constructing a component directly from a pk works as before — no pre-resolution step required.)
-
-- Model-typed `Query` fields carry the pk in the URL via a pk adapter, with the instance resolved during build by the field validator like any other Model field.
-
-- The minimum `orjson` is now `>=3.11.0` (was `>=3.10.7`).  3.11 is the current release line: it ships prebuilt cp314 wheels and newer serialization fixes, whereas the old floor only provided wheels through cp313 and forced a source build on Python 3.14.
-
-- The minimum `pydantic` is now `>=2.10` on Python 3.13 (was `>=2`); Python 3.14 already required `>=2.13`, and 2.10 covers the whole 3.13 range.  Before 2.10, `validate_call` returned a wrapper that neither `inspect.iscoroutinefunction` nor asgiref's variant recognised as a coroutine function.  Since `HtmxComponent` wraps every event handler that declares parameters, the dispatcher probed such a handler, got `False`, and routed it to the synchronous branch, which called it and did `list()` on the returned coroutine; the resulting `TypeError: 'coroutine' object is not iterable` was swallowed into an `Emit(HtmxUnhandledError)` plus a default render, so the handler body never ran and the interaction looked like a silent no-op.  Only `async def` handlers that take arguments and do not `yield` were affected: a parameterless handler is never wrapped, and an async generator is deliberately left unwrapped because `validate_call` does not support that shape.
-
 ### Fixed
+
+- **A failing handler that yields its commands is reported as `HtmxUnhandledError`**: the guard covered the call and not the body, which for such a handler runs later, so its error escaped the dispatch and answered with a server error instead of waking the application's recovery handler.  This held on all three paths: the handler an htmx request names, `_handle_event`, and `_handle_sse_events` -- where the escaping error also dropped the session's SSE connection.  The commands such a handler yielded before it failed are dropped, as they are for one that fails before returning.
 
 - **`ModelConfig`'s `select_related`/`prefetch_related` were ignored on lazy fields**: the config never reached the proxy that makes the query, so the optimization was accepted, stored on the annotation and then silently dropped -- a lazy field with `select_related` paid a second query for the related object, exactly what the argument was there to avoid.  Lazy fields now build their query with the configured related fields, so the JOIN happens in the same query that loads the row and a prefetch is populated before the collection is read.
 
@@ -56,10 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A lazy model field was truthy even when its row was gone**: `_LazyModelProxy` had no `__bool__`, so `if component.item:` answered "yes" for a deleted or never-existing row -- the one question the check is asked.  It now resolves the row (caching it, like any other access): an optional field is `False` when the row is missing, and a required field raises the same `ValueError` that any other access raises, rather than quietly passing the check and failing on the next line.
 
 - **`datetime`-typed `Query` fields rejected**: a component may now declare a `Query` field annotated with `datetime`.  Previously this raised `TypeError: Invalid type annotation ... for a query string` during component build.
-
-- **Postgres connections no longer scale with concurrency.**  Earlier async iterations of this work resolved the user and Model fields with Django async ORM on the event loop; because `django.db.connections` is per-async-task, each in-flight request/stream acquired its own connection (held for the whole stream lifetime for SSE), exhausting `max_connections` under load.  Routing the entire dispatch through the bounded sync-work pool confines every ORM touch to a pooled, thread-affine connection.
-
-- The SSE drain no longer risks a pool re-entrancy deadlock: each drain is a single synchronous job that never re-submits to the pool, so concurrent drains beyond the worker count simply queue.
 
 ## [1.3.13] - 2026-06-17
 

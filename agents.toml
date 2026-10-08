@@ -11,3 +11,15 @@ source = "getsentry/dotagents"
 [[skills]]
 name = "commit"
 source = "path:.agents/skills/commit"
+
+[[skills]]
+name = "djhtmx-setup"
+source = "path:.agents/skills/djhtmx-setup"
+
+[[skills]]
+name = "djhtmx-components"
+source = "path:.agents/skills/djhtmx-components"
+
+[[skills]]
+name = "djhtmx-testing"
+source = "path:.agents/skills/djhtmx-testing"

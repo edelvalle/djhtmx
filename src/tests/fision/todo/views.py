@@ -31,5 +31,9 @@ def logged_user_counter(request):
     return render(request, "logged_user_counter.html", context={"title": "logged user counter"})
 
 
+def board(request):
+    return render(request, "board.html", context={"title": "board"})
+
+
 def redirect_to_index(request):
     return redirect("/?frombackend=1")

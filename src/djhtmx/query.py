@@ -168,10 +168,7 @@ class QueryPatcher:
         if (raw_param := params.get(self.param_name)) is not None:
             # We need to perform the validation during patching, otherwise
             # ill-formed values in the query will raise, but we should just
-            # simply ignore invalid values.  Pydantic raises a ValueError
-            # subclass; model-resolving adapters (a PK in the URL that fails to
-            # parse or match a row) raise Django's ValidationError, which is
-            # *not* a ValueError -- catch both.
+            # simply ignore invalid values.
             try:
                 return {
                     self.field_name: self.adapter.validate_json(raw_param)
@@ -220,8 +217,7 @@ class QueryPatcher:
                 )
         except (ValueError, ValidationError):
             # A malformed value already sitting in the URL can't be parsed back;
-            # treat it as the default so the fresh value overwrites it.  Django's
-            # ValidationError (from model-resolving adapters) is not a ValueError.
+            # treat it as the default so the fresh value overwrites it.
             previous_value = self.default_value
 
         if serialized_value == previous_value:

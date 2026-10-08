@@ -2,6 +2,8 @@ from collections.abc import Sequence
 
 from django.db import models
 
+from .names import get_model_full_label
+
 
 def get_instance_subscriptions(
     obj: models.Model,
@@ -15,10 +17,8 @@ def get_instance_subscriptions(
     'users.deleted').  If actions is empty, return only instance-level subscription.
 
     """
-    cls = type(obj)
-    app = cls._meta.app_label
-    name = cls._meta.model_name
-    prefix = f"{app}.{name}.{obj.pk}"
+    label = get_model_full_label(obj)
+    prefix = f"{label}.{obj.pk}"
     if not actions:
         return {prefix}
     else:
@@ -40,15 +40,11 @@ def get_model_subscriptions(
 
     """
     actions = actions or (None,)
+    label = get_model_full_label(obj)
     if isinstance(obj, models.Model):
-        cls = type(obj)
-        instance = obj
+        instance: models.Model | None = obj
     else:
-        cls = obj
         instance = None
-    app = cls._meta.app_label
-    name = cls._meta.model_name
-    model_prefix = f"{app}.{name}"
-    prefix = f"{model_prefix}.{instance.pk}" if instance else model_prefix
+    prefix = f"{label}.{instance.pk}" if instance else label
     result = {(f"{prefix}.{action}" if action else prefix) for action in actions}
     return result

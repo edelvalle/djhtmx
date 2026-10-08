@@ -125,7 +125,7 @@ def register_sse_listener(component_type: type[HtmxComponent]):
 
 
 def is_sse_enabled(component: HtmxComponent) -> bool:
-    has_subscriptions = hasattr(type(component), "sse_subscriptions")
+    has_subscriptions = type(component).sse_subscriptions != HtmxComponent.sse_subscriptions
     has_handler = hasattr(component, "_handle_sse_events")
     if has_subscriptions != has_handler:
         logger.warning(
@@ -141,7 +141,7 @@ def get_sse_subscriptions(component: HtmxComponent) -> set[SSESubscription]:
             component._handle_sse_events,  # type: ignore[attr-defined]
             owner=type(component),
         )
-        subscriptions = component.sse_subscriptions  # type: ignore[attr-defined]
+        subscriptions = component.sse_subscriptions
         result = set()
         for subscription in subscriptions:
             if subscription.event_type in accepted_event_types:
@@ -157,13 +157,26 @@ def get_sse_subscriptions(component: HtmxComponent) -> set[SSESubscription]:
         return set()
 
 
-def register_component(session_id: str, component: HtmxComponent, ttl: int = settings.SESSION_TTL):
+def register_component(
+    session_id: str,
+    component: HtmxComponent,
+    ttl: int = settings.SESSION_TTL,
+    *,
+    subscriptions: set[SSESubscription] | None = None,
+):
+    """Write `component`'s SSE consumer record, or remove it when it subscribes to nothing.
+
+    Pass `subscriptions` to reuse the set already computed for this render; leaving it out computes
+    them, which risks disagreeing with a `sse_subscriptions` that answers differently per read.
+
+    """
     with tracing_span(
         "djhtmx.sse.register_component",
         session=compact_hash(session_id),
         component=component.hx_name,
     ):
-        subscriptions = get_sse_subscriptions(component)
+        if subscriptions is None:
+            subscriptions = get_sse_subscriptions(component)
         id_ = consumer_id(session_id, component.id)
         indexes_key = consumer_indexes_key(id_)
         sync_redis_connection = get_sync_conn()
@@ -611,7 +624,8 @@ def _drain_sse_session_sync(session_id: str, user, handle_commands: list) -> lis
     repo = Repository(
         user=user or AnonymousUser(), session=Session(session_id), params=get_params(None)
     )
-    batch = CommandBatch.from_processed(CommandProcessor(repo).process(handle_commands))
+    with Repository.activate(repo):
+        batch = CommandBatch.from_processed(CommandProcessor(repo).process(handle_commands))
     return to_sse_fragments(batch, session_id)
 
 

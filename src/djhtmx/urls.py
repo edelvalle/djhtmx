@@ -76,7 +76,7 @@ def _dispatch_request(request: HttpRequest, component_id: str, event_handler: st
         if (prompt := request.META.get("HTTP_HX_PROMPT", None)) is not None
         else {}
     )
-    with repo.atomic_dispatch(component_id, event_handler):
+    with Repository.activate(repo), repo.atomic_dispatch(component_id, event_handler):
         batch = CommandBatch.from_processed(
             repo.dispatch_event(component_id, event_handler, event_data)
         )

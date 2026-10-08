@@ -5,7 +5,7 @@ from dataclasses import dataclass
 class HtmxUnhandledError:
     """HTMX triggers this event for any HTMX handler that fails unhandled.
 
-    Applications could subscribe to this event to have last-resource general error recovery
+    Applications could subscribe to this event to have last recourse general error recovery
     mechanism.
 
     """

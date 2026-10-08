@@ -55,6 +55,9 @@ KEY_SIZE_SAMPLE_PROB = getattr(
 
 STRICT_PUBLIC_BASE = getattr(settings, "DJHTMX_STRICT_PUBLIC_BASE", False)
 
+DEFAULT_MODEL_CACHE = getattr(settings, "DJHTMX_DEFAULT_MODEL_CACHE", False)
+DISABLE_MODEL_CACHE = getattr(settings, "DJHTMX_DISABLE_MODEL_CACHE", False)
+
 
 # Sync-work executor: a small pool of long-lived worker threads owns one
 # Django DB connection each.  ALL synchronous, ORM-touching work — auto-wrapped

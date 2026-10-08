@@ -18,6 +18,7 @@ from typing import (
     TypeGuard,
     TypeVar,
     Union,
+    assert_never,
     get_args,
     get_origin,
     get_type_hints,
@@ -26,6 +27,7 @@ from typing import (
 from uuid import UUID
 
 from django.apps import apps
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models
 from django.db.models import Prefetch
 from django.utils.datastructures import MultiValueDict
@@ -69,6 +71,23 @@ class ModelConfig:
     """The arguments to `model.objects.prefetch_related(*prefetch_related)`.
 
     Any sequence is accepted, and stored as a tuple; see `__post_init__`.
+
+    """
+
+    cache: bool | None = None
+    """Whether hydrating this annotation goes through the current repository's model cache.
+
+    With the cache, every hydration of the same row within one repository lifecycle (a request, an
+    SSE wakeup) returns the same instance, fetched once.  A later annotation asking for relations
+    the instance lacks gets them loaded onto it.  Components sharing the instance also see each
+    other's changes to it.
+
+    An annotation whose `prefetch_related` holds a `Prefetch` object never uses the cache, whatever
+    this says: one instance holds a single result per relation, so the queryset of a `Prefetch`
+    would reach every other annotation sharing the row.
+
+    None defers to the `DJHTMX_DEFAULT_MODEL_CACHE` setting, which is False unless set.  The
+    `DJHTMX_DISABLE_MODEL_CACHE` setting, when True, turns the cache off whatever this says.
 
     """
 
@@ -146,8 +165,7 @@ class _LazyModelProxy[M: models.Model]:
             self._loaded = True
         else:
             self._instance = None
-            pk_field = model._meta.pk
-            self._pk = pk_field.to_python(value) if pk_field is not None else value
+            self._pk = normalize_pk(model, value)
             self._loaded = False
 
     @property
@@ -156,13 +174,9 @@ class _LazyModelProxy[M: models.Model]:
 
     def _ensure(self) -> M | None:
         if not self._loaded:
-            manager = self._model.objects
-            if select_related := self._model_config.select_related:
-                manager = manager.select_related(*select_related)
-            if prefetch_related := self._model_config.prefetch_related:
-                manager = manager.prefetch_related(*prefetch_related)
-            # filter().first() instead of get() to avoid exceptions.
-            instance = manager.filter(pk=self._pk).first()
+            from .repo import Repository
+
+            instance = Repository.get_model_instance(self._model, self._pk, self._model_config)
             if instance is None and not self._allow_none:
                 raise ValueError(f"{self._model.__name__} with pk={self._pk} does not exist")
             self._instance = instance
@@ -239,25 +253,48 @@ class _ModelBeforeValidator(Generic[M]):  # noqa
         # A lazy proxy handed down to a non-lazy field is materialised here.
         if isinstance(value, _LazyModelProxy):
             return value._ensure()
-        return self._check(self._queryset().filter(pk=value).first(), value)
+        else:
+            from .repo import Repository
 
-    def _queryset(self):
-        manager = self.model.objects
-        if select_related := self.model_config.select_related:
-            manager = manager.select_related(*select_related)
-        if prefetch_related := self.model_config.prefetch_related:
-            manager = manager.prefetch_related(*prefetch_related)
-        return manager
-
-    def _check(self, instance, value):
-        if instance is None and not self.allow_none:
-            raise ValueError(f"{self.model.__name__} with pk={value} does not exist")
-        return instance
+            instance = Repository.get_model_instance(self.model, value, self.model_config)
+            if instance is None and not self.allow_none:
+                raise ValueError(f"{self.model.__name__} with pk={value} does not exist")
+            return instance
 
     @classmethod
     @cache
     def from_modelclass(cls, model: type[M], model_config: ModelConfig, allow_none: bool = False):
         return cls(model, model_config=model_config, allow_none=allow_none)
+
+
+def normalize_pk(model: type[models.Model], value: object) -> object:
+    """Coerce `value` to the Python type of `model`'s primary key, as the wire may carry a string.
+
+    A composite primary key becomes a tuple of its parts, each coerced by its own field, whether it
+    arrives as that tuple, as the list JSON turns it into, or as Django's JSON string.  A value
+    that cannot be coerced raises `ValueError`, which pydantic reports as a validation error.
+
+    """
+    pk_field = model._meta.pk
+    try:
+        match pk_field:
+            case models.CompositePrimaryKey(fields=fields):
+                return tuple(
+                    # The stubs type a part as any `get_field` result; a pk part is always a Field.
+                    field.to_python(part)  # type: ignore[union-attr]
+                    for field, part in zip(fields, pk_field.to_python(value), strict=True)
+                )
+            case models.Field():
+                return pk_field.to_python(value)
+            case None:
+                return value
+            case unreachable:
+                assert_never(unreachable)
+    except DjangoValidationError as error:
+        raise ValueError("; ".join(error.messages)) from error
+    except TypeError as error:
+        # A composite pk given a scalar, which cannot be split into its parts.
+        raise ValueError(str(error)) from error
 
 
 @dataclass(slots=True)
@@ -309,7 +346,7 @@ def _QuerySet(qs: type[models.QuerySet]):
     [model] = [m for m in apps.get_models() if isinstance(m.objects.all(), qs)]  # type: ignore
     return Annotated[
         qs,
-        PlainValidator(lambda v: (v if isinstance(v, qs) else model.objects.filter(pk__in=v))),
+        PlainValidator(lambda v: v if isinstance(v, qs) else model.objects.filter(pk__in=v)),
         PlainSerializer(
             func=lambda v: (
                 [instance.pk for instance in v]

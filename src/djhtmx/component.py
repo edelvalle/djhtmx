@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 import types
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
@@ -23,6 +24,7 @@ from typing import (
 )
 
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import QuerySet
 from django.template import Context, loader
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, model_validator, validate_call
@@ -40,6 +42,14 @@ from .introspection import (
 from .query import Query, QueryPatcher
 from .tracing import tracing_span
 from .utils import generate_id, get_fqn, has_atomic_requests
+
+try:
+    frozendict({})  # type: ignore
+except NameError:
+    from immutables import Map as frozendict
+
+if TYPE_CHECKING:
+    from .sse import SSESubscription
 
 __all__ = (
     "ComponentNotFound",
@@ -62,51 +72,39 @@ PYDANTIC_MODEL_METHODS = {
 type HandlerKind = Literal["function", "generator", "coroutine", "async_generator"]
 """The four shapes an event handler can take, and how each is consumed.
 
-Each name is the `inspect`:mod: vocabulary for the predicate that recognises
-the shape, and equally for what calling such a handler hands back:
+Each name is the `inspect`:mod: vocabulary for the predicate that recognises the shape, and equally
+for what calling such a handler hands back:
 
 `function`
-   A plain ``def`` with no ``yield``.  Returns its commands directly, or
-   ``None`` to mean "no explicit render", which the pipeline turns into the
-   component's default render.
+   A plain ``def`` with no ``yield``.  Returns its commands directly, or ``None`` to mean "no
+   explicit render", which the pipeline turns into the component's default render.
 
 `generator`
-   A ``def`` containing ``yield``.  Calling it returns a generator, which the
-   dispatcher drains to exhaustion before acting on any of the commands.
+   A ``def`` containing ``yield``.  Calling it returns a generator, which the dispatcher drains to
+   exhaustion before acting on any of the commands.
 
 `coroutine`
-   An ``async def`` with no ``yield``.  Awaited; its thread-sensitive ORM work
-   runs back on the calling thread, so it shares that thread's connection and
-   any transaction open on it.
+   An ``async def`` with no ``yield``.  Awaited; its thread-sensitive ORM work runs back on the
+   calling thread, so it shares that thread's connection and any transaction open on it.
 
 `async_generator`
-   An ``async def`` containing ``yield``.  Drained with ``async for``.  This is
-   the only shape that can stream over an unbounded period -- the run of a
-   language model, say -- and therefore the only one that must not be held
-   inside a transaction.  It is also the only shape `validate_call`:func:
-   never wraps, because it does not support it.
+   An ``async def`` containing ``yield``.  Drained with ``async for``.  This is the only shape that
+   can stream over an unbounded period -- the run of a language model, say -- and therefore the
+   only one that must not be held inside a transaction.
 
-A handler's kind is fixed when its module is compiled: the presence of a
-``yield`` anywhere in the body sets a flag on the code object, whether or not
-that ``yield`` is ever reached.  Nothing has to run for the kind to be known.
+A handler's kind is fixed when its module is compiled: the presence of a ``yield`` anywhere in the
+body sets a flag on the code object, whether or not that ``yield`` is ever reached.  Nothing has to
+run for the kind to be known.
 
 """
 
 
 @dataclass(slots=True, frozen=True)
-class RegisteredComponent:
-    """A public component together with what the dispatcher must know about it.
+class _RegisteredComponent:
+    """A public component together with what is known about it at import time.
 
-    `handler_kind_mapping` holds the shape of every event handler of the
-    component, `_handle_event` included, keyed by handler name.  It is built
-    while the class is registered, which happens *before* `validate_call` wraps
-    the handlers that declare parameters: that wrapper is an ordinary function
-    and would otherwise make a generator handler look like a plain one.  A
-    handler's kind is fixed at compile time, so the record stays true for the
-    life of the process and no caller needs to unwrap anything to ask.
-
-    Only public components are registered; consult `LISTENERS`:obj: for the
-    components that react to an event.
+    `handler_kind_mapping` holds the shape of every event handler of the component, including
+    `_handle_event` and `_handle_sse_events`, keyed by handler name.
 
     """
 
@@ -114,28 +112,9 @@ class RegisteredComponent:
     handler_kind_mapping: Mapping[str, HandlerKind]
 
 
-REGISTRY: dict[str, RegisteredComponent] = {}
+REGISTRY: dict[str, _RegisteredComponent] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[HtmxComponent], str] = {}
-
-
-def get_handler_kind(handler: Callable) -> HandlerKind:
-    """Report which of the `HandlerKind`:obj: shapes `handler` has.
-
-    Ask this of the *undecorated* handler.  A wrapper that is not itself a
-    generator function hides the shape of what it wraps, so a handler already
-    through `validate_call`:func: reports as a plain ``function`` whatever it
-    was written as.
-
-    """
-    if isasyncgenfunction(handler):
-        return "async_generator"
-    elif iscoroutinefunction(handler):
-        return "coroutine"
-    elif isgeneratorfunction(handler):
-        return "generator"
-    else:
-        return "function"
 
 
 def check_listener_can_join_a_transaction(
@@ -245,19 +224,19 @@ class HtmxComponent(BaseModel):
                 )
 
             handlers = dict(cls.__own_event_handlers(get_parent_ones=True))
-            # `__own_event_handlers` skips names starting with `_`, but these
-            # two reach the dispatcher through the same path as any other
-            # handler, and a listener's shape is what says whether it may
-            # stream.
-            for name in ("_handle_event", "_handle_sse_events"):
-                if (handler := getattr(cls, name, None)) is not None:
-                    handlers[name] = handler
-
-            handler_kind_mapping = {
-                name: get_handler_kind(handler) for name, handler in handlers.items()
+            # `__own_event_handlers` skips names starting with `_`, yet `_handle_event` and
+            # `_handle_sse_events` reach the dispatcher by the same path as any other handler, so
+            # their shape is worth just as much.
+            handlers |= {
+                name: handler
+                for name in ("_handle_event", "_handle_sse_events")
+                if (handler := getattr(cls, name, None)) is not None
             }
+            handler_kind_mapping = frozendict({
+                name: get_handler_kind(handler) for name, handler in handlers.items()
+            })
             check_listener_can_join_a_transaction(cls, handler_kind_mapping)
-            REGISTRY[component_name] = RegisteredComponent(
+            REGISTRY[component_name] = _RegisteredComponent(
                 htmx_component_class=cls,
                 handler_kind_mapping=handler_kind_mapping,
             )
@@ -267,7 +246,6 @@ class HtmxComponent(BaseModel):
                 not any(cls.__own_event_handlers(get_parent_ones=True))
                 and not hasattr(cls, "_handle_event")
                 and not hasattr(cls, "subscriptions")
-                and not hasattr(cls, "sse_subscriptions")
                 and not hasattr(cls, "_handle_sse_events")
             ):
                 logger.warning(
@@ -302,9 +280,8 @@ class HtmxComponent(BaseModel):
             if (
                 params
                 and not hasattr((attr := getattr(cls, name)), "raw_function")
-                # `validate_call` does not support async generator functions and
-                # would obscure their `isasyncgenfunction` marker from the
-                # dispatcher's auto-wrap detection.  Leave them unwrapped.
+                # `validate_call` does not support async generator functions.
+                # Leave them unwrapped.
                 and not isasyncgenfunction(attr)
             ):
                 setattr(
@@ -418,7 +395,18 @@ class HtmxComponent(BaseModel):
     def subscriptions(self) -> set[str]:
         return set()
 
-    def render(self): ...
+    @property
+    def sse_subscriptions(self) -> set[SSESubscription]:
+        """Return the SSE subscriptions of the component; none by default.
+
+        Subscriptions take effect only when the component defines `_handle_sse_events`, and only
+        those whose event type its annotation accepts.
+
+        """
+        return set()
+
+    def render(self):
+        return
 
     def _get_all_subscriptions(self) -> set[str]:
         return self.subscriptions | _get_querystring_subscriptions(self.hx_name)
@@ -433,11 +421,38 @@ class HtmxComponent(BaseModel):
         # This render-local cache, supports lazy properties but avoids the same property to be
         # computed more than once.  It doesn't survive several renders which is good, because it
         # doesn't require invalidation.
+        def materialize(value):
+            # Don't put a generator/iterator in the cache, consume it and put the result.
+            match value:
+                case QuerySet() as query:
+                    # queryset has its own cache, we exposed it because the template might use
+                    # methods like `exists`, `first`, etc.
+                    return query
+                case itertools.count() as infinite:
+                    # We avoid a hung render for this case only; but we cannot really protect from
+                    # infinite iterators in general.  In any case, our cache already affected any
+                    # kind of iterator in a property since the templates gets a single one and not
+                    # different iterators every time.
+                    return infinite
+                case tuple() as named if hasattr(named, "_make") and hasattr(named, "_fields"):
+                    # DO NOT go defensive.  Imagine someone that subclasses `tuple` and adds a
+                    # `_make` that is not what we expect; it will likely fail and it's on them.
+                    return named._make(materialize(v) for v in named)
+                case tuple() as items:
+                    # This branch covers the special case of tuples because of `itertools.groupby`;
+                    # it returns an Iterator (caught below) that yields tuples of `(key, iterator)`;
+                    # the tuple itself is not an Iterator.  This branch ensures we materialize the
+                    # inner iterator.
+                    return tuple(materialize(v) for v in items)
+                case Iterator() as iterator:
+                    return [materialize(v) for v in iterator]
+                case other:
+                    return other
+
         def get_property(cache, attr):
             result = cache.get(attr, Unset)
             if result is Unset:
-                result = getattr(self, attr)
-                cache[attr] = result
+                result = cache[attr] = materialize(getattr(self, attr))
             return result
 
         with tracing_span(f"{FQN[type(self)]}._get_context"):
@@ -550,6 +565,41 @@ def _compose[**P, A, B](f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B
         return g(f(*args, **kwargs))
 
     return result
+
+
+def get_handler_kind(handler) -> HandlerKind:
+    """Report which of the `HandlerKind`:obj: shapes `handler` has.
+
+    The `validate_call`:func: wrapper djhtmx installs on every handler that declares parameters is
+    an ordinary function, and would make each handler it wraps report as a plain ``function``; it is
+    looked through, so the answer is about the handler as written.  A handler decorated with
+    anything else answers for the decorator, which is the honest answer: another decorator need not
+    have the shape of what it wraps.
+
+    """
+    handler = _undecorated(handler)
+    if isasyncgenfunction(handler):
+        return "async_generator"
+    elif iscoroutinefunction(handler):
+        return "coroutine"
+    elif isgeneratorfunction(handler):
+        return "generator"
+    else:
+        return "function"
+
+
+def _undecorated(handler):
+    """Return the function `handler` was written as, looking through `validate_call`:func:.
+
+    Only that wrapper is looked through: it is the one djhtmx installs itself, and it delegates to
+    the handler unchanged, so questions about the handler's shape are questions about the wrapped
+    function.  Anything else `handler` may be decorated with is left in place.
+
+    The result is to ask questions about, not to call: given a bound method it is the underlying
+    function, without the instance.
+
+    """
+    return getattr(handler, "raw_function", handler)
 
 
 logger = logging.getLogger(__name__)
