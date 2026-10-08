@@ -1,7 +1,24 @@
-{% extends "base.html" %}
-
 {% load htmx %}
 
-{% block body %}
-  {% htmx 'Board' %}
-{% endblock body %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title }}</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
+      section { margin-bottom: 2rem; }
+      h2 { font-size: 1.1rem; margin-bottom: 0.25rem; }
+      button { font: inherit; padding: 0.4rem 1rem; border: 1px solid #555; border-radius: 4px; background: #fff; cursor: pointer; }
+      button:hover { background: #eee; }
+      .box { margin-top: 0.75rem; padding: 0.5rem 0.75rem; border: 1px dashed #999; border-radius: 4px; }
+      .box p { margin: 0; }
+      .note { background: #fff7d6; border-style: solid; }
+    </style>
+    {% htmx-headers %}
+  </head>
+  <body>
+    {% htmx 'Board' %}
+  </body>
+</html>

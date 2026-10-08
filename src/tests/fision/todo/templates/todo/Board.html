@@ -1,8 +1,19 @@
 {% load htmx %}
 
 <div {% hx-tag %}>
-  <div class="wrapper">
-    <div {% oob "list" %}><p>old</p></div>
-  </div>
-  <p id="anchor">anchor</p>
+  <h1>Out-of-band swaps</h1>
+  <section>
+    <h2>An OOB element nested in a partial</h2>
+    <p>The button renders a partial whose root is a plain wrapper; only the box inside it is swapped, and its text turns from "old" into "new".</p>
+    <button {% on 'click' 'show_new_list' %}>Render the partial</button>
+    <div class="wrapper">
+      <div class="box" {% oob "list" %}><p>old</p></div>
+    </div>
+  </section>
+  <section>
+    <h2>BuildAndRender.before</h2>
+    <p>Each click inserts a new note right before the anchor.</p>
+    <button {% on 'click' 'add_note_before_anchor' %}>Add a note</button>
+    <p class="box" id="anchor">anchor</p>
+  </section>
 </div>

@@ -277,6 +277,8 @@ class Board(HtmxComponent):
         yield Render(self, template="todo/Board-list.html")
 
     def add_note_before_anchor(self):
+        # A full render would drop the notes added before.
+        yield SkipRender(self)
         yield BuildAndRender.before("#anchor", Note)
 
 
