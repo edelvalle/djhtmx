@@ -126,7 +126,7 @@ def register_sse_listener(component_type: type[HtmxComponent]):
 
 
 def is_sse_enabled(component: HtmxComponent) -> bool:
-    has_subscriptions = hasattr(type(component), "sse_subscriptions")
+    has_subscriptions = type(component).sse_subscriptions != HtmxComponent.sse_subscriptions
     has_handler = hasattr(component, "_handle_sse_events")
     if has_subscriptions != has_handler:
         logger.warning(
@@ -142,7 +142,7 @@ def get_sse_subscriptions(component: HtmxComponent) -> set[SSESubscription]:
             component._handle_sse_events,  # type: ignore[attr-defined]
             owner=type(component),
         )
-        subscriptions = component.sse_subscriptions  # type: ignore[attr-defined]
+        subscriptions = component.sse_subscriptions
         result = set()
         for subscription in subscriptions:
             if subscription.event_type in accepted_event_types:

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DJHTMX_DISABLE_MODEL_CACHE` setting**: turns the model cache off, even for annotations that opt into it.
 - **`InvalidateModelCache` command**: drops rows from the opt-in model cache.
 - **Model cache metrics**: published through Sentry and Logfire under `djhtmx.model.cache.*` and per model.
+- **`HtmxComponent.sse_subscriptions`**: Defaults to no subscriptions.
 
 ### Changed
 

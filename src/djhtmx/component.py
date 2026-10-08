@@ -48,6 +48,9 @@ try:
 except NameError:
     from immutables import Map as frozendict
 
+if TYPE_CHECKING:
+    from .sse import SSESubscription
+
 __all__ = (
     "ComponentNotFound",
     "HtmxComponent",
@@ -214,7 +217,6 @@ class HtmxComponent(BaseModel):
                 not any(cls.__own_event_handlers(get_parent_ones=True))
                 and not hasattr(cls, "_handle_event")
                 and not hasattr(cls, "subscriptions")
-                and not hasattr(cls, "sse_subscriptions")
                 and not hasattr(cls, "_handle_sse_events")
             ):
                 logger.warning(
@@ -356,6 +358,16 @@ class HtmxComponent(BaseModel):
 
     @property
     def subscriptions(self) -> set[str]:
+        return set()
+
+    @property
+    def sse_subscriptions(self) -> set[SSESubscription]:
+        """Return the SSE subscriptions of the component; none by default.
+
+        Subscriptions take effect only when the component defines `_handle_sse_events`, and only
+        those whose event type its annotation accepts.
+
+        """
         return set()
 
     def render(self):

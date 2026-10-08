@@ -35,6 +35,8 @@ The handler's annotation is what declares the event types the component accepts,
 
 `sse_subscriptions` is recomputed on every render, so it may depend on state: a component with no user subscribes to nothing, and one that opens a row starts listening for that row on the next render.
 
+`HtmxComponent` subscribes to nothing by default, so every override can extend its base's with `super().sse_subscriptions | {...}` and keep the subscriptions of a mixin it inherits from.  The handler does not combine that way: the final component's `_handle_sse_events` annotation must name every event type it accepts, its bases' included.
+
 ## Topics
 
 A topic is a string your application invents, and it is how an event reaches the right components instead of all of them.  Put an identifier in it -- `notifications:{user_id}`, `todo.item.{item_id}` -- so a single event wakes the few components that care.  A topic like `"notifications"` wakes every open page in the installation.
