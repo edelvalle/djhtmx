@@ -10,7 +10,7 @@ from uuid import UUID
 from django.contrib.auth.models import User
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from pydantic_ai import (
     AgentRunResultEvent,
     PartDeltaEvent,
@@ -27,6 +27,8 @@ from djhtmx.utils import run_on_commit
 
 from .agent import TodoAgentDeps, agent
 from .models import ChatMessage, Conversation, Item, Role, Status
+
+StrippedStr = Annotated[str, StringConstraints(strip_whitespace=True)]
 
 
 @dataclass
@@ -342,12 +344,11 @@ class AgentChat(HtmxComponent):
         else:
             return ChatMessage.objects.none()
 
-    async def send(self, prompt: str):
+    async def send(self, prompt: StrippedStr):
         """Record the prompt and open an empty reply for the agent to fill."""
         # An async generator, not a plain `async def`: `validate_call` wraps a
         # coroutine handler that takes arguments into something the dispatcher no
         # longer recognises as async, and the body then never runs.
-        prompt = prompt.strip()
         # Append rather than let the panel re-render: a full render replaces the
         # scroll container, which resets it to the top of the conversation.
         yield SkipRender(self)

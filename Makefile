@@ -113,8 +113,9 @@ run: install
 	@cd src/tests; $(RUN) $(SERVER_CMD)
 .PHONY: run
 
+# `test` is pydantic-ai's TestModel: the chat UI gets mounted without reaching a real provider.
 test:
-	@cd src/tests; $(RUN) coverage run --rcfile=../../pyproject.toml -m manage test
+	@cd src/tests; AI_PROVIDER_MODEL=test $(RUN) coverage run --rcfile=../../pyproject.toml -m manage test
 .PHONY: test
 
 # Async concurrency / connection-bound load test.  Fires N concurrent SSE
