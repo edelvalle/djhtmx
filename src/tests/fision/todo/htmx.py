@@ -346,9 +346,6 @@ class AgentChat(HtmxComponent):
 
     async def send(self, prompt: StrippedStr):
         """Record the prompt and open an empty reply for the agent to fill."""
-        # An async generator, not a plain `async def`: `validate_call` wraps a
-        # coroutine handler that takes arguments into something the dispatcher no
-        # longer recognises as async, and the body then never runs.
         # Append rather than let the panel re-render: a full render replaces the
         # scroll container, which resets it to the top of the conversation.
         yield SkipRender(self)

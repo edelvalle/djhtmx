@@ -277,13 +277,7 @@ class HtmxComponent(BaseModel):
         }
 
         for name, params in cls._event_handler_params.items():
-            if (
-                params
-                and not hasattr((attr := getattr(cls, name)), "raw_function")
-                # `validate_call` does not support async generator functions.
-                # Leave them unwrapped.
-                and not isasyncgenfunction(attr)
-            ):
+            if params and not hasattr((attr := getattr(cls, name)), "raw_function"):
                 setattr(
                     cls,
                     name,
