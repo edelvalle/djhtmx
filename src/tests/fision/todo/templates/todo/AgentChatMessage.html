@@ -1,0 +1,13 @@
+{% load htmx %}
+
+{# Only a PENDING reply asks for a run, and `stream` leaves PENDING at once. #}
+<li {% hx-tag %}
+    {% class 'agent-chat-message': True, 'from-user': this.message.role == 'user', 'from-agent': this.message.role == 'agent', 'failed': this.message.status == 'failed' %}
+    {% if this.message.status == 'pending' %}{% on 'load' 'stream' %}{% endif %}>
+  {% if this.message.text %}
+    <span class="agent-chat-text">{{ this.message.text }}</span>
+  {% else %}
+    <span class="agent-chat-thinking">thinking…</span>
+  {% endif %}
+  {% if this.message.status == 'streaming' %}<span class="agent-chat-cursor">▌</span>{% endif %}
+</li>

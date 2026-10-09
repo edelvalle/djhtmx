@@ -8,7 +8,11 @@ from .hashing import compact_hash, generate_id
 from .http import get_params
 from .names import get_fqn, get_model_full_label
 from .subscriptions import get_instance_subscriptions, get_model_subscriptions
-from .transaction import run_on_commit
+from .transaction import (
+    atomic_if_requested,
+    has_atomic_requests,
+    run_on_commit,
+)
 
 if TYPE_CHECKING:
 
@@ -16,6 +20,7 @@ if TYPE_CHECKING:
 
 
 __all__ = (
+    "atomic_if_requested",
     "autodiscover_htmx_modules",
     "compact_hash",
     "db",
@@ -25,5 +30,6 @@ __all__ = (
     "get_model_full_label",
     "get_model_subscriptions",
     "get_params",
+    "has_atomic_requests",
     "run_on_commit",
 )

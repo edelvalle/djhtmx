@@ -4,6 +4,7 @@ import operator
 import types
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
 from functools import cache
@@ -13,6 +14,7 @@ from typing import (
     Any,
     Generic,
     Literal,
+    Self,
     TypeAliasType,
     TypedDict,
     TypeGuard,
@@ -56,10 +58,9 @@ class ModelConfig:
     """
 
     lazy: bool = False
-    """If set to True, annotations of models.Model will return a _LazyModelProxy instead of the
-       actual model instance.
-
-    """
+    """If True, a `models.Model` annotation resolves to a `_LazyModelProxy` that
+    defers the DB query until the instance is first accessed (on the sync-work
+    pool thread), instead of fetching eagerly during validation."""
 
     select_related: Sequence[str] | None = None
     """The arguments to `model.objects.select_related(*select_related)`.
@@ -138,7 +139,7 @@ _DEFAULT_MODEL_CONFIG = ModelConfig()
 
 
 @dataclass(slots=True, init=False)
-class _LazyModelProxy(Generic[M]):  # noqa
+class _LazyModelProxy[M: models.Model]:
     """Deferred proxy for a Django model instance; only fetches from the database on access."""
 
     __model: type[M]
@@ -194,6 +195,15 @@ class _LazyModelProxy(Generic[M]):  # noqa
                 # Model fields, raise error
                 raise ValueError(f"{self.__model.__name__} with pk={self.__pk} does not exist")
         return self.__instance
+
+    def __copy__(self) -> Self:
+        return self.__class__(
+            self.__model, self.__instance or self.__pk, self.__model_config, self.__allow_none
+        )
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Self:
+        value = deepcopy(self.__instance, memo) if self.__instance else self.__pk
+        return self.__class__(self.__model, value, self.__model_config, self.__allow_none)
 
     def __repr__(self) -> str:
         return f"<_LazyModelProxy model={self.__model}, pk={self.__pk}, instance={self.__instance}>"
@@ -297,17 +307,16 @@ class _ModelPlainSerializer(Generic[M]):  # noqa
         return cls(model, allow_none=allow_none)
 
 
-def _Model[M: models.Model](
-    model: type[M],
+def _Model(
+    model: type[models.Model],
     model_config: ModelConfig | None = None,
     allow_none: bool = False,
 ):
     assert issubclass_safe(model, models.Model)
     model_config = model_config or _DEFAULT_MODEL_CONFIG
 
-    # Determine the base type
-    base_type = model if not model_config.lazy else _LazyModelProxy[M]
-    # If allow_none, make it optional
+    # A lazy field is typed as the proxy; an eager one as the model itself.
+    base_type = _LazyModelProxy[model] if model_config.lazy else model
     annotated_type = base_type | None if allow_none else base_type
 
     return Annotated[
@@ -642,6 +651,9 @@ def is_basic_type(ann):
         #  __origin__ -> model in 'Annotated[model, BeforeValidator(...), PlainSerializer(...)]'
         or issubclass_safe(ann, models.Model)
         or issubclass_safe(getattr(ann, "__origin__", None), models.Model)
+        #  __origin__ -> _LazyModelProxy for a `ModelConfig(lazy=True)` field, which is carried in
+        #  the URL as its pk like any other Model field -- and reading that pk off the proxy costs
+        #  no query.
         or issubclass_safe(getattr(ann, "__origin__", None), _LazyModelProxy)
         or issubclass_safe(ann, (enum.IntEnum, enum.StrEnum))
         or is_collection_annotation(ann)

@@ -68,6 +68,10 @@ test = [
    "cssselect>=1.2.0",
    "coverage[toml]>=7.6.9",
 ]
+showcase = [
+  "pydantic-ai-slim[openai]~=2.42",
+  "pydantic-ai-harness~=0.30",
+]
 typing = [
   # zuban reads mypy-format config and runs its pyright-style "default" mode.
   "zuban==0.9.3",
@@ -99,6 +103,7 @@ dev = [
   { include-group = "test" },
   { include-group = "lint" },
   { include-group = "devtools" },
+  { include-group = "showcase" },
 ]
 
 [tool.uv]

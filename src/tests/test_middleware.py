@@ -104,7 +104,7 @@ class TestMiddleware(TestCase):
         self.assertIsInstance(response, HttpResponse)
         self.assertEqual(response.content, b"OK")  # type: ignore[attr-defined]
 
-        # Verify session was flushed and repo was removed
+        # Verify session was flushed (on the sync-work pool) and repo was removed
         mock_session.flush.assert_called_once()
         self.assertFalse(hasattr(request, "htmx_repo"))
 

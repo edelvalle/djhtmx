@@ -6,8 +6,8 @@ from django.test import Client, TestCase
 from djhtmx.commands import Emit, Focus, SkipRender
 from djhtmx.testing import Htmx
 
-from .htmx import Board, TodoItem, TodoList
-from .models import Item
+from .htmx import AgentChat, Board, TodoItem, TodoList
+from .models import ChatMessage, Item, Role
 
 
 class TestNormalRendering(TestCase):
@@ -212,3 +212,23 @@ class TestOutOfBandSwaps(TestCase):
 
         [note] = self.htmx.select('[hx-name="Note"]')
         self.assertEqual(note.getnext().attrib["id"], "anchor")
+
+
+class TestAsyncGeneratorHandlerArguments(TestCase):
+    """An async generator handler's arguments are validated against its annotations."""
+
+    def setUp(self):
+        self.htmx = Htmx(Client())
+        self.htmx.navigate_to("/todo")
+        self.chat = self.htmx.get_component_by_type(AgentChat)
+
+    def test_a_padded_prompt_is_stored_stripped(self):
+        self.htmx.send(self.chat.send, prompt="  hello  ")
+
+        questions = ChatMessage.objects.filter(role=Role.USER).values_list("text", flat=True)
+        self.assertEqual(list(questions), ["hello"])
+
+    def test_a_blank_prompt_records_nothing(self):
+        self.htmx.send(self.chat.send, prompt="   ")
+
+        self.assertFalse(ChatMessage.objects.exists())

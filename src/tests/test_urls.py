@@ -1,6 +1,8 @@
+from contextlib import nullcontext
 from http import HTTPStatus
 from unittest.mock import Mock, patch
 
+from asgiref.sync import async_to_sync
 from django.test import RequestFactory, TestCase
 from django.utils.safestring import mark_safe
 from fision.todo.htmx import TodoItem  # type: ignore[import-untyped]
@@ -18,6 +20,27 @@ from djhtmx.commands import (
 from djhtmx.urls import APP_CONFIGS, app_name_of_component, endpoint
 
 
+def call_endpoint(*args, **kwargs):
+    """Drive the async `endpoint` view from a synchronous test."""
+    return async_to_sync(endpoint)(*args, **kwargs)
+
+
+def make_repo_double(mock_repo_class, commands=()):
+    """Install a `Repository` double whose dispatch yields `commands`.
+
+    The double has to provide `atomic_dispatch` because the endpoint runs the
+    dispatch inside that guard, and a bare `Mock` does not implement the
+    context manager protocol.  `nullcontext` keeps these tests about the
+    command-to-response translation rather than about transactions.
+
+    """
+    mock_repo = Mock()
+    mock_repo.dispatch_event.return_value = list(commands)
+    mock_repo.atomic_dispatch.return_value = nullcontext()
+    mock_repo_class.from_request.return_value = mock_repo
+    return mock_repo
+
+
 class TestEndpoint(TestCase):
     def setUp(self):
         self.factory = RequestFactory()
@@ -26,7 +49,7 @@ class TestEndpoint(TestCase):
         """Test endpoint returns 400 when HX-Session header is missing."""
         request = self.factory.post("/test")
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
         self.assertEqual(response.content.decode(), "Missing header HX-Session")
@@ -41,13 +64,11 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {"parsed": "data"}
-        mock_repo = Mock()
-        mock_repo.dispatch_event.return_value = []
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         mock_repo.dispatch_event.assert_called_once_with(
@@ -66,13 +87,11 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {"parsed": "data"}
-        mock_repo = Mock()
-        mock_repo.dispatch_event.return_value = []
-        mock_repo_class.from_request.return_value = mock_repo
+        mock_repo = make_repo_double(mock_repo_class, [])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        endpoint(request, "TestComponent", "test-id", "test_handler")
+        call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         expected_data = {"parsed": "data", "prompt": "user prompt text"}
         mock_repo.dispatch_event.assert_called_once_with("test-id", "test_handler", expected_data)
@@ -110,15 +129,13 @@ class TestEndpoint(TestCase):
         }
 
         mock_parse.return_value = {}
-        mock_repo = Mock()
-        mock_repo.dispatch_event.return_value = []
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
         mock_sentry_tags.return_value.__enter__ = Mock()
         mock_sentry_tags.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         mock_sentry_tags.assert_called_once_with(**expected_tags)
@@ -134,14 +151,12 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         destroy_command = Destroy("component-123")
-        mock_repo.dispatch_event.return_value = [destroy_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [destroy_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('hx-swap-oob="delete"', response.content.decode())
@@ -157,14 +172,12 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         redirect_command = Redirect("/redirect-url")
-        mock_repo.dispatch_event.return_value = [redirect_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [redirect_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Redirect"], "/redirect-url")
@@ -179,14 +192,12 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         focus_command = Focus("#input-field")
-        mock_repo.dispatch_event.return_value = [focus_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [focus_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         # Focus command should set HX-Trigger-After-Settle header
@@ -202,14 +213,12 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         open_command = Open("/open-url", "window_name", "_blank", "noopener")
-        mock_repo.dispatch_event.return_value = [open_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [open_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         # Open command should set HX-Trigger-After-Settle header
@@ -225,16 +234,14 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         dom_event_command = DispatchDOMEvent(
             "#target", "custom-event", {"data": "value"}, True, False, True
         )
-        mock_repo.dispatch_event.return_value = [dom_event_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [dom_event_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         # DispatchDOMEvent command should set HX-Trigger-After-Settle header
@@ -250,14 +257,12 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         html_command = SendHtml(mark_safe("<div>Custom HTML</div>"))
-        mock_repo.dispatch_event.return_value = [html_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [html_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("<div>Custom HTML</div>", response.content.decode())
@@ -272,14 +277,12 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         push_url_command = PushURL("/new-url")
-        mock_repo.dispatch_event.return_value = [push_url_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [push_url_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Push-Url"], "/new-url")
@@ -294,14 +297,12 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         replace_url_command = ReplaceURL("/replace-url")
-        mock_repo.dispatch_event.return_value = [replace_url_command]
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, [replace_url_command])
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["HX-Replace-Url"], "/replace-url")
@@ -316,18 +317,16 @@ class TestEndpoint(TestCase):
 
         # Mock dependencies
         mock_parse.return_value = {}
-        mock_repo = Mock()
         commands = [
             SendHtml(mark_safe("<div>First</div>")),
             SendHtml(mark_safe("<div>Second</div>")),
             Redirect("/redirect"),
         ]
-        mock_repo.dispatch_event.return_value = commands
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
@@ -344,17 +343,15 @@ class TestEndpoint(TestCase):
         request.META["HTTP_HX_SESSION"] = "test-session"
 
         mock_parse.return_value = {}
-        mock_repo = Mock()
         commands = [
             ReplaceURL("/some-other-url/"),
             Redirect("/new-page/"),
         ]
-        mock_repo.dispatch_event.return_value = commands
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response["HX-Redirect"], "/new-page/")
         self.assertFalse(response.has_header("HX-Replace-Url"))
@@ -368,17 +365,15 @@ class TestEndpoint(TestCase):
         request.META["HTTP_HX_SESSION"] = "test-session"
 
         mock_parse.return_value = {}
-        mock_repo = Mock()
         commands = [
             PushURL("/pushed-url/"),
             Redirect("/new-page/"),
         ]
-        mock_repo.dispatch_event.return_value = commands
-        mock_repo_class.from_request.return_value = mock_repo
+        make_repo_double(mock_repo_class, list(commands))
         mock_span.return_value.__enter__ = Mock()
         mock_span.return_value.__exit__ = Mock()
 
-        response = endpoint(request, "TestComponent", "test-id", "test_handler")
+        response = call_endpoint(request, "TestComponent", "test-id", "test_handler")
 
         self.assertEqual(response["HX-Redirect"], "/new-page/")
         self.assertFalse(response.has_header("HX-Push-Url"))

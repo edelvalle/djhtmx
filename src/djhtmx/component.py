@@ -41,7 +41,7 @@ from .introspection import (
 )
 from .query import Query, QueryPatcher
 from .tracing import tracing_span
-from .utils import generate_id, get_fqn
+from .utils import generate_id, get_fqn, has_atomic_requests
 
 try:
     frozendict({})  # type: ignore
@@ -69,8 +69,8 @@ PYDANTIC_MODEL_METHODS = {
     attr_name for attr_name in dir(BaseModel) if not attr_name.startswith("_")
 }
 
-type HandlerKind = Literal["function", "generator"]
-"""The shapes an event handler can take, and how each one is consumed.
+type HandlerKind = Literal["function", "generator", "coroutine", "async_generator"]
+"""The four shapes an event handler can take, and how each is consumed.
 
 Each name is the `inspect`:mod: vocabulary for the predicate that recognises the shape, and equally
 for what calling such a handler hands back:
@@ -83,10 +83,18 @@ for what calling such a handler hands back:
    A ``def`` containing ``yield``.  Calling it returns a generator, which the dispatcher drains to
    exhaustion before acting on any of the commands.
 
-An ``async def`` handler -- a coroutine function or an async generator function -- has no kind of
-its own: the dispatcher calls handlers synchronously, so registration refuses one outright instead
-of admitting a shape nothing can run.  Teaching dispatch to run them is what would earn them a kind
-here.
+`coroutine`
+   An ``async def`` with no ``yield``.  Awaited; its thread-sensitive ORM work runs back on the
+   calling thread, so it shares that thread's connection and any transaction open on it.
+
+`async_generator`
+   An ``async def`` containing ``yield``.  Drained with ``async for``.  This is the only shape that
+   can stream over an unbounded period -- the run of a language model, say -- and therefore the
+   only one that must not be held inside a transaction.
+
+A handler's kind is fixed when its module is compiled: the presence of a ``yield`` anywhere in the
+body sets a flag on the code object, whether or not that ``yield`` is ever reached.  Nothing has to
+run for the kind to be known.
 
 """
 
@@ -107,6 +115,37 @@ class _RegisteredComponent:
 REGISTRY: dict[str, _RegisteredComponent] = {}
 LISTENERS: dict[type, set[str]] = defaultdict(set)
 FQN: dict[type[HtmxComponent], str] = {}
+
+
+def check_listener_can_join_a_transaction(
+    component_class: type[HtmxComponent], handler_kind_mapping: Mapping[str, HandlerKind]
+) -> None:
+    """Refuse a listener that would hold a dispatch transaction open.
+
+    A dispatch entered through any non-streaming handler runs inside one
+    transaction, and a listener it wakes runs inside that transaction too.  An
+    `async_generator` listener streams for as long as its source produces, so
+    it would keep the transaction -- and the connection and locks it holds --
+    open for that whole time.
+
+    Only checked where a database asks for `ATOMIC_REQUESTS`; without one no
+    dispatch transaction is ever opened and the shape is harmless.  A streaming
+    handler is perfectly fine as the *entry point* of its own dispatch, which
+    is how a component streams: `Repository.atomic_dispatch`:meth: leaves that
+    dispatch unwrapped.
+
+    """
+    streaming = sorted(
+        name for name, kind in handler_kind_mapping.items() if kind == "async_generator"
+    )
+    listeners = [name for name in streaming if name in ("_handle_event", "_handle_sse_events")]
+    if listeners and has_atomic_requests():
+        raise TypeError(
+            f"Component {get_fqn(component_class)} declares {', '.join(listeners)} as an async "
+            f"generator.  A listener runs inside the transaction of whatever dispatch woke it, "
+            f"and a streaming one would hold that transaction open for the length of its stream.  "
+            f"Collect the stream in a handler the browser calls directly instead."
+        )
 
 
 @cache
@@ -193,23 +232,13 @@ class HtmxComponent(BaseModel):
                 for name in ("_handle_event", "_handle_sse_events")
                 if (handler := getattr(cls, name, None)) is not None
             }
-
-            if async_handlers := sorted(
-                name for name, handler in handlers.items() if is_async_handler(handler)
-            ):
-                raise TypeError(
-                    f"Component {get_fqn(cls)} declares async event handlers: "
-                    f"{', '.join(async_handlers)}.  djhtmx calls event handlers synchronously, so "
-                    "an 'async def' handler never runs: calling it only hands back a coroutine "
-                    "(or an async generator) that nothing consumes.  Write it as a plain 'def', "
-                    "or as a 'def' that yields its commands."
-                )
-
+            handler_kind_mapping = frozendict({
+                name: get_handler_kind(handler) for name, handler in handlers.items()
+            })
+            check_listener_can_join_a_transaction(cls, handler_kind_mapping)
             REGISTRY[component_name] = _RegisteredComponent(
                 htmx_component_class=cls,
-                handler_kind_mapping=frozendict({
-                    name: get_handler_kind(handler) for name, handler in handlers.items()
-                }),
+                handler_kind_mapping=handler_kind_mapping,
             )
 
             # Warn of components that do not have event handlers and are public
@@ -532,22 +561,6 @@ def _compose[**P, A, B](f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B
     return result
 
 
-def is_async_handler(handler) -> bool:
-    """Tell whether `handler` is an ``async def``, with or without a ``yield`` in its body.
-
-    Both shapes are refused when a component registers: the dispatcher calls a handler and consumes
-    what comes back synchronously, so an ``async def`` handler would only ever hand it a coroutine
-    or an async generator, and its body would never run.
-
-    A wrapped handler is answered for as written: `validate_call`:func: marks the wrapper it puts
-    around a coroutine function, but the wrapper around an async generator is an ordinary function,
-    so the question has to reach the handler underneath it.
-
-    """
-    handler = _undecorated(handler)
-    return iscoroutinefunction(handler) or isasyncgenfunction(handler)
-
-
 def get_handler_kind(handler) -> HandlerKind:
     """Report which of the `HandlerKind`:obj: shapes `handler` has.
 
@@ -557,14 +570,12 @@ def get_handler_kind(handler) -> HandlerKind:
     anything else answers for the decorator, which is the honest answer: another decorator need not
     have the shape of what it wraps.
 
-    Raise `TypeError`:class: for an ``async def`` handler, which has no `HandlerKind`:obj: at all.
-    A caller that can name the component declaring it should ask `is_async_handler`:func: first and
-    raise the message that names it.
-
     """
     handler = _undecorated(handler)
-    if is_async_handler(handler):
-        raise TypeError(f"{handler!r} is an async handler, which has no handler kind")
+    if isasyncgenfunction(handler):
+        return "async_generator"
+    elif iscoroutinefunction(handler):
+        return "coroutine"
     elif isgeneratorfunction(handler):
         return "generator"
     else:
