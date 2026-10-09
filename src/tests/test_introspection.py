@@ -1,8 +1,10 @@
 from collections.abc import Sequence
+from copy import copy, deepcopy
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from django.contrib.auth.models import AnonymousUser, Group, Permission, User
+from django.forms.models import model_to_dict
 from django.http import QueryDict
 from django.test import TestCase
 from django.utils.datastructures import MultiValueDict
@@ -567,6 +569,34 @@ class TestOptionalLazyModelInComponent(TestCase):
 
         item.delete()
         self.assertFalse(build(item.pk))
+
+    def test_lazy_proxy_forwards_private_model_attributes(self):
+        class PrivateAttributesLazyModel(HtmxComponent):
+            _template_name = "PrivateAttributesLazyModel.html"
+            item: Annotated[Item, ModelConfig(lazy=True)]
+
+        item = Item.objects.create(text="Private")
+        proxy = PrivateAttributesLazyModel(
+            id="test-component", hx_name="PrivateAttributesLazyModel", user=None, item=item.pk
+        ).item
+
+        self.assertIs(proxy._meta.model, Item)
+        self.assertFalse(proxy._state.adding)
+        self.assertEqual(model_to_dict(proxy)["text"], "Private")
+
+    def test_lazy_proxy_copies_without_loading_the_row(self):
+        class CopiedLazyModel(HtmxComponent):
+            _template_name = "CopiedLazyModel.html"
+            item: Annotated[Item, ModelConfig(lazy=True)]
+
+        item = Item.objects.create(text="Copied")
+        proxy = CopiedLazyModel(
+            id="test-component", hx_name="CopiedLazyModel", user=None, item=item.pk
+        ).item
+
+        with self.assertNumQueries(0):
+            copies = [copy(proxy), deepcopy(proxy)]
+            self.assertEqual([copied.pk for copied in copies], [item.pk, item.pk])
 
 
 class TestLazyModelRelatedFields(TestCase):
