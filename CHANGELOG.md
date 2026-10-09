@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `aemit_sse_event`: async counterpart of `emit_sse_event` for publishing SSE events from `async def` handlers without blocking the event loop on the synchronous Redis client.
+- The value of a `ModelConfig(lazy=True)` field supports `copy.copy` and `copy.deepcopy`.
 
 ### Changed
 
