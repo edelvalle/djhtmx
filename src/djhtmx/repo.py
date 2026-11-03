@@ -507,6 +507,11 @@ class Session:
     # set[component_id]
     unregistered: set[str] = Field(default_factory=set)
 
+    # What this session last read from, or wrote to, Redis.  A flush writes only the difference.
+    known_states: dict[str, str] = Field(default_factory=dict)
+    known_subscriptions: dict[str, set[str]] = Field(default_factory=dict)
+    known_children: dict[str, set[str]] = Field(default_factory=dict)
+
     def store(self, component: HtmxComponent):
         state = component.model_dump_json()
         if self.states.get(component.id) != state:
@@ -571,30 +576,26 @@ class Session:
                     # dict[component_id -> list[signals]]
                     for component_id, signals in json.loads(state).items():
                         self.subscriptions[component_id] = set(signals)
+                        self.known_subscriptions[component_id] = set(signals)
                 elif component_id == "__children__":
                     # dict[parent_id -> list[child_ids]]
                     for parent_id, child_ids in json.loads(state).items():
                         self.children[parent_id] = set(child_ids)
+                        self.known_children[parent_id] = set(child_ids)
                 else:
-                    self.states[component_id] = state.decode()
+                    self.states[component_id] = self.known_states[component_id] = state.decode()
             self.read = True
 
     def flush(self, ttl: int = SESSION_TTL):
         if self.is_dirty:
             key = f"{self.id}:states"
-            # Apply the dirty hash and refresh its TTL in a single MULTI/EXEC so
-            # a concurrent reader (`_ensure_read`) can never observe partial
-            # state — e.g. updated `states` but a `__subs__`/`__children__` from
-            # the previous flush.
-            with conn.pipeline(transaction=True) as pipe:
-                if self.unregistered:
-                    pipe.hdel(key, *self.unregistered)
-                if self.states:
-                    pipe.hset(key, mapping=self.states)
-                pipe.hset(key, "__subs__", json.dumps(self.subscriptions))
-                pipe.hset(key, "__children__", json.dumps(self.children))
-                pipe.expire(key, ttl)
-                pipe.execute()
+            # Another request of the page can write the hash between the read of this session and
+            # this flush.  Write only what this session changed, merged into what the hash holds
+            # now, so the changes of the other request stay.  WATCH retries the merge when the
+            # hash changes during it, and MULTI/EXEC keeps a concurrent reader (`_ensure_read`)
+            # from seeing a partial write.
+            conn.transaction(lambda pipe: self._write_changes(pipe, key, ttl), key)
+            self._remember_what_is_known()
             self.unregistered.clear()
             # The command MEMORY USAGE is considered slow:
             # https://redis.io/docs/latest/commands/memory-usage/
@@ -615,6 +616,90 @@ class Session:
                         KEY_SIZE_WARN_THRESHOLD,
                     )
             self.is_dirty = False
+
+    def _write_changes(self, pipe, key: str, ttl: int):
+        changed = [
+            component_id
+            for component_id, state in self.states.items()
+            if self.known_states.get(component_id) != state
+        ]
+        stored_states = dict(zip(changed, pipe.hmget(key, changed), strict=True)) if changed else {}
+        stored_subscriptions, stored_children = pipe.hmget(key, "__subs__", "__children__")
+        pipe.multi()
+        if self.unregistered:
+            pipe.hdel(key, *self.unregistered)
+        if changed:
+            pipe.hset(
+                key,
+                mapping={
+                    component_id: self._merge_state(component_id, stored_states[component_id])
+                    for component_id in changed
+                },
+            )
+        pipe.hset(key, "__subs__", json.dumps(self._merge_subscriptions(stored_subscriptions)))
+        pipe.hset(key, "__children__", json.dumps(self._merge_children(stored_children)))
+        pipe.expire(key, ttl)
+
+    def _merge_state(self, component_id: str, stored: bytes | None) -> str:
+        state = self.states[component_id]
+        known = self.known_states.get(component_id)
+        if stored is None or known is None:
+            return state
+        else:
+            before = json.loads(known)
+            after = json.loads(state)
+            merged = json.loads(stored)
+            for name in before.keys() - after.keys():
+                merged.pop(name, None)
+            merged |= {
+                name: value
+                for name, value in after.items()
+                if name not in before or before[name] != value
+            }
+            return json.dumps(merged)
+
+    def _merge_subscriptions(self, stored: bytes | None) -> dict[str, set[str]]:
+        merged = {
+            component_id: set(signals)
+            for component_id, signals in (json.loads(stored) if stored else {}).items()
+        }
+        for component_id in self.subscriptions.keys() | self.known_subscriptions.keys():
+            signals = self.subscriptions.get(component_id)
+            if signals != self.known_subscriptions.get(component_id):
+                if signals is None:
+                    merged.pop(component_id, None)
+                else:
+                    merged[component_id] = signals
+        for component_id in self.unregistered:
+            merged.pop(component_id, None)
+        return merged
+
+    def _merge_children(self, stored: bytes | None) -> dict[str, set[str]]:
+        merged = {
+            parent_id: set(child_ids)
+            for parent_id, child_ids in (json.loads(stored) if stored else {}).items()
+        }
+        for parent_id in self.children.keys() | self.known_children.keys():
+            child_ids = self.children.get(parent_id, set())
+            known_child_ids = self.known_children.get(parent_id, set())
+            if child_ids != known_child_ids:
+                merged[parent_id] = (
+                    merged.get(parent_id, set()) | (child_ids - known_child_ids)
+                ) - (known_child_ids - child_ids)
+        for component_id in self.unregistered:
+            merged.pop(component_id, None)
+            for child_ids in merged.values():
+                child_ids.discard(component_id)
+        return merged
+
+    def _remember_what_is_known(self):
+        self.known_states = dict(self.states)
+        self.known_subscriptions = {
+            component_id: set(signals) for component_id, signals in self.subscriptions.items()
+        }
+        self.known_children = {
+            parent_id: set(child_ids) for parent_id, child_ids in self.children.items()
+        }
 
 
 def _describe_pk(value) -> str:

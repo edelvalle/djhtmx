@@ -1,11 +1,14 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from django.test import TestCase
 
+from djhtmx import json
 from djhtmx.command_processor import CommandProcessor
 from djhtmx.commands import Destroy
 from djhtmx.component import HtmxComponent
 from djhtmx.repo import Session
+from djhtmx.settings import conn
 
 
 class MockComponent(HtmxComponent):
@@ -130,9 +133,12 @@ class TestSessionRecursiveDestruction(TestCase):
         self.session.register_child(parent_id, child_id)
         self.session.flush()
 
-        # `flush` writes through a MULTI/EXEC pipeline, so the hset calls
-        # land on the pipeline mock rather than directly on conn.
-        pipe = mock_conn.pipeline.return_value.__enter__.return_value
+        # `flush` writes through `conn.transaction`, which hands a WATCH pipeline to the write.
+        # Run that write against a pipeline mock that finds nothing stored yet.
+        [write, _key] = mock_conn.transaction.call_args.args
+        pipe = MagicMock()
+        pipe.hmget.return_value = [None, None]
+        write(pipe)
         pipe.hset.assert_called()
         calls = pipe.hset.call_args_list
 
@@ -559,3 +565,75 @@ class TestTemplateTagAutomaticTracking(TestCase):
         for comp_id in [parent_id, child1_id, child2_id]:
             self.assertNotIn(comp_id, session.states)
             self.assertIn(comp_id, session.unregistered)
+
+
+class TestOverlappingRequests(TestCase):
+    """Two requests of one page read the session, and both flush their changes.
+
+    Each `Session` stands for one request: it reads the hash of the page from Redis, changes
+    what its handlers change, and flushes.  The second request reads the hash before the first
+    one flushes, so it holds the states as they were before the change of the first request.
+    """
+
+    def setUp(self):
+        self.session_id = f"test-overlap-{uuid4()}"
+        self.key = f"{self.session_id}:states"
+        self.addCleanup(conn.delete, self.key)
+        conn.hset(
+            self.key,
+            mapping={
+                "draft": json.dumps({"id": "draft", "name": "", "photos": []}),
+                "__subs__": json.dumps({"draft": ["draft-signal"]}),
+                "__children__": json.dumps({}),
+            },
+        )
+
+    def test_a_request_keeps_the_field_that_another_request_changed(self):
+        """The photo of one request and the name of the other both stay in the draft."""
+        upload = self.read_session()
+        typing = self.read_session()
+
+        self.change(upload, "draft", photos=["photo-cid"])
+        upload.flush()
+        self.change(typing, "draft", name="Damper is stuck")
+        typing.flush()
+
+        self.assertEqual(
+            self.stored_state("draft"),
+            {"id": "draft", "name": "Damper is stuck", "photos": ["photo-cid"]},
+        )
+
+    def test_a_request_keeps_the_component_that_another_request_added(self):
+        """A child that one request mounts keeps its state, its signals and its parent."""
+        mounting = self.read_session()
+        typing = self.read_session()
+
+        mounting.states["gallery"] = json.dumps({"id": "gallery"})
+        mounting.subscriptions["gallery"] = {"gallery-signal"}
+        mounting.register_child("draft", "gallery")
+        mounting.flush()
+        self.change(typing, "draft", name="Damper is stuck")
+        typing.flush()
+
+        self.assertEqual(self.stored_state("gallery"), {"id": "gallery"})
+        self.assertEqual(
+            json.loads(conn.hget(self.key, "__subs__")),  # type: ignore[arg-type]
+            {"draft": ["draft-signal"], "gallery": ["gallery-signal"]},
+        )
+        self.assertEqual(
+            json.loads(conn.hget(self.key, "__children__")),  # type: ignore[arg-type]
+            {"draft": ["gallery"]},
+        )
+
+    def read_session(self) -> Session:
+        session = Session(self.session_id)
+        session._ensure_read()
+        return session
+
+    def change(self, session: Session, component_id: str, **fields):
+        state = json.loads(session.states[component_id]) | fields
+        session.states[component_id] = json.dumps(state)
+        session.is_dirty = True
+
+    def stored_state(self, component_id: str):
+        return json.loads(conn.hget(self.key, component_id))  # type: ignore[arg-type]
