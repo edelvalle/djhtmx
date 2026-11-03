@@ -488,6 +488,7 @@ class Repository:
             return html
 
 
+# Settle docs/plans/session-change-log.md before changing how a Session reads, merges or writes.
 @dataclass(slots=True)
 class Session:
     id: str

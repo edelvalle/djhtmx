@@ -1,0 +1,7 @@
+{% load htmx %}
+
+<form {% hx-tag %}>
+  <input name="name" value="{{ name }}" {% on 'change' 'rename' %} />
+  <ul>{% for photo in photos %}<li>{{ photo }}</li>{% endfor %}</ul>
+  <button type="button" {% on 'click' 'add_caption' %}>Add a caption</button>
+</form>

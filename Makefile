@@ -113,6 +113,7 @@ run: install
 
 test:
 	@cd src/tests; $(RUN) coverage run --rcfile=../../pyproject.toml -m manage test
+	@cd src/tests; $(RUN) coverage run --append --rcfile=../../pyproject.toml -m django test testbed --pythonpath=.. --settings=testbed.settings
 .PHONY: test
 
 coverage-html: test
