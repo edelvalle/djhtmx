@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Two concurrent requests of one page no longer undo each other's changes**: a flush wrote back every state the request had read, so the request that ended last put back what the other one had changed.  Two requests that change the same field of one component still end with the value of the last one.
 
+- **A request with `HX-Request` but without `HX-Current-URL` no longer fails**: rendering any template with the `djhtmx.context.component_repo` context processor raised `KeyError`.
+
 ## [1.5.0] - 2026-10-08
 
 ### Added

@@ -8,11 +8,8 @@ from djhtmx import json
 def get_params(obj: HttpRequest | QueryDict | str | None) -> QueryDict:
     if isinstance(obj, HttpRequest):
         is_htmx_request = json.loads(obj.META.get("HTTP_HX_REQUEST", "false"))
-        if is_htmx_request:
-            return QueryDict(
-                urlparse(obj.META["HTTP_HX_CURRENT_URL"]).query,
-                mutable=True,
-            )
+        if is_htmx_request and (current_url := obj.META.get("HTTP_HX_CURRENT_URL")):
+            return QueryDict(urlparse(current_url).query, mutable=True)
         qd = QueryDict(None, mutable=True)
         qd.update(obj.GET)
         return qd
