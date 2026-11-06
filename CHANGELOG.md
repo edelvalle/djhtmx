@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pydantic 2.14 support**: importing `djhtmx.component` failed with an `AssertionError` on pydantic 2.14.  djhtmx is now tested against pydantic 2.13 and 2.14.
+
 ## [1.6.0] - 2026-11-05
 
 ### Fixed
