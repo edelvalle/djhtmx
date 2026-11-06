@@ -56,13 +56,18 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    name: "Tests & Coverage (py${{ matrix.python-version }})"
+    name: "Tests & Coverage (py${{ matrix.python-version }}, pydantic ${{ matrix.pydantic-version }})"
     needs: [lint-and-format]  # Only run if linting passes
 
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.13", "3.14"]
+        pydantic-version: ["2.13", "2.14"]
+        include:
+          # The pydantic floor on Python 3.13; 3.14 requires pydantic>=2.13.
+          - python-version: "3.13"
+            pydantic-version: "2.10"
 
     services:
       redis:
@@ -91,6 +96,9 @@ jobs:
     - name: Install dependencies
       run: make install PYTHON_VERSION=${{ matrix.python-version }}
 
+    - name: Install pydantic ${{ matrix.pydantic-version }}
+      run: uv pip install "pydantic==${{ matrix.pydantic-version }}.*"
+
     - name: Install Redis CLI
       run: sudo apt-get update && sudo apt-get install -y redis-tools
 
@@ -102,3 +110,5 @@ jobs:
       run: make coverage-xml
       env:
         DJHTMX_REDIS_URL: redis://localhost:6379/0
+        # Keep `uv run` from syncing pydantic back to the locked version.
+        UV_NO_SYNC: "1"

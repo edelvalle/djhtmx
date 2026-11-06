@@ -224,14 +224,20 @@ class HtmxComponent(BaseModel):
                     FQN[cls],
                 )
 
-        assert isinstance(cls._template_name, ModelPrivateAttr)  # type: ignore
-        if isinstance(cls._template_name.default, str) and (
-            basename(cls._template_name.default)
-            not in (f"{klass.__name__}.html" for klass in cls.__mro__)
-        ):
-            raise ImproperlyConfigured(
-                f"HTMX Component <{FQN[cls]}> template name does not match the component name"
-            )
+        # pydantic >= 2.14 converts the class' own unannotated private attributes only after
+        # `__init_subclass__`, so they show up here as plain values.
+        match cls._template_name:
+            case str(template_name) | ModelPrivateAttr(default=str(template_name)):
+                if basename(template_name) not in (
+                    f"{klass.__name__}.html" for klass in cls.__mro__
+                ):
+                    raise ImproperlyConfigured(
+                        f"HTMX Component <{FQN[cls]}> template name does not match the component name"
+                    )
+            case ModelPrivateAttr():
+                pass
+            case unexpected:
+                raise TypeError(f"Unexpected _template_name in {FQN[cls]}: {unexpected!r}")
 
         # We use 'get_type_hints' to resolve the forward refs if needed, but
         # we only need to rewrite the actual annotations of the current class,
