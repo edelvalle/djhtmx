@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
-from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+from inspect import getattr_static, isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 from os.path import basename
 from typing import (
     TYPE_CHECKING,
@@ -39,7 +39,7 @@ from .introspection import (
     get_event_handler_event_types,
     get_function_parameters,
 )
-from .query import Query, QueryPatcher
+from .query import Query, QueryPatcher, get_querystring
 from .tracing import tracing_span
 from .utils import generate_id, get_fqn
 
@@ -289,6 +289,8 @@ class HtmxComponent(BaseModel):
                 not attr_name.startswith("_")
                 and attr_name not in PYDANTIC_MODEL_METHODS
                 and attr_name.islower()
+                # A request can only call the methods of a component instance, not of its class.
+                and not isinstance(getattr_static(cls, attr_name), classmethod | staticmethod)
                 and callable(attr := getattr(cls, attr_name))
             ):
                 yield attr_name, attr
@@ -361,6 +363,15 @@ class HtmxComponent(BaseModel):
 
     def __repr__(self) -> str:
         return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
+
+    @classmethod
+    def get_querystring(cls, **values: Any) -> str:
+        """Return the query string that opens a page with this component in the given state.
+
+        See `djhtmx.query.get_querystring`.
+
+        """
+        return get_querystring(cls, **values)
 
     @property
     def subscriptions(self) -> set[str]:

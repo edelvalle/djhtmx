@@ -63,6 +63,28 @@ class Query:
                 done = True
 
 
+def get_querystring(component: type[BaseModel], **values: Any) -> str:
+    """Return the query string that opens a page with `component` in the given state.
+
+    Each keyword is the name of a `Query` field and its value, as the component holds it.  The query
+    string uses the names and the format the component reads from the URL, including the hash of
+    the component name for a field with `shared=False`.  A value equal to the default of its field
+    is left out, as the component does when it writes the URL.
+
+    Raise `TypeError` for a keyword that is not a `Query` field, and pydantic's `ValidationError`
+    for a value the field cannot take.
+
+    """
+    patchers = {patcher.field_name: patcher for patcher in QueryPatcher.for_component(component)}
+    if unknown := sorted(values.keys() - patchers.keys()):
+        raise TypeError(f"{component.__name__} has no Query field named {', '.join(unknown)}")
+    params = QueryDict(mutable=True)
+    for name, value in values.items():
+        patcher = patchers[name]
+        patcher.get_updates_for_params(patcher.adapter.validate_python(value), params)
+    return params.urlencode()
+
+
 @dataclass(slots=True)
 class QueryPatcher:
     field_name: str
