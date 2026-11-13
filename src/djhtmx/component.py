@@ -25,6 +25,7 @@ from typing import (
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import QuerySet
+from django.http import QueryDict
 from django.template import Context, loader
 from django.utils.safestring import SafeString, mark_safe
 from pydantic import BaseModel, ConfigDict, Field, model_validator, validate_call
@@ -361,6 +362,28 @@ class HtmxComponent(BaseModel):
 
     def __repr__(self) -> str:
         return f"{self.hx_name}(\n{self.model_dump_json(indent=2, exclude={'hx_name'})})\n"
+
+    @classmethod
+    def get_querystring(cls, **values: Any) -> str:
+        """Return the query string that opens a page with this component in the given state.
+
+        Each keyword is the name of a `Query` field and its value, as the component holds it.  The
+        query string uses the names and the format the component reads from the URL, including the
+        hash of the component name for a field with `shared=False`.  A value equal to the default
+        of its field is left out, as the component does when it writes the URL.
+
+        Raise `TypeError` for a keyword that is not a `Query` field, and pydantic's
+        `ValidationError` for a value the field cannot take.
+
+        """
+        patchers = {patcher.field_name: patcher for patcher in QueryPatcher.for_component(cls)}
+        if unknown := sorted(values.keys() - patchers.keys()):
+            raise TypeError(f"{cls.__name__} has no Query field named {', '.join(unknown)}")
+        params = QueryDict(mutable=True)
+        for name, value in values.items():
+            patcher = patchers[name]
+            patcher.get_updates_for_params(patcher.adapter.validate_python(value), params)
+        return params.urlencode()
 
     @property
     def subscriptions(self) -> set[str]:

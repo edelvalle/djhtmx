@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from django.http import QueryDict
 from django.test import TestCase
 from fision.todo.models import Item  # type: ignore[import-untyped]
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from djhtmx.component import HtmxComponent, Query
 from djhtmx.query import QueryPatcher
@@ -122,3 +122,42 @@ class TestQueryPatcherInvalidValue(TestCase):
         signals = patcher.get_updates_for_params(self.item, params)
         self.assertEqual(params[patcher.param_name], str(self.item.pk))
         self.assertEqual(signals, [patcher.signal_name])
+
+
+class TestGetQuerystring(TestCase):
+    """`HtmxComponent.get_querystring` builds the URL a component reads its state from."""
+
+    class _Table(HtmxComponent, public=False):
+        _template_name = "_Table.html"
+        sort_column: Annotated[int, Query("sort_column")] = 0
+        sort_reverse: Annotated[bool, Query("sort_reverse")] = False
+        filters: Annotated[dict[str, list[tuple[str, str]]], Query("filters", shared=False)] = (
+            Field(default_factory=dict)
+        )
+
+    def test_round_trips_through_the_component(self):
+        filters = {"Vessel Type": [("0196ab18", "Chemical/Oil Products Tanker")]}
+        querystring = self._Table.get_querystring(sort_column=2, sort_reverse=True, filters=filters)
+
+        params = QueryDict(querystring)
+        state = {}
+        for patcher in QueryPatcher.for_component(self._Table):
+            state |= patcher.get_update_for_state(params)
+        self.assertEqual(state, {"sort_column": 2, "sort_reverse": True, "filters": filters})
+
+    def test_hashes_the_name_of_a_field_that_is_not_shared(self):
+        querystring = self._Table.get_querystring(filters={"Rank": [("1", "Master")]})
+
+        [name] = QueryDict(querystring).keys()
+        self.assertRegex(name, r"^filters-\w+$")
+
+    def test_leaves_out_default_values(self):
+        self.assertEqual(self._Table.get_querystring(sort_column=0, filters={}), "")
+
+    def test_rejects_a_field_that_is_not_a_query(self):
+        with self.assertRaisesRegex(TypeError, "no Query field named page"):
+            self._Table.get_querystring(page=3)
+
+    def test_rejects_a_value_the_field_cannot_take(self):
+        with self.assertRaises(ValidationError):
+            self._Table.get_querystring(sort_column="name")
