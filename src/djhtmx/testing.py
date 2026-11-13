@@ -116,15 +116,14 @@ class Htmx:
 
         """
         element = self._select(selector)
-        if (
-            element.tag == "input" and element.attrib.get("type", "text") == "text"
-        ) or element.tag == "textarea":
-            if clear:
-                element.attrib["value"] = text
-            else:
-                element.attrib["value"] = element.attrib.get("value", "") + text
-        else:
-            assert False, f"Can't type in element {element}"
+        match element.tag, element.attrib.get("type", "text"):
+            case "textarea", _:
+                # A textarea holds its value as its text, not in a `value` attribute.
+                element.text = text if clear else (element.text or "") + text
+            case "input", "text":
+                element.attrib["value"] = text if clear else element.attrib.get("value", "") + text
+            case _:
+                assert False, f"Can't type in element {element}"
 
     def find_by_text(self, text: str) -> html.HtmlElement:
         return self.dom.xpath(f"//*[text()='{text}']")
@@ -155,45 +154,25 @@ class Htmx:
         does.
 
         """
-        element = self._select(selector)
+        trigger = self._select(selector)
 
         # mutate in case of a checkbox and radios
-        match element.tag, element.attrib.get("type"):
+        match trigger.tag, trigger.attrib.get("type"):
             case "input", "checkbox":
-                if "checked" in element.attrib:
-                    element.attrib.pop("checked")
+                if "checked" in trigger.attrib:
+                    trigger.attrib.pop("checked")
                 else:
-                    element.attrib["checked"] = ""
+                    trigger.attrib["checked"] = ""
             case "input", "radio":
-                if name := element.attrib.get("name"):
+                if name := trigger.attrib.get("name"):
                     for radio in self.dom.cssselect(f'input[type=radio][name="{name}"]'):
                         radio.attrib.pop("checked", None)
-                element.attrib["checked"] = ""
+                trigger.attrib["checked"] = ""
             case _:
                 pass
 
-        [_, component_id, event_handler] = element.attrib["hx-post"].rsplit("/", 2)
-
-        # gather values
-        vals = defaultdict(list)
-        if include := element.attrib.get("hx-include"):
-            for element in self.dom.cssselect(include):
-                name = element.attrib["name"]
-                value = element.attrib.get("value", "")
-                match element.tag, element.attrib.get("type"):
-                    case _, "checkbox":
-                        if "checked" in element.attrib:
-                            vals[name].append(value or "on")
-                    case _, "radio":
-                        if "checked" in element.attrib:
-                            vals[name].append(value)
-                    case "select", _:
-                        for option in element.cssselect("option[selected]"):
-                            vals[name].append(option.attrib.get("value", ""))
-                    case _, _:
-                        vals[name].append(value)
-
-        vals |= json.loads(element.attrib.get("hx-vals", "{}"))
+        [_, component_id, event_handler] = trigger.attrib["hx-post"].rsplit("/", 2)
+        vals = _get_input_values(trigger) | _get_hx_vals(trigger)
         self.dispatch_event(component_id, event_handler, parse_request_data(vals))
 
     def send[**P](self, method: Callable[P, Any], *args: P.args, **kwargs: P.kwargs):
@@ -710,6 +689,176 @@ def _normalize_selector(selector: str) -> str:
         return stripped[1:-2]
     else:
         return stripped
+
+
+def _get_input_values(trigger: html.HtmlElement) -> dict[str, list[str]]:
+    """Answer with the field values htmx 2.0.4 sends when `trigger` fires a POST.
+
+    As `getInputValues` of htmx: the closest form, the trigger itself, the name of a submit button,
+    and the targets of `hx-include` with the fields inside them.  Each field counts once, and the
+    values of the form win over the others.
+
+    """
+    processed: list[html.HtmlElement] = []
+    form_values: dict[str, list[str]] = defaultdict(list)
+    values: dict[str, list[str]] = defaultdict(list)
+    if (form := _closest(trigger, lambda element: element.tag == "form")) is not None:
+        _add_input_value(form, form_values, processed)
+    _add_input_value(trigger, values, processed)
+    match trigger.tag, trigger.attrib.get("type"):
+        case ("button", _) | ("input", "submit") if name := trigger.attrib.get("name"):
+            form_values[name].append(trigger.attrib.get("value", ""))
+        case _:
+            pass
+    for target in _get_include_targets(trigger):
+        _add_input_value(target, values, processed)
+        if target.tag != "form":
+            for field in target.iter("input", "textarea", "select"):
+                _add_input_value(field, values, processed)
+    return dict(values) | dict(form_values)
+
+
+def _get_hx_vals(trigger: html.HtmlElement) -> dict[str, Any]:
+    """Answer with the `hx-vals` of `trigger` merged with those of its ancestors; the nearest wins."""
+    vals: dict[str, Any] = {}
+    for element in (trigger, *trigger.iterancestors()):
+        if raw := element.attrib.get("hx-vals", "").strip():
+            assert not raw.startswith(("js:", "javascript:")), (
+                f"Htmx can't evaluate the JavaScript of hx-vals: {raw!r}"
+            )
+            vals = json.loads(raw if raw.startswith("{") else f"{{{raw}}}") | vals
+    return vals
+
+
+def _get_include_targets(trigger: html.HtmlElement) -> list[html.HtmlElement]:
+    """Answer with the elements the `hx-include` of `trigger`, or the one it inherits, designates."""
+    declaring = _closest(trigger, lambda element: bool(element.attrib.get("hx-include")))
+    if declaring is None:
+        return []
+    elif (selector := declaring.attrib["hx-include"]) == "this":
+        return [declaring]
+    else:
+        return _query_selector_all_ext(trigger, selector)
+
+
+def _query_selector_all_ext(start: html.HtmlElement, selector: str) -> list[html.HtmlElement]:
+    """Answer with the elements `selector` designates from `start`, as `querySelectorAllExt` of htmx.
+
+    It knows `closest X`, `find X`, `next`, `next X`, `previous`, `previous X`, `body` and plain
+    CSS.  `document`, `window`, `root` and `host` raise `AssertionError`.  The elements of the
+    extended selectors come first, then those of the CSS selectors in document order.
+
+    """
+    root = start.getroottree().getroot()
+    ancestors = list(start.iterancestors())
+    order = {element: index for index, element in enumerate(root.iter())}
+
+    def after(element: html.HtmlElement) -> bool:
+        return order[element] > order[start] and start not in element.iterancestors()
+
+    def before(element: html.HtmlElement) -> bool:
+        return order[element] < order[start] and element not in ancestors
+
+    found: list[html.HtmlElement] = []
+    css_parts: list[str] = []
+    for part in map(_normalize_selector, _split_selector_list(selector.removeprefix("global "))):
+        match part.partition(" "):
+            case ("closest", " ", argument):
+                matches = root.cssselect(_normalize_selector(argument))
+                item = next((e for e in (start, *ancestors) if e in matches), None)
+            case ("find", " ", argument):
+                matches = root.cssselect(_normalize_selector(argument))
+                item = next((e for e in matches if start in e.iterancestors()), None)
+            case ("next", " ", argument):
+                matches = root.cssselect(_normalize_selector(argument))
+                item = next((e for e in matches if after(e)), None)
+            case ("previous", " ", argument):
+                matches = root.cssselect(_normalize_selector(argument))
+                item = next((e for e in reversed(matches) if before(e)), None)
+            case ("next" | "nextElementSibling", "", ""):
+                item = start.getnext()
+            case ("previous" | "previousElementSibling", "", ""):
+                item = start.getprevious()
+            case ("body", "", ""):
+                item = root.body
+            case ("document" | "window" | "root" | "host", "", ""):
+                raise AssertionError(f"Htmx can't resolve {part!r} in a selector")
+            case (str(), str(), str()):
+                item = None
+                css_parts.append(part)
+        if item is not None:
+            found.append(item)
+    return found + (root.cssselect(",".join(css_parts)) if css_parts else [])
+
+
+def _add_input_value(
+    element: html.HtmlElement, values: dict[str, list[str]], processed: list[html.HtmlElement]
+):
+    """Add the value of `element` to `values` once, as `processInputValue` of htmx does.
+
+    A form adds the values of all its fields.
+
+    """
+    fields = element.iter("input", "textarea", "select") if element.tag == "form" else [element]
+    for field in fields:
+        if field not in processed:
+            processed.append(field)
+            if _should_include(field):
+                values[field.attrib["name"]].extend(_get_field_value(field))
+
+
+def _should_include(field: html.HtmlElement) -> bool:
+    """Tell whether htmx sends the value of `field`, as `shouldInclude` of htmx does."""
+    if (
+        field.tag not in ("input", "textarea", "select", "button")
+        or not field.attrib.get("name")
+        or "disabled" in field.attrib
+        or _closest(field, lambda e: e.tag == "fieldset" and "disabled" in e.attrib) is not None
+    ):
+        return False
+    match field.attrib.get("type", "submit" if field.tag == "button" else "text").lower():
+        case "button" | "submit":
+            return False
+        case "checkbox" | "radio":
+            return "checked" in field.attrib
+        case _:
+            return True
+
+
+def _get_field_value(field: html.HtmlElement) -> list[str]:
+    """Answer with the values the browser gives `field`."""
+    match field.tag, field.attrib.get("type"):
+        case "textarea", _:
+            return [field.text or ""]
+        case "select", _:
+            options = list(field.iter("option"))
+            selected = [option for option in options if "selected" in option.attrib]
+            if "multiple" in field.attrib:
+                return [_get_option_value(option) for option in selected]
+            elif chosen := selected[-1:] or [o for o in options if "disabled" not in o.attrib][:1]:
+                # The browser selects the first option a single select can take.
+                return [_get_option_value(chosen[0])]
+            else:
+                return [""]
+        case "input", "checkbox" | "radio":
+            return [field.attrib.get("value", "on")]
+        case _:
+            return [field.attrib.get("value", "")]
+
+
+def _get_option_value(option: html.HtmlElement) -> str:
+    """Answer with the value of `option`: its `value`, or else its text with the spaces collapsed."""
+    if (value := option.attrib.get("value")) is not None:
+        return value
+    else:
+        return " ".join(option.text_content().split())
+
+
+def _closest(
+    element: html.HtmlElement, predicate: Callable[[html.HtmlElement], bool]
+) -> html.HtmlElement | None:
+    """Answer with `element`, or its nearest ancestor, that satisfies `predicate`."""
+    return next((e for e in (element, *element.iterancestors()) if predicate(e)), None)
 
 
 def _parse_oob_value(oob: str) -> "tuple[_SwapStrategy, str | None]":
