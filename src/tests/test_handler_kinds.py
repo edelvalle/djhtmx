@@ -94,3 +94,40 @@ class HandlerKindTests(SimpleTestCase):
             gen="generator",
             gen_with_args="generator",
         )
+
+
+class ClassLevelMethods(HtmxComponent):
+    """A component whose public classmethod and staticmethod are not event handlers."""
+
+    _template_name: str = "ClassLevelMethods.html"
+
+    def handler(self):
+        pass
+
+    @classmethod
+    def build(cls, name: str):
+        return cls.__name__, name
+
+    @staticmethod
+    def helper(name: str):
+        return name
+
+
+class SubClassLevelMethods(ClassLevelMethods):
+    _template_name: str = "ClassLevelMethods.html"
+
+
+class ClassLevelMethodTests(SimpleTestCase):
+    """A browser request can only call methods of the instance, never of the class."""
+
+    def test_are_not_registered_as_handlers(self):
+        for component in (ClassLevelMethods, SubClassLevelMethods):
+            for name in ("build", "helper", "get_querystring"):
+                with self.subTest(component=component.__name__, name=name):
+                    self.assertNotIn(name, REGISTRY[component.__name__].handler_kind_mapping)
+                    self.assertNotIn(name, component._event_handler_params)
+        self.assertIn("handler", REGISTRY["ClassLevelMethods"].handler_kind_mapping)
+
+    def test_keep_their_binding(self):
+        self.assertEqual(SubClassLevelMethods.build("x"), ("SubClassLevelMethods", "x"))
+        self.assertEqual(SubClassLevelMethods.helper("x"), "x")
