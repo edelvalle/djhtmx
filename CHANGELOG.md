@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Htmx.trigger` sends the values htmx 2.0.4 sends from the browser**: it read `hx-include` as plain CSS, so `closest X`, `find X`, `next X` and `previous X` sent no field.  It now resolves them from the trigger, sends the fields inside an included container instead of failing with `KeyError`, sends the trigger's own value and its closest form, and merges `hx-vals` from the trigger and its ancestors instead of reading them from the last included field.  Disabled fields are skipped, a `<textarea>` sends its text, and a `<select>` with no selected option sends its first option.  `type_into` on a `<textarea>` now changes its text.
+
 ## [1.7.0] - 2026-11-13
 
 ### Added

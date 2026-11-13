@@ -37,7 +37,7 @@ self.htmx.trigger("input.new-todo")
 
 `type_into(selector, text)` appends to what the element holds, or replaces it with `clear=True`.  It works on a text input or a textarea.
 
-`trigger(selector)` fires what the element is bound to.  It reads the handler off the element's `hx-post`, so the element must be one `{% on %}` bound; it toggles a checkbox and selects a radio the way a click would; and it gathers the values the request would carry -- the `hx-vals` the tag wrote, and every named input matched by `hx-include`.  That last part is what makes it the only way to test [implicit parameters](../../djhtmx-components/references/basic.md) end to end.
+`trigger(selector)` fires what the element is bound to.  It reads the handler off the element's `hx-post`, so the element must be one `{% on %}` bound; it toggles a checkbox and selects a radio the way a click would; and it gathers the values the request would carry, as htmx 2.0.4 does in the browser -- the closest form, the element itself, the fields of every element `hx-include` designates (`this`, `closest`, `find`, `next`, `previous` or CSS, inherited from an ancestor), and the `hx-vals` of the element merged with those of its ancestors.  It skips disabled and unchecked fields.  That last part is what makes it the only way to test [implicit parameters](../../djhtmx-components/references/basic.md) end to end.
 
 Both take a selector or an element you already found with `select`.
 
