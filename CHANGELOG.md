@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`HtmxComponent.get_querystring(**values)`**: a classmethod that returns the query string that opens a page with the component in the given state.  It takes the values of `Query` fields and writes them with the names and the format the component reads from the URL, including the hash of the component name for a field with `shared=False`.  It raises `TypeError` for a name that is not a `Query` field, and pydantic's `ValidationError` for a value the field cannot take.
+- **`djhtmx.query.get_querystring(component, **values)`**, also as the classmethod `HtmxComponent.get_querystring(**values)`: returns the query string that opens a page with the component in the given state.  It takes the values of `Query` fields and writes them with the names and the format the component reads from the URL, including the hash of the component name for a field with `shared=False`.  It raises `TypeError` for a name that is not a `Query` field, and pydantic's `ValidationError` for a value the field cannot take.
 
 ### Fixed
 
