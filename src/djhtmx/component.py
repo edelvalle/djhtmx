@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import cache, cached_property, partial
-from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
+from inspect import getattr_static, isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 from os.path import basename
 from typing import (
     TYPE_CHECKING,
@@ -290,6 +290,8 @@ class HtmxComponent(BaseModel):
                 not attr_name.startswith("_")
                 and attr_name not in PYDANTIC_MODEL_METHODS
                 and attr_name.islower()
+                # A request can only call the methods of a component instance, not of its class.
+                and not isinstance(getattr_static(cls, attr_name), classmethod | staticmethod)
                 and callable(attr := getattr(cls, attr_name))
             ):
                 yield attr_name, attr
