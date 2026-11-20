@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An open SSE stream no longer stops the server from stopping or reloading**: the stream never ended, so uvicorn waited for it forever.  The stream now ends in about one second after the process gets `SIGINT` or `SIGTERM`, and the browser connects again to the new server.  The stream closes its Redis subscription without a wait for Redis.
+
 ## [1.7.1] - 2026-11-13
 
 ### Fixed

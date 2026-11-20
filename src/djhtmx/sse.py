@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
+import threading
+import time
 import weakref
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -401,6 +404,62 @@ def get_async_conn() -> async_redis.Redis:
     return _async_conns[loop]
 
 
+async def wait_for_wake_up(pubsub: async_redis.client.PubSub, timeout: float) -> Any | None:
+    """Wait at most `timeout` seconds for a message on the channels of `pubsub`.
+
+    Return the message, or `None` when the time ends or the server stops (see
+    `is_server_stopping`:func:).  The wait is done in short steps, so that a stream sees a stop of
+    the server in about one second, also when `timeout` is long.  A `timeout` of zero still reads
+    a message that is already there.
+
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = max(0.0, deadline - time.monotonic())
+        step = min(remaining, _STOP_CHECK_INTERVAL)
+        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=step)
+        if message or remaining <= _STOP_CHECK_INTERVAL or is_server_stopping():
+            return message
+
+
+def watch_server_stop() -> None:
+    """Make `is_server_stopping`:func: true when the process gets ``SIGINT`` or ``SIGTERM``.
+
+    An ASGI server that stops (or reloads) waits for the open responses to end, but it does not
+    tell the application.  An SSE stream never ends by itself, so the server waits forever.  This
+    function adds a step before the signal handler that the server installed: the step records the
+    stop, and then the handler of the server runs as before.
+
+    It does nothing for a signal that has no Python handler: the default action ends the process
+    anyway, and an ignored signal must stay ignored.  It also does nothing outside the main thread,
+    because Python accepts signal handlers only there.  You can call it many times.
+
+    """
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous = signal.getsignal(signum)
+            if callable(previous) and not getattr(previous, "_djhtmx_watches_stop", False):
+                signal.signal(signum, _make_stop_handler(previous))
+
+
+def is_server_stopping() -> bool:
+    """Tell whether the process got a signal to stop.  See `watch_server_stop`:func:."""
+    return _server_stopping
+
+
+def _make_stop_handler(
+    previous: Callable[[int, Any], Any],
+) -> Callable[[int, Any], Any]:
+    def handler(signum, frame):
+        # A plain assignment: a lock in a signal handler can deadlock with the interrupted code.
+        global _server_stopping
+        _server_stopping = True
+        return previous(signum, frame)
+
+    handler._djhtmx_watches_stop = True  # type: ignore[attr-defined]
+    return handler
+
+
 def decode_event(envelope: EventEnvelope) -> SSEEventEnvelope[Any]:
     assert envelope.payload is not None
     return SSEEventEnvelope(
@@ -607,6 +666,10 @@ async def async_expire(conn: async_redis.Redis, key: str, ttl: int):
 
 
 logger = logging.getLogger(__name__)
+
+# The longest time that an SSE stream waits before it checks again if the server stops.
+_STOP_CHECK_INTERVAL = 1.0
+_server_stopping = False
 
 SSE_LISTENERS: dict[type, set[type[HtmxComponent]]] = defaultdict(set)
 _SOURCE_SESSION_ID: ContextVar[str | None] = ContextVar(
