@@ -596,7 +596,13 @@ def _validate_call_lazily(function: types.FunctionType) -> Callable[..., Any]:
     `validate_call`:func: builds a pydantic schema for the parameters of `function` immediately.
     That takes about half a millisecond for each handler; an application with thousands of
     handlers loses seconds at startup.  The wrapper builds it on the first call instead, and keeps
-    it.  A lock makes sure that only one thread builds it.
+    it.
+
+    The first call can come from two threads at the same time: Django runs synchronous code in a
+    pool of threads (``sync_to_async``, and the threads of a WSGI server), so two requests can call
+    the same handler for the first time together.  A lock makes sure that only one thread builds
+    the validator, and the other one uses it.  Without the lock, both threads build an identical
+    validator and one is discarded: the result is the same, the lock only prevents the waste.
 
     The wrapper has the `raw_function` attribute of the wrapper of pydantic, so the code that looks
     through the wrapper of pydantic also looks through this one.  An annotation that pydantic
@@ -729,6 +735,9 @@ def _undecorated(handler):
 
 logger = logging.getLogger(__name__)
 _VALIDATE_CALL_CONFIG = ConfigDict(arbitrary_types_allowed=True)
+# One lock for all the handlers: it is held only while a handler builds its validator, once in
+# the life of the process.  It is reentrant, so a thread that already holds it never blocks on
+# itself if a build ever reaches the first call of another handler.
 _VALIDATE_CALL_LOCK = threading.RLock()
 _ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")
 
