@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import inspect
 import itertools
 import logging
 import re
+import sys
+import threading
 import types
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from functools import cache, cached_property, partial
+from functools import cache, cached_property, partial, wraps
 from inspect import getattr_static, isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 from os.path import basename
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     Literal,
     Union,
     cast,
@@ -135,20 +139,51 @@ def _get_template(template: str) -> RenderFunction:
     return cast(RenderFunction, _compose(loader.get_template(template).render, mark_safe))
 
 
+class _PerClass[T]:
+    """A class attribute whose value `compute` builds on first read, once for each class.
+
+    Each subclass gets its own value: `compute` receives the class through which the attribute is
+    read.  Two threads that read it at the same time can both call `compute`; `compute` must then
+    have no side effects, so that both results are equal.
+
+    """
+
+    __slots__ = ("compute", "values")
+
+    def __init__(self, compute: Callable[[type], T]):
+        self.compute = compute
+        self.values: dict[type, T] = {}
+
+    def __get__(self, instance: object, owner: type) -> T:
+        try:
+            return self.values[owner]
+        except KeyError:
+            value = self.values[owner] = self.compute(owner)
+            return value
+
+
 class HtmxComponent(BaseModel):
     _template_name: str = ...  # type: ignore
     _template_name_lazy: str = settings.DEFAULT_LAZY_TEMPLATE
 
-    # tracks which attributes are properties, to expose them in a lazy way to the _get_context
-    # during rendering
-    _properties: set[str] = ...  # type: ignore
+    # The names of the attributes that are properties, to expose them in a lazy way to the
+    # `_get_context` during rendering.  It is computed on first use, once for each class.
+    _properties: ClassVar[frozenset[str]] = _PerClass(lambda cls: _find_properties(cls))  # type: ignore
 
-    # tracks what are the names of the event handlers of the class
-    _event_handler_params: dict[str, frozenset[str]] = ...  # type: ignore
+    # The parameters of each event handler of the class, keyed by handler name.  It is computed on
+    # first use, once for each class.
+    _event_handler_params: ClassVar[dict[str, frozenset[str]]] = _PerClass(  # type: ignore
+        lambda cls: {
+            name: get_function_parameters(event_handler)
+            for name, event_handler in cls.__own_event_handlers(get_parent_ones=True)
+        }
+    )
 
-    # fields to exclude from component state during serialization
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
+        # Pydantic builds the validator and serializer of each component on first use, not at
+        # import.  An application with hundreds of components starts much faster.
+        defer_build=True,
     )
 
     if TYPE_CHECKING:
@@ -156,6 +191,15 @@ class HtmxComponent(BaseModel):
         def __init__(self, /, **data: Any) -> None: ...
 
     def __init_subclass__(cls, public=None):
+        """Register the component, and prepare what must exist when the class exists.
+
+        Only the cheap work happens here: the registration of public components, the checks that
+        raise for a bad declaration, and the rewrite of the field annotations (pydantic reads them
+        right after this method).  The expensive work runs on first use, once for each class: the
+        pydantic validator of the component, the validator of each event handler, the parameters of
+        the event handlers, and the list of properties.
+
+        """
         FQN[cls] = f"{cls.__module__}.{cls.__name__}"
 
         component_name = cls.__name__
@@ -177,18 +221,22 @@ class HtmxComponent(BaseModel):
             else:
                 public = True
 
-        if public:
-            if existing_component := REGISTRY.get(component_name):
-                raise TypeError(
-                    f"Component {get_fqn(cls)} would shadow existing "
-                    f"{get_fqn(existing_component.htmx_component_class)}"
-                )
+        if public and (existing_component := REGISTRY.get(component_name)):
+            raise TypeError(
+                f"Component {get_fqn(cls)} would shadow existing "
+                f"{get_fqn(existing_component.htmx_component_class)}"
+            )
 
-            handlers = dict(cls.__own_event_handlers(get_parent_ones=True))
+        # One pass over the attributes of the class finds all the event handlers, inherited ones
+        # included.  The handlers keep the functions as written: the wrapping comes after.
+        event_handlers = dict(cls.__own_event_handlers(get_parent_ones=True))
+        cls.__validate_event_handler_calls(event_handlers)
+
+        if public:
             # `__own_event_handlers` skips names starting with `_`, yet `_handle_event` and
             # `_handle_sse_events` reach the dispatcher by the same path as any other handler, so
             # their shape is worth just as much.
-            handlers |= {
+            handlers = event_handlers | {
                 name: handler
                 for name in ("_handle_event", "_handle_sse_events")
                 if (handler := getattr(cls, name, None)) is not None
@@ -214,7 +262,7 @@ class HtmxComponent(BaseModel):
 
             # Warn of components that do not have event handlers and are public
             if (
-                not any(cls.__own_event_handlers(get_parent_ones=True))
+                not event_handlers
                 and not hasattr(cls, "_handle_event")
                 and not hasattr(cls, "subscriptions")
                 and not hasattr(cls, "_handle_sse_events")
@@ -239,27 +287,8 @@ class HtmxComponent(BaseModel):
             case unexpected:
                 raise TypeError(f"Unexpected _template_name in {FQN[cls]}: {unexpected!r}")
 
-        # We use 'get_type_hints' to resolve the forward refs if needed, but
-        # we only need to rewrite the actual annotations of the current class,
-        # that's why we iter over the '__annotations__' names.
-        hints = get_type_hints(cls, include_extras=True)
-        for name in list(cls.__annotations__):
-            if not name.startswith("_"):
-                annotation = hints[name]
-                cls.__annotations__[name] = annotate_model(annotation)
-
-        cls._event_handler_params = {
-            name: get_function_parameters(event_handler)
-            for name, event_handler in cls.__own_event_handlers(get_parent_ones=True)
-        }
-
-        for name, params in cls._event_handler_params.items():
-            if params and not hasattr((attr := getattr(cls, name)), "raw_function"):
-                setattr(
-                    cls,
-                    name,
-                    validate_call(config={"arbitrary_types_allowed": True})(attr),
-                )
+        for name, annotation in _get_own_field_hints(cls).items():
+            cls.__annotations__[name] = annotate_model(annotation)
 
         cls.__check_consistent_event_handler(strict=settings.STRICT_EVENT_HANDLER_CONSISTENCY_CHECK)
         if public:
@@ -270,14 +299,6 @@ class HtmxComponent(BaseModel):
             from .sse import register_sse_listener
 
             register_sse_listener(cls)
-
-            cls._properties = {
-                attr
-                for attr in dir(cls)
-                if not attr.startswith("_")
-                if attr not in PYDANTIC_MODEL_METHODS
-                if isinstance(getattr(cls, attr), property | cached_property)
-            }
 
         return super().__init_subclass__()
 
@@ -294,6 +315,23 @@ class HtmxComponent(BaseModel):
                 and callable(attr := getattr(cls, attr_name))
             ):
                 yield attr_name, attr
+
+    @classmethod
+    def __validate_event_handler_calls(cls, event_handlers: Mapping[str, Callable]):
+        """Make each event handler with parameters validate its arguments with pydantic.
+
+        A handler that a base class already wrapped keeps its wrapper.  The validator of a plain
+        function is built on its first call, not here: see `_validate_call_lazily`.
+
+        """
+        for name, handler in event_handlers.items():
+            if hasattr(handler, "raw_function"):
+                pass
+            elif isinstance(handler, types.FunctionType):
+                if _declares_parameters(handler):
+                    setattr(cls, name, _validate_call_lazily(handler))
+            elif get_function_parameters(handler):
+                setattr(cls, name, validate_call(config=_VALIDATE_CALL_CONFIG)(handler))
 
     @classmethod
     def __check_consistent_event_handler(cls, *, strict: bool = False):
@@ -542,6 +580,99 @@ def requires_logged_user(component: type[HtmxComponent]) -> bool:
         return True
 
 
+def _find_properties(cls: type[HtmxComponent]) -> frozenset[str]:
+    return frozenset(
+        attr
+        for attr in dir(cls)
+        if not attr.startswith("_")
+        if attr not in PYDANTIC_MODEL_METHODS
+        if isinstance(getattr(cls, attr), property | cached_property)
+    )
+
+
+def _validate_call_lazily(function: types.FunctionType) -> Callable[..., Any]:
+    """Return `function` wrapped by `validate_call`:func:, which pydantic builds on the first call.
+
+    `validate_call`:func: builds a pydantic schema for the parameters of `function` immediately.
+    That takes about half a millisecond for each handler; an application with thousands of
+    handlers loses seconds at startup.  The wrapper builds it on the first call instead, and keeps
+    it.
+
+    The first call can come from two threads at the same time: Django runs synchronous code in a
+    pool of threads (``sync_to_async``, and the threads of a WSGI server), so two requests can call
+    the same handler for the first time together.  A lock makes sure that only one thread builds
+    the validator, and the other one uses it.  Without the lock, both threads build an identical
+    validator and one is discarded: the result is the same, the lock only prevents the waste.
+
+    The wrapper has the `raw_function` attribute of the wrapper of pydantic, so the code that looks
+    through the wrapper of pydantic also looks through this one.  An annotation that pydantic
+    cannot handle raises on the first call, not when the class is created.
+
+    """
+    validated: Callable[..., Any] | None = None
+
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        nonlocal validated
+        if validated is None:
+            with _VALIDATE_CALL_LOCK:
+                if validated is None:
+                    validated = validate_call(config=_VALIDATE_CALL_CONFIG)(function)
+        return validated(*args, **kwargs)
+
+    wrapper.raw_function = function  # type: ignore[attr-defined]
+    return wrapper
+
+
+def _declares_parameters(function: types.FunctionType) -> bool:
+    """Tell whether `function` has a parameter other than ``self``.
+
+    It gives the same answer as `get_function_parameters`:func:, but it reads the code object.  That
+    is much faster than `inspect.signature`:func:.  A function with a `__wrapped__` or a
+    `__signature__` can show a signature that is not the one of its code, so it takes the slow path.
+
+    """
+    if hasattr(function, "__wrapped__") or hasattr(function, "__signature__"):
+        return bool(get_function_parameters(function))
+    else:
+        code = function.__code__
+        count = (
+            code.co_argcount
+            + code.co_kwonlyargcount
+            + bool(code.co_flags & inspect.CO_VARARGS)
+            + bool(code.co_flags & inspect.CO_VARKEYWORDS)
+        )
+        return any(name != "self" for name in code.co_varnames[:count])
+
+
+def _get_own_field_hints(cls: type) -> dict[str, Any]:
+    """Return the resolved annotations of the fields that `cls` declares itself.
+
+    The result is what `get_type_hints(cls, include_extras=True)`:func: gives for these names, but
+    it does not resolve the annotations of the base classes.  Names that start with ``_`` are not
+    fields, so they are not in the result.
+
+    """
+    own = {
+        name: annotation
+        for name, annotation in cls.__annotations__.items()
+        if not name.startswith("_")
+    }
+    if own:
+        # A class with only these annotations resolves them in the same namespaces as `cls`.  When
+        # it gets no namespaces, `get_type_hints` uses the class namespace as the globals and the
+        # module namespace as the locals; these arguments keep that order.
+        probe = type(cls.__name__, (), {"__annotations__": own, "__module__": cls.__module__})
+        return get_type_hints(
+            probe,
+            globalns=dict(vars(cls)),
+            localns=getattr(sys.modules.get(cls.__module__), "__dict__", {}),
+            include_extras=True,
+        )
+    else:
+        return {}
+
+
 def _compose[**P, A, B](f: Callable[P, A], g: Callable[[A], B]) -> Callable[P, B]:
     def result(*args: P.args, **kwargs: P.kwargs):
         return g(f(*args, **kwargs))
@@ -603,6 +734,11 @@ def _undecorated(handler):
 
 
 logger = logging.getLogger(__name__)
+_VALIDATE_CALL_CONFIG = ConfigDict(arbitrary_types_allowed=True)
+# One lock for all the handlers: it is held only while a handler builds its validator, once in
+# the life of the process.  It is reentrant, so a thread that already holds it never blocks on
+# itself if a build ever reaches the first call of another handler.
+_VALIDATE_CALL_LOCK = threading.RLock()
 _ABSTRACT_BASE_REGEX = re.compile(r"^(_)?(Base|Abstract)[A-Z0-9_]")
 
 
