@@ -331,7 +331,7 @@ class HtmxComponent(BaseModel):
                 if _declares_parameters(handler):
                     setattr(cls, name, _validate_call_lazily(handler))
             elif get_function_parameters(handler):
-                setattr(cls, name, validate_call(config=_VALIDATE_CALL_CONFIG)(handler))
+                setattr(cls, name, _validate_handler_call(handler))
 
     @classmethod
     def __check_consistent_event_handler(cls, *, strict: bool = False):
@@ -617,7 +617,7 @@ def _validate_call_lazily(function: types.FunctionType) -> Callable[..., Any]:
         if validated is None:
             with _VALIDATE_CALL_LOCK:
                 if validated is None:
-                    validated = validate_call(config=_VALIDATE_CALL_CONFIG)(function)
+                    validated = _validate_handler_call(function)
         return validated(*args, **kwargs)
 
     wrapper.raw_function = function  # type: ignore[attr-defined]
@@ -735,6 +735,13 @@ def _undecorated(handler):
 
 logger = logging.getLogger(__name__)
 _VALIDATE_CALL_CONFIG = ConfigDict(arbitrary_types_allowed=True)
+# The decorator is created here, at module level, and not in the function that wraps a handler.
+# `validate_call` keeps the local namespace of the frame that creates the decorator, to resolve
+# annotations, and that namespace keeps the frame and all its callers alive.  The first call of a
+# handler runs inside a request: a decorator created there kept the whole request alive, with its
+# command queue subscribed to `post_save` and `pre_delete`.  At module level `validate_call` keeps
+# nothing, and the annotations resolve in the globals of the handler.
+_validate_handler_call = validate_call(config=_VALIDATE_CALL_CONFIG)
 # One lock for all the handlers: it is held only while a handler builds its validator, once in
 # the life of the process.  It is reentrant, so a thread that already holds it never blocks on
 # itself if a build ever reaches the first call of another handler.

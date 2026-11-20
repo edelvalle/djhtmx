@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Handler validators no longer keep alive the request that first called the handler**: in 1.7.2 the validator of each event handler was built on its first call, and `validate_call` kept the frame of that call, with the whole request under it.  This leaked the command queue of that request, which stayed subscribed to `post_save` and `pre_delete`, so every later model save also ran every leaked queue and grew slower.
+
 ## [1.7.2] - 2026-11-20
 
 ### Changed
