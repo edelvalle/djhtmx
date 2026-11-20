@@ -70,29 +70,34 @@ def sse_endpoint(request: HttpRequest):
         from .sse import (
             get_async_conn,
             get_sse_heartbeat_paces,
+            is_server_stopping,
             refresh_sse_session_liveness,
             render_sse_event_fragments,
             render_sse_heartbeat_fragments,
             sse_message,
+            wait_for_wake_up,
             wake_channel,
+            watch_server_stop,
         )
         from .sse_executor import SSERenderQueueFull
         from .utils import compact_hash
 
+        # The stream ends when the server stops; see `watch_server_stop`.
+        watch_server_stop()
         redis = get_async_conn()
         pubsub = redis.pubsub()
         channel = wake_channel(session_id)
         session_tag = compact_hash(session_id)
-        logger.debug("SSE [%s] stream subscribe channel=%s", session_id, channel)
-        await pubsub.subscribe(channel)
 
         heartbeat_due_at: dict[int, float] = {}
         refresh_interval = settings.SESSION_REFRESH_INTERVAL
         last_refresh = 0.0
         try:
+            logger.debug("SSE [%s] stream subscribe channel=%s", session_id, channel)
+            await pubsub.subscribe(channel)
             logger.debug("SSE [%s] stream connected session", session_id)
             yield b": connected\n\n"
-            while True:
+            while not is_server_stopping():
                 with tracing_span("djhtmx.sse.iteration", session=session_tag):
                     # Keep the Redis keys alive for as long there is a SSE connection
                     now = time.monotonic()
@@ -155,11 +160,11 @@ def sse_endpoint(request: HttpRequest):
                         next_heartbeat_tick = min(heartbeat_due_at.values())
                         timeout = max(0, min(timeout, next_heartbeat_tick - time.monotonic()))
                 with tracing_span("djhtmx.sse.wait", session=session_tag, timeout=f"{timeout:.2f}"):
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=timeout
-                    )
-                if not message:
+                    message = await wait_for_wake_up(pubsub, timeout)
+                if not message and not is_server_stopping():
                     yield b": heartbeat\n\n"
+            # The client opens a new stream, on the new server, when this one ends.
+            logger.info("SSE [%s] server is stopping, stream closed", session_id)
         except asyncio.CancelledError:
             logger.info("SSE [%s] stream cancelled", session_id)
             raise
@@ -168,8 +173,14 @@ def sse_endpoint(request: HttpRequest):
             raise
         finally:
             logger.debug("SSE [%s] stream closing channel=%s", session_id, channel)
-            await pubsub.unsubscribe(channel)
-            await pubsub.close()
+            # Closing the connection also ends the subscription in Redis: an `UNSUBSCRIBE` first
+            # only adds a round trip, which can wait for a long time when Redis does not answer.
+            try:
+                await pubsub.aclose()
+            except Exception:
+                logger.warning(
+                    "SSE [%s] cannot close the Redis subscription", session_id, exc_info=True
+                )
 
     return StreamingHttpResponse(
         stream(),
