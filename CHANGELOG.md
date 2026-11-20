@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Components are faster to import**: the creation of a component class no longer builds pydantic validators.  The validator of the component (`defer_build=True`) and the validator of each event handler with parameters are built on first use.  The parameters of the event handlers (`_event_handler_params`) and the list of properties (`_properties`) are computed on first read.  A schema error in the fields of a component, or in the parameters of a handler, now raises on first use, not on import.
+
 ### Fixed
 
 - **An open SSE stream no longer stops the server from stopping or reloading**: the stream never ended, so uvicorn waited for it forever.  The stream now ends in about one second after the process gets `SIGINT` or `SIGTERM`, and the browser connects again to the new server.  The stream closes its Redis subscription without a wait for Redis.
