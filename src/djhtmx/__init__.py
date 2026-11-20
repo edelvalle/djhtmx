@@ -1,4 +1,4 @@
 from .middleware import middleware
 
-__version__ = "1.8.0"
+__version__ = "1.7.2"
 __all__ = ("middleware",)
